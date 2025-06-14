@@ -3,6 +3,7 @@
 import "./App.css";
 import { AppSidebar } from "./components/app-sidebar";
 import { SidebarProvider, SidebarTrigger } from "./components/ui/sidebar";
+import High from "./High";
 
 function App() {
   // const [greetMsg, setGreetMsg] = useState("");
@@ -17,10 +18,12 @@ function App() {
     <main className="container">
       <SidebarProvider>
         <AppSidebar />
-        <div>
+        <div className="w-full">
           <SidebarTrigger />
+          <High />
         </div>
       </SidebarProvider>
+
     </main>
   );
 }
