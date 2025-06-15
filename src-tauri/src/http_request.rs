@@ -1,27 +1,27 @@
 use std::io::{Read, Write};
 use std::net::TcpStream;
 
-pub fn http_request(content: String) -> Result<String, Box<dyn std::error::Error>> {
+pub fn http_request(http_request: String) -> Result<String, Box<dyn std::error::Error>> {
     // Change this to your target host and port
     let host = "google.com";
     let port = 80;
     let addr = format!("{}:{}", host, port);
-    let path = "/";
+    // let path = "/";
 
     // Establish a TCP connection
     let mut stream = TcpStream::connect(&addr)?;
     println!("Connected to {}", addr);
 
     // Manually build an HTTP GET request with headers
-    let http_request = format!(
-        "GET {path} HTTP/1.1\r\n\
-         Host: {}\r\n\
-         User-Agent: Rust-TCP-Client/1.0\r\n\
-         Accept: */*\r\n\
-         Connection: close\r\n\
-         \r\n",
-        host
-    );
+    // let http_request = format!(
+    //     "GET / HTTP/1.1\r\n\
+    //      Host: {}\r\n\
+    //      User-Agent: Rust-TCP-Client/1.0\r\n\
+    //      Accept: */*\r\n\
+    //      Connection: close\r\n\
+    //      \r\n",
+    //     host
+    // );
 
     // Send the request
     stream.write_all(http_request.as_bytes())?;

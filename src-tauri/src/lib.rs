@@ -1,6 +1,7 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 mod http_request;
 use http_request::http_request;
+// use std::thread;
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -9,8 +10,16 @@ fn greet(name: &str) -> String {
 
 #[tauri::command]
 fn send_data(content: String) -> String {
-    http_request(content.clone());
-    format!("Data received: {content}")
+    match http_request(content.clone()) {
+        Ok(response) => {
+            println!("Success! Response:\n{}", response);
+            format!("Data sent successfully: {}", response)
+        }
+        Err(e) => {
+            eprintln!("An error occurred: {}", e);
+            format!("Failed to send data: {}", content)
+        }
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

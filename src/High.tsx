@@ -10,10 +10,9 @@ const SimpleHTTPEditor = () => {
 
     const [content, setContent] = useState('');
 
-    const send_data = () => {
-        invoke("send_data", { content })
-            .then(() => console.log("Data sent"))
-            .catch(err => console.error("Error sending data:", err));
+    const send_data = async () => {
+        const result = await invoke("send_data", { content });
+        alert(result);
     };
 
     useEffect(() => {
@@ -56,10 +55,6 @@ Content-Type: application/json
         <div className="p-4">
             <h3 className="mb-2 font-bold">HTTP Request Editor</h3>
             <div ref={editorRef} className="border border-gray-300 rounded" />
-            <div className="mt-4">
-                <h4>Current Content:</h4>
-                <pre>{content}</pre>
-            </div>
             <button onClick={() => { send_data() }}>send to backend</button>
         </div>
     );
