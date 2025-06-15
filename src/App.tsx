@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/sidebar"
 import High from "./High";
 
+
 export default function App() {
     return (
         <SidebarProvider>
