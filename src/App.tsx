@@ -15,6 +15,7 @@ import {
     SidebarTrigger,
 } from "@/components/ui/sidebar"
 import High from "./High";
+import { TabsDemo } from "./components/card-tab";
 
 
 export default function App() {
@@ -47,7 +48,9 @@ export default function App() {
                         <div className="bg-muted/50 aspect-video rounded-xl">
                             <High />
                         </div>
-                        <div className="bg-muted/50 aspect-video rounded-xl" />
+                        <div className="bg-muted/50 aspect-video rounded-xl">
+                            <TabsDemo />
+                        </div>
                     </div>
                     <div className="bg-muted/50 min-h-[100vh] flex-1 rounded-xl md:min-h-min" />
                 </div>

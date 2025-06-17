@@ -23,16 +23,25 @@ const SimpleHTTPEditor: React.FC = () => {
     const [isLoading, setIsLoading] = useState<boolean>(false);
     const [result, setResult] = useState<string>('');
     const [requestId, setRequestId] = useState<string | null>(null);
+    
+    // Store active requests to handle multiple concurrent requests
+    const activeRequestsRef = useRef<Set<string>>(new Set());
 
-    // Listen for completion events from backend
+    // Set up the event listener once when component mounts
     useEffect(() => {
         let unlisten: UnlistenFn | null = null;
 
         const setupListener = async () => {
             unlisten = await listen<RequestCompletedPayload>('request-completed', (event) => {
                 const { request_id, result: requestResult, error } = event.payload;
+                
+                console.log('Received event for request ID:', request_id);
+                console.log('Event payload:', event.payload);
 
-                if (request_id === requestId) {
+                // Check if this is an active request we're waiting for
+                if (activeRequestsRef.current.has(request_id)) {
+                    console.log('Processing response for request:', request_id);
+                    
                     setIsLoading(false);
                     if (error) {
                         setResult(`Error: ${error}`);
@@ -40,6 +49,9 @@ const SimpleHTTPEditor: React.FC = () => {
                         setResult(`Success: ${requestResult || 'No result'}`);
                     }
                     setRequestId(null);
+                    activeRequestsRef.current.delete(request_id);
+                } else {
+                    console.log('Ignoring event for unknown request ID:', request_id);
                 }
             });
         };
@@ -51,18 +63,25 @@ const SimpleHTTPEditor: React.FC = () => {
                 unlisten();
             }
         };
-    }, [requestId]);
+    }, []); // Empty dependency array - listener is set up only once
 
     const send_data = async (): Promise<void> => {
         try {
             setIsLoading(true);
             setResult('');
 
+            console.log('Sending request with content:', content);
+
             // This will return immediately with a request ID
             const response = await invoke<AsyncResponse>("send_data_async", { content });
+            
+            console.log('Received request ID:', response.request_id);
+            
             setRequestId(response.request_id);
+            activeRequestsRef.current.add(response.request_id);
 
         } catch (error) {
+            console.error('Error sending request:', error);
             setIsLoading(false);
             setResult(`Error: ${error instanceof Error ? error.message : String(error)}`);
         }
@@ -74,22 +93,31 @@ const SimpleHTTPEditor: React.FC = () => {
                 await invoke<string>("cancel_request", { requestId });
                 setIsLoading(false);
                 setResult('Request cancelled');
+                activeRequestsRef.current.delete(requestId);
                 setRequestId(null);
             } catch (error) {
                 console.error('Failed to cancel request:', error);
+                // Still clean up the UI state even if cancel failed
+                setIsLoading(false);
+                setResult('Cancel request failed, but cleaning up UI');
+                activeRequestsRef.current.delete(requestId!);
+                setRequestId(null);
             }
         }
     };
 
     useEffect(() => {
         if (editorRef.current) {
-            const state = EditorState.create({
-                doc: `GET / HTTP/1.1
+            const initialContent = `GET / HTTP/1.1
 Host: google.com
 User-Agent: Rust-TCP-Client/1.0
 Accept: */*
 Connection: close
-`,
+
+`;
+
+            const state = EditorState.create({
+                doc: initialContent,
                 extensions: [
                     basicSetup,
                     json(),
@@ -108,7 +136,7 @@ Connection: close
             });
 
             viewRef.current = view;
-            setContent(state.doc.toString());
+            setContent(initialContent);
 
             return () => view.destroy();
         }
@@ -153,6 +181,13 @@ Connection: close
                     <pre className="whitespace-pre-wrap text-sm">{result}</pre>
                 </div>
             )}
+
+            {/* Debug info - remove in production */}
+            <div className="mt-4 p-2 bg-gray-50 border rounded text-xs">
+                <div>Active Requests: {Array.from(activeRequestsRef.current).join(', ') || 'None'}</div>
+                <div>Current Request ID: {requestId || 'None'}</div>
+                <div>Is Loading: {isLoading.toString()}</div>
+            </div>
         </div>
     );
 };

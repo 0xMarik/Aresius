@@ -1,6 +1,7 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 mod http_request;
 use http_request::http_request;
+
 use serde::Serialize;
 use std::thread;
 use tauri::AppHandle;
@@ -25,7 +26,6 @@ struct RequestCompletedPayload {
 }
 
 #[tauri::command]
-
 fn send_data_async(content: String, app_handle: AppHandle) -> Result<AsyncResponse, String> {
     let request_id = Uuid::new_v4().to_string();
     let request_id_clone = request_id.clone();
