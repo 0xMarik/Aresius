@@ -14,11 +14,12 @@ interface ProjectSettings {
 }
 
 export interface Project {
-  id: string
+  id: `${string}-${string}-${string}-${string}-${string}`
   name: string
   description: string
-  createdAt: string
-  updatedAt: string
+  createdAt: number
+  updatedAt: number
+  temporary: boolean
   
   // All project data stored locally
 //   targets: Target[]
@@ -26,19 +27,19 @@ export interface Project {
 //   requests: HttpRequest[]
 //   responses: HttpResponse[]
 //   vulnerabilities: Vulnerability[]
-  settings: ProjectSettings
+  // settings: ProjectSettings
   
   // Project metadata
-  stats: {
-    totalRequests: number
-    totalVulnerabilities: number
-    uniqueHosts: number
-    lastScanDate: string | null
-  }
+  // stats: {
+  //   totalRequests: number
+  //   totalVulnerabilities: number
+  //   uniqueHosts: number
+  //   lastScanDate: string | null
+  // }
 }
 
 export interface WorkspaceState {
-  currentProject: Project | null
+  currentProjectId: `${string}-${string}-${string}-${string}-${string}` | null
   projects: Project[]
   
   // UI state will be handled by react router

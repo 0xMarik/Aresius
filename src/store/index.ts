@@ -1,11 +1,22 @@
 import { configureStore } from '@reduxjs/toolkit';
 import ProjectsReducer from './slices/projectSlice';
+// src/middleware/logger.ts
+import { Middleware } from '@reduxjs/toolkit'
+
+export const loggerMiddleware: Middleware = store => next => action => {
+  console.log('[Logger] Dispatching:', action)
+  const result = next(action)
+  console.log('[Logger] Next state:', store.getState())
+  return result
+}
 
 const store = configureStore({
   reducer: {
-    projects: ProjectsReducer
+    workspacestate: ProjectsReducer
   },
-});
+  middleware: (getDefaultMiddleware) =>
+    getDefaultMiddleware().concat(loggerMiddleware),
+})
 
 export type RootState = ReturnType<typeof store.getState>
 export type AppDispatch = typeof store.dispatch

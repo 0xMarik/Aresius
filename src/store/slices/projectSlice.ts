@@ -2,10 +2,18 @@ import { Project, WorkspaceState } from '@/types/project.type';
 import { createSlice, PayloadAction } from '@reduxjs/toolkit'
 
 
-
 const initialState: WorkspaceState = {
-    projects: [],
-    currentProject: null,
+    projects: [
+      {
+        id: crypto.randomUUID(),
+        name: "Default Project",
+        description: "This is a default project.",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        temporary: false,
+      }
+    ],
+    currentProjectId: null,
 }
 
 const projectSlice = createSlice({
@@ -26,19 +34,27 @@ const projectSlice = createSlice({
     },
     deleteProject(state, action: PayloadAction<string>) {
       state.projects = state.projects.filter(p => p.id !== action.payload)
-      if (state.currentProject && state.currentProject.id === action.payload) {
-        state.currentProject = null
+      if (state.currentProjectId && state.currentProjectId === action.payload) {
+        state.currentProjectId = null
       }
     },
-    setCurrentProject(state, action: PayloadAction<string | null>) {
+    setcurrentProjectId(state, action: PayloadAction<string | null>) {
       if (action.payload === null) {
-        state.currentProject = null;
+        state.currentProjectId = null;
       } else {
         const project = state.projects.find(p => p.id === action.payload) || null;
-        state.currentProject = project;
+        state.currentProjectId = project ? project.id : null;
       }
     },
   },
 })
+
+export const {
+  setProjects,
+  addProject,
+  updateProject,
+  deleteProject,
+  setcurrentProjectId,
+} = projectSlice.actions;
 
 export default projectSlice.reducer;
