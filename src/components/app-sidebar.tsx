@@ -4,7 +4,8 @@ import {
   BookOpen,
   Bot,
   Command,
-  Frame,
+  // Frame,
+  PanelsTopLeft,
   GalleryVerticalEnd,
   Waves,
   Settings2,
@@ -12,7 +13,7 @@ import {
   SquareTerminal,
 } from "lucide-react"
 
-import { NavMain } from '@/components/nav-main'
+// import { NavMain } from '@/components/nav-main'
 import { NavProjects } from '@/components/nav-projects'
 import { NavUser } from '@/components/nav-user'
 import { TeamSwitcher } from '@/components/team-switcher'
@@ -152,6 +153,13 @@ const data = {
     //   icon: Map,
     // },
   ],
+  workspace: [
+    {
+      name: "Projects",
+      url: "/projects",
+      icon: PanelsTopLeft,
+    },
+  ],
 }
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
@@ -162,7 +170,8 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       </SidebarHeader>
       <SidebarContent>
         {/* <NavMain items={data.navMain} /> */}
-        <NavProjects projects={data.projects} />
+        <NavProjects name="Testing" items={data.projects} />
+        <NavProjects name="Workspace" items={data.workspace} />
       </SidebarContent>
       <SidebarFooter>
         <NavUser user={data.user} />

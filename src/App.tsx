@@ -17,6 +17,9 @@ import {
 
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import Fuzzer from "./pages/fuzzer";
+import Tweaker from "./pages/tweaker";
+import MyTable from "./components/table.component";
+
 
 
 export default function App() {
@@ -47,8 +50,9 @@ export default function App() {
                     </header>
 
                     <Routes>
-                        <Route path="/tweaker" element={<h1>page tweaker</h1>} />
+                        <Route path="/tweaker" element={<Tweaker />} />
                         <Route path="/fuzzer" element={<Fuzzer />} />
+                        <Route path="/projects" element={<MyTable />} />
                     </Routes>
                 </SidebarInset>
             </SidebarProvider>

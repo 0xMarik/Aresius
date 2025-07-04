@@ -1,44 +1,47 @@
 import {
-  Folder,
-  Forward,
-  MoreHorizontal,
-  Trash2,
+  // Folder,
+  // Forward,
+  // MoreHorizontal,
+  // Trash2,
   type LucideIcon,
 } from "lucide-react"
 
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
+// import {
+//   DropdownMenu,
+//   DropdownMenuContent,
+//   DropdownMenuItem,
+//   DropdownMenuSeparator,
+//   DropdownMenuTrigger,
+// } from '@/components/ui/dropdown-menu'
+
 import {
   SidebarGroup,
   SidebarGroupLabel,
   SidebarMenu,
-  SidebarMenuAction,
+  // SidebarMenuAction,
   SidebarMenuButton,
   SidebarMenuItem,
-  useSidebar,
+  // useSidebar,
 } from '@/components/ui/sidebar'
 
 export function NavProjects({
-  projects,
+  name,
+  items,
 }: {
-  projects: {
+  name: string,
+  items: {
     name: string
     url: string
     icon: LucideIcon
   }[]
 }) {
-  const { isMobile } = useSidebar()
+  // const { isMobile } = useSidebar()
 
   return (
     <SidebarGroup>
-      <SidebarGroupLabel>Testing</SidebarGroupLabel>
+      <SidebarGroupLabel>{name}</SidebarGroupLabel>
       <SidebarMenu>
-        {projects.map((item) => (
+        {items.map((item) => (
           <SidebarMenuItem key={item.name}>
             <SidebarMenuButton asChild>
               <a href={item.url}>
