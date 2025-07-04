@@ -1,5 +1,3 @@
-
-import React from "react"
 import {
   DndContext,
   closestCenter,
@@ -27,37 +25,26 @@ import {
 
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Button } from "@/components/ui/button"
-// import { Checkbox } from "@/components/ui/checkbox"
 import { IconGripVertical } from "@tabler/icons-react"
 import { useAppDispatch, useAppSelector } from "@/hooks/redux"
 import { Project } from "@/types/project.type"
-import { setcurrentProjectId } from "@/store/slices/projectSlice"
-import { Plus } from "lucide-react"
+import { setcurrentProjectId, setProjects } from "@/store/slices/projectSlice"
 import AddProjectDialog from "@/components/add-project-dialog.component"
 
-// Remove the Item type and defaultData, and use your actual Project type from your state
-// If you have a Project type defined elsewhere, import it here. Otherwise, define it as needed:
-// import { Project } from "@/types/project" // Example import
-
-// If not already defined, define the Project type based on your state shape:
-// type Project = {
-//   id: number
-//   name: string
-//   status: string
-//   // add other fields as needed
-// }
-
-
-
 function DragHandle({ id }: { id: string }) {
-  const { attributes, listeners } = useSortable({ id })
+  const { attributes, listeners, setNodeRef } = useSortable({
+    id,
+    disabled: false,
+  })
+
   return (
     <Button
+      ref={setNodeRef}
       variant="ghost"
       size="icon"
       {...attributes}
       {...listeners}
-      className="cursor-grab"
+      className="cursor-grab active:cursor-grabbing touch-none"
     >
       <IconGripVertical className="size-4" />
     </Button>
@@ -65,7 +52,15 @@ function DragHandle({ id }: { id: string }) {
 }
 
 function DraggableRow({ row }: { row: any }) {
-  const { transform, transition, setNodeRef, isDragging } = useSortable({
+  const {
+    transform,
+    transition,
+    setNodeRef,
+    isDragging,
+    attributes,
+    listeners,
+    setActivatorNodeRef,
+  } = useSortable({
     id: row.original.id,
   })
 
@@ -73,15 +68,22 @@ function DraggableRow({ row }: { row: any }) {
     <TableRow
       ref={setNodeRef}
       data-dragging={isDragging}
-      className="relative"
+      className={`relative ${isDragging ? 'z-50 opacity-50' : ''}`}
       style={{
         transform: CSS.Transform.toString(transform),
         transition,
       }}
+      {...attributes}
     >
       {row.getVisibleCells().map((cell: any) => (
         <TableCell key={cell.id}>
-          {flexRender(cell.column.columnDef.cell, cell.getContext())}
+          {cell.column.id === 'drag' ? (
+            <div ref={setActivatorNodeRef} {...listeners}>
+              {flexRender(cell.column.columnDef.cell, cell.getContext())}
+            </div>
+          ) : (
+            flexRender(cell.column.columnDef.cell, cell.getContext())
+          )}
         </TableCell>
       ))}
     </TableRow>
@@ -89,21 +91,22 @@ function DraggableRow({ row }: { row: any }) {
 }
 
 export default function Projects() {
-
   const { projects, currentProjectId } = useAppSelector((state) => state.workspacestate)
   const dispatch = useAppDispatch()
+
   const changeCurrentProject = (id: string) => {
     dispatch(setcurrentProjectId(id))
   }
 
   const data = projects;
-  // const [data, setData] = React.useState(projects)
-  const dataIds = data.map((item) => item.id)
+  const projectsIds = projects.map((item) => item.id)
+
   const columns: ColumnDef<Project, any>[] = [
     {
       id: "drag",
       header: () => null,
       cell: ({ row }) => <DragHandle id={row.original.id} />,
+      size: 50,
     },
     {
       accessorKey: "name",
@@ -114,25 +117,25 @@ export default function Projects() {
       accessorKey: "createdAt",
       header: "Created at",
       cell: (info) => new Date(info.getValue() as number).toLocaleString("en-US", {
-        month: "short",     // Jul
-        day: "numeric",     // 3
-        year: "numeric",    // 2025
-        hour: "numeric",    // 10
-        minute: "2-digit",  // 46
-        hour12: true        // PM
-      }), // Format the timestamp to a readable date string from milliseconds
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: true
+      }),
     },
     {
       accessorKey: "updatedAt",
       header: "Updated at",
       cell: (info) => new Date(info.getValue() as number).toLocaleString("en-US", {
-        month: "short",     // Jul
-        day: "numeric",     // 3
-        year: "numeric",    // 2025
-        hour: "numeric",    // 10
-        minute: "2-digit",  // 46
-        hour12: true        // PM
-      }), // Format the timestamp to a readable date string from milliseconds
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: true
+      }),
     },
     {
       accessorKey: "id",
@@ -144,6 +147,7 @@ export default function Projects() {
       },
     },
   ]
+
   const table = useReactTable({
     data,
     columns,
@@ -152,18 +156,31 @@ export default function Projects() {
   })
 
   const sensors = useSensors(
-    useSensor(MouseSensor),
-    useSensor(TouchSensor),
+    useSensor(MouseSensor, {
+      activationConstraint: {
+        distance: 8,
+      },
+    }),
+    useSensor(TouchSensor, {
+      activationConstraint: {
+        delay: 200,
+        tolerance: 8,
+      },
+    }),
     useSensor(KeyboardSensor)
   )
 
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event
-    if (active?.id !== over?.id) {
-      // const oldIndex = data.findIndex((i) => i.id === active.id)
-      // const newIndex = data.findIndex((i) => i.id === over!.id)
-      // setData(arrayMove(data, oldIndex, newIndex))
-      // todo be fixed
+
+    if (active?.id !== over?.id && over?.id) {
+      const oldIndex = data.findIndex((i) => i.id === active.id)
+      const newIndex = data.findIndex((i) => i.id === over.id)
+
+      if (oldIndex !== -1 && newIndex !== -1) {
+        const newData = arrayMove(data, oldIndex, newIndex)
+        dispatch(setProjects(newData))
+      }
     }
   }
 
@@ -192,7 +209,7 @@ export default function Projects() {
               ))}
             </TableHeader>
             <TableBody>
-              <SortableContext items={dataIds} strategy={verticalListSortingStrategy}>
+              <SortableContext items={projectsIds} strategy={verticalListSortingStrategy}>
                 {table.getRowModel().rows.map((row) => (
                   <DraggableRow key={row.id} row={row} />
                 ))}
