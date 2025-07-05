@@ -1,8 +1,34 @@
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::time::Duration;
+use url::Url;
 
-pub fn http_request(http_request: String) -> Result<String, Box<dyn std::error::Error>> {
+fn url_parsing(url_str: &str) -> Option<String> {
+    match Url::parse(url_str) {
+        Ok(parsed_url) => {
+            if let Some(domain) = parsed_url.domain() {
+                println!("Domain: {}", domain);
+                Some(domain.to_string())
+            } else {
+                println!("No domain found");
+                None
+            }
+        }
+        Err(e) => {
+            eprintln!("Failed to parse URL: {}", e);
+            None
+        }
+    }
+}
+
+pub fn http_request(
+    http_request: String,
+    url: String,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let _domain = url_parsing(&url).unwrap_or_else(|| {
+        eprintln!("Fatal: URL parsing failed");
+        std::process::exit(1);
+    });
     let host = "google.com";
     let port = 80;
     let addr = format!("{}:{}", host, port);

@@ -26,7 +26,12 @@ struct RequestCompletedPayload {
 }
 
 #[tauri::command]
-fn send_data_async(content: String, app_handle: AppHandle) -> Result<AsyncResponse, String> {
+fn send_data_async(
+    content: String,
+    app_handle: AppHandle,
+    url: String,
+) -> Result<AsyncResponse, String> {
+
     let request_id = Uuid::new_v4().to_string();
     let request_id_clone = request_id.clone();
 
@@ -34,7 +39,7 @@ fn send_data_async(content: String, app_handle: AppHandle) -> Result<AsyncRespon
                                                     // Spawn a thread to do the work
     thread::spawn(move || {
         // Do the actual work
-        let result = http_request(content);
+        let result = http_request(content, url);
 
         // Prepare the response
         let payload = match result {

@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "ares",
+  "productName": "Ares Proxy",
   "version": "0.1.0",
-  "identifier": "com.ares.app",
+  "identifier": "com.ares-proxy.app",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "ares",
+        "title": "Ares Proxy",
         "width": 800,
         "height": 600
       }
