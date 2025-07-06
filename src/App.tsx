@@ -28,7 +28,7 @@ export default function App() {
                         <Route path="/fuzzer" element={<Fuzzer />} />
                         <Route path="/projects" element={<Projects />} />
                     </Routes>
-                    
+
                 </SidebarInset>
             </SidebarProvider>
         </Router>

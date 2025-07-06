@@ -1,4 +1,4 @@
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, MutableRefObject, RefObject } from 'react';
 import { EditorView, basicSetup } from 'codemirror';
 import { EditorState } from '@codemirror/state';
 import { json } from '@codemirror/lang-json';
@@ -15,26 +15,27 @@ interface FuzzParameter {
 
 // HTTP Editor Component
 const RequestEditor: React.FC<{
-    content: string;
-    onContentChange: (content: string) => void;
+    viewRef: MutableRefObject<EditorView | null>
     onTextSelect: (text: string) => void;
-    fuzzParameters: FuzzParameter[];
-    onAddFuzzParameter: () => void;
-    onRemoveFuzzParameter: (id: string) => void;
-    selectedText: string;
-    isLoading: boolean;
-}> = ({
-    content,
-    onContentChange,
-    onTextSelect,
-    fuzzParameters,
-    onAddFuzzParameter,
-    onRemoveFuzzParameter,
-    selectedText,
-    isLoading
-}) => {
-        const editorRef = useRef<HTMLDivElement>(null);
-        const viewRef = useRef<EditorView | null>(null);
+    editorRef: RefObject<HTMLDivElement>
+}>
+    // : React.FC<{
+    //     content: string;
+    //     onContentChange: (content: string) => void;
+
+    //     fuzzParameters: FuzzParameter[];
+    //     onAddFuzzParameter: () => void;
+    //     onRemoveFuzzParameter: (id: string) => void;
+    //     selectedText: string;
+    //     isLoading: boolean;
+    // }>
+    = ({
+        viewRef,
+        onTextSelect,
+        editorRef
+    }) => {
+
+
 
         const getSelectedText = (): string => {
             if (!viewRef.current) return '';
@@ -47,64 +48,64 @@ const RequestEditor: React.FC<{
             return view.state.doc.sliceString(selection.from, selection.to);
         };
 
-        const replaceSelectedText = (newText: string): void => {
-            if (!viewRef.current) return;
+        // const replaceSelectedText = (newText: string): void => {
+        //     if (!viewRef.current) return;
 
-            const view = viewRef.current;
-            const selection = view.state.selection.main;
+        //     const view = viewRef.current;
+        //     const selection = view.state.selection.main;
 
-            if (selection.empty) return;
+        //     if (selection.empty) return;
 
-            const transaction = view.state.update({
-                changes: {
-                    from: selection.from,
-                    to: selection.to,
-                    insert: newText
-                }
-            });
+        //     const transaction = view.state.update({
+        //         changes: {
+        //             from: selection.from,
+        //             to: selection.to,
+        //             insert: newText
+        //         }
+        //     });
 
-            view.dispatch(transaction);
-        };
+        //     view.dispatch(transaction);
+        // };
 
         const handleTextSelection = (): void => {
             const selected = getSelectedText();
             onTextSelect(selected);
         };
 
-        const handleAddFuzzParameter = (): void => {
-            const selected = getSelectedText();
-            if (!selected) {
-                alert('Please select text to fuzz');
-                return;
-            }
-            onAddFuzzParameter();
-        };
+        // const handleAddFuzzParameter = (): void => {
+        //     const selected = getSelectedText();
+        //     if (!selected) {
+        //         alert('Please select text to fuzz');
+        //         return;
+        //     }
+        //     onAddFuzzParameter();
+        // };
 
-        const handleRemoveFuzzParameter = (id: string): void => {
-            const param = fuzzParameters.find(p => p.id === id);
-            if (param && viewRef.current) {
-                // Replace placeholder back with first value
-                const currentContent = viewRef.current.state.doc.toString();
-                const newContent = currentContent.replace(param.placeholder, param.values[0]);
+        // const handleRemoveFuzzParameter = (id: string): void => {
+        //     const param = fuzzParameters.find(p => p.id === id);
+        //     if (param && viewRef.current) {
+        //         // Replace placeholder back with first value
+        //         const currentContent = viewRef.current.state.doc.toString();
+        //         const newContent = currentContent.replace(param.placeholder, param.values[0]);
 
-                const transaction = viewRef.current.state.update({
-                    changes: {
-                        from: 0,
-                        to: viewRef.current.state.doc.length,
-                        insert: newContent
-                    }
-                });
-                viewRef.current.dispatch(transaction);
-            }
-            onRemoveFuzzParameter(id);
-        };
+        //         const transaction = viewRef.current.state.update({
+        //             changes: {
+        //                 from: 0,
+        //                 to: viewRef.current.state.doc.length,
+        //                 insert: newContent
+        //             }
+        //         });
+        //         viewRef.current.dispatch(transaction);
+        //     }
+        //     onRemoveFuzzParameter(id);
+        // };
 
         // Expose replaceSelectedText to parent
-        useEffect(() => {
-            if (viewRef.current) {
-                (viewRef.current as any).replaceSelectedText = replaceSelectedText;
-            }
-        }, []);
+        // useEffect(() => {
+        //     if (viewRef.current) {
+        //         (viewRef.current as any).replaceSelectedText = replaceSelectedText;
+        //     }
+        // }, []);
 
         useEffect(() => {
             if (editorRef.current) {
@@ -115,63 +116,63 @@ Accept: */*
 Connection: close
 
 `;
-
                 const state = EditorState.create({
                     doc: initialContent,
                     extensions: [
                         basicSetup,
                         json(),
                         EditorView.updateListener.of((update) => {
-                            if (update.docChanged) {
-                                const docText = update.state.doc.toString();
-                                onContentChange(docText);
-                            }
+                            // if (update.docChanged) {
+                            // const docText = update.state.doc.toString();
+                            // onContentChange(docText);
+                            // }
                             if (update.selectionSet) {
                                 handleTextSelection();
                             }
                         })
                     ]
                 });
-
                 const view = new EditorView({
                     state,
                     parent: editorRef.current
                 });
 
+
+
                 viewRef.current = view;
-                onContentChange(initialContent);
+                // onContentChange(initialContent);
 
                 return () => view.destroy();
             }
         }, []);
 
-        const generateFuzzRequests = (): string[] => {
-            if (fuzzParameters.length === 0) return [content];
+        // const generateFuzzRequests = (): string[] => {
+        //     if (fuzzParameters.length === 0) return [content];
 
-            const requests: string[] = [];
+        //     const requests: string[] = [];
 
-            const generateCombinations = (paramIndex: number, currentRequest: string): void => {
-                if (paramIndex >= fuzzParameters.length) {
-                    requests.push(currentRequest);
-                    return;
-                }
+        //     const generateCombinations = (paramIndex: number, currentRequest: string): void => {
+        //         if (paramIndex >= fuzzParameters.length) {
+        //             requests.push(currentRequest);
+        //             return;
+        //         }
 
-                const param = fuzzParameters[paramIndex];
-                param.values.forEach(value => {
-                    const newRequest = currentRequest.replace(param.placeholder, value);
-                    generateCombinations(paramIndex + 1, newRequest);
-                });
-            };
+        //         const param = fuzzParameters[paramIndex];
+        //         param.values.forEach(value => {
+        //             const newRequest = currentRequest.replace(param.placeholder, value);
+        //             generateCombinations(paramIndex + 1, newRequest);
+        //         });
+        //     };
 
-            generateCombinations(0, content);
-            return requests;
-        };
+        //     generateCombinations(0, content);
+        //     return requests;
+        // };
 
         return (
             <div className="flex flex-col h-full">
-                <div>
+                {/* <div> */}
 
-                    {/* <div className="mb-4">
+                {/* <div className="mb-4">
                         <button
                             onClick={handleAddFuzzParameter}
                             disabled={isLoading}
@@ -186,7 +187,7 @@ Connection: close
                         )}
                     </div> */}
 
-                    {fuzzParameters.length > 0 && (
+                {/* {fuzzParameters.length > 0 && (
                         <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded">
                             <h4 className="font-semibold mb-2">Fuzz Parameters:</h4>
                             {fuzzParameters.map(param => (
@@ -201,7 +202,7 @@ Connection: close
                                         </span>
                                     </div>
                                     <button
-                                        onClick={() => handleRemoveFuzzParameter(param.id)}
+                                        // onClick={() => handleRemoveFuzzParameter(param.id)}
                                         className="px-2 py-1 bg-red-500 text-white rounded text-sm"
                                         disabled={isLoading}
                                     >
@@ -214,7 +215,7 @@ Connection: close
                             </div>
                         </div>
                     )}
-                </div>
+                </div> */}
 
                 <div ref={editorRef} className="border border-gray-300 rounded flex-1 min-h-64" />
             </div>

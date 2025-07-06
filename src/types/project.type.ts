@@ -1,17 +1,17 @@
 // import { HttpRequest, HttpResponse } from "./http.type"
 // import { ScopeRule, Target } from "./other.type"
 
-interface ProjectSettings {
-  proxyPort: number
-  interceptEnabled: boolean
-  autoScan: boolean
-  scanDepth: 'light' | 'normal' | 'deep'
-  excludeExtensions: string[]
-  includeSubdomains: boolean
-  followRedirects: boolean
-  maxThreads: number
-  requestTimeout: number
-}
+// interface ProjectSettings {
+//   proxyPort: number
+//   interceptEnabled: boolean
+//   autoScan: boolean
+//   scanDepth: 'light' | 'normal' | 'deep'
+//   excludeExtensions: string[]
+//   includeSubdomains: boolean
+//   followRedirects: boolean
+//   maxThreads: number
+//   requestTimeout: number
+// }
 
 export interface Project {
   id: `${string}-${string}-${string}-${string}-${string}`
