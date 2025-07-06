@@ -138,8 +138,8 @@ const data = {
   ],
   projects: [
     {
-      name: "Tweaker",
-      url: "/tweaker",
+      name: "Replayer",
+      url: "/replayer",
       icon: Repeat2,
     },
     {

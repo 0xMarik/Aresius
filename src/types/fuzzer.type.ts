@@ -11,7 +11,7 @@ interface FuzzerRequest {
     response: FuzzerResponse | null;
 }
 
-interface FuzzingHistory {
+export interface FuzzerHistory {
     id: string,
     date: number,
     requests: FuzzerRequest[];
@@ -20,6 +20,11 @@ interface FuzzingHistory {
 export interface FuzzerSession{
     sessionId: string;
     name: string;
-    fuzzingHistory: FuzzingHistory[];
+    fuzzingHistory: FuzzerHistory[];
 }
+
+export interface FuzzerState {
+  fuzzerSessions: FuzzerSession[];
+  activeSessionId: string | null;
+};
 

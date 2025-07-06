@@ -1,11 +1,5 @@
-import { FuzzerSession } from '@/types/fuzzer.type';
+import { FuzzerHistory, FuzzerSession, FuzzerState } from '@/types/fuzzer.type';
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
-
-
-type FuzzerState = {
-  fuzzerSessions: FuzzerSession[];
-  activeSessionId: string | null;
-};
 
 const initialState: FuzzerState = {
   fuzzerSessions: [],
@@ -35,8 +29,23 @@ const fuzzerSlice = createSlice({
       const {sessionId} = action.payload;
       state.activeSessionId = sessionId;
     },
+
+    // Modify histories
+    addFuzzingHistory: (state, action: PayloadAction<{sessionId: string, history: FuzzerHistory}>) => {
+      const {sessionId, history} = action.payload;
+      const session = state.fuzzerSessions.find(s => s.sessionId === sessionId);
+      if (session) {
+        session.fuzzingHistory.push(history);
+      }
+    },
   },
 });
 
-export const { addSession,setSessions } = fuzzerSlice.actions;
+export const { 
+  setActiveSession,
+  removeSession,
+  addSession,
+  addFuzzingHistory,
+  setSessions } = fuzzerSlice.actions;
+
 export default fuzzerSlice.reducer;
