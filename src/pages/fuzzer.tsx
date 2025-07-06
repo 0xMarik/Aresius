@@ -12,8 +12,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { useAppSelector } from '@/hooks/redux';
+import { useAppDispatch, useAppSelector } from '@/hooks/redux';
 import ResultsTable, { RequestResult } from '@/components/result-table.components';
+import { addFuzzSession } from '@/store/slices/fuzzerSlice';
+import { Tree } from '@/components/tree.component';
 
 // Type definitions
 interface AsyncResponse {
@@ -62,6 +64,12 @@ const Fuzzer: React.FC = () => {
     const activeRequestsRef = useRef<Set<string>>(new Set());
 
     const { fuzzerSessions } = useAppSelector((state) => state.fuzzerstate)
+    const dispatch = useAppDispatch()
+
+    const handleCreateFuzzSession = () => {
+        dispatch(addFuzzSession({ name: "Default session" }))
+
+    }
 
     // Set up the event listener once when component mounts
     useEffect(() => {
@@ -456,15 +464,31 @@ Connection: close
                 draggerClassName="custom-dragger-horizontal"
                 initialSizes={[25, 75]}
             >
-                <div className='bg-muted/50 aspect-video rounded-lg p-1 w-full h-full'>
-                    <div className='bg-muted/50 gap-2 flex w-full items-center h-14 p-2'>
-                        <Button><Plus /> Create a session</Button>
+                <div className='flex flex-col gap-1 h-full'>
+                    <div className='bg-muted/50 flex w-full items-center h-14 p-2'>
+                        <Button onClick={handleCreateFuzzSession}>
+                            <Plus /> Create a session
+                        </Button>
                     </div>
-                    {
-                        fuzzerSessions.length > 0 ?
-                            fuzzerSessions.map(item => (item.name))
-                            : "Their is no session"
-                    }
+                    <div className='bg-muted/50 h-full p-2'>
+                        {
+                            fuzzerSessions.length > 0 ?
+                                <Tree data={
+                                    fuzzerSessions.map(session => ({
+                                        id: session.sessionId,
+                                        label: session.name,
+                                        children: session.fuzzingHistory.map(history => ({
+                                            id: history.id,
+                                            label: `Fuzz #${history.id} - ${history.date}`
+                                        }))
+                                    }))
+                                }
+                                    onSelect={(node: any) => console.log('Selected node:', node)}
+                                />
+
+                                : "Their is no session"
+                        }
+                    </div>
                 </div>
                 <div className='flex flex-col gap-1 h-full'>
                     <div className='bg-muted/50 gap-2 flex w-full items-center h-14 p-2'>

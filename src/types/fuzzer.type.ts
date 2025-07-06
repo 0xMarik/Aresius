@@ -21,6 +21,7 @@ export interface FuzzerSession{
     sessionId: string;
     name: string;
     fuzzingHistory: FuzzerHistory[];
+    // active: boolean
 }
 
 export interface FuzzerState {
