@@ -4,30 +4,30 @@ import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 const initialState: FuzzerState = {
   fuzzerSessions: [
     {
-      sessionId: 'fuzz-session-1',
       name: 'Default Session',
       fuzzingHistory: [
-        {
-          id: 'history-1',
-          date: 0,
-          requests: []
-        },
-        {
-          id: 'history-2',
-          date: 0,
-          requests: []
-        },
+        // {
+        //   date: 0,
+        //   requests: [
+        //     {
+        //       request: 'GET / HTTP/1.1\nHost: example.com\n\n',
+        //       url: 'http://google.com',
+        //       requestDate: new Date().toISOString(),
+        //       response: {
+        //         response: 'HTTP/1.1 200 OK\nContent-Type: text/html\n\n<html>...</html>',
+        //         responseTime: 120
+        //       }
+        //     }
+        //   ]
+        // },
       ]
     },
     {
-      sessionId: 'fuzz-session-2',
       name: 'Second Session',
-      fuzzingHistory: [
-
-      ]
+      fuzzingHistory: []
     }
   ],
-  activeSessionId: 'fuzz-session-1'
+  activeSessionIndex: 0
 };
 
 
@@ -43,45 +43,47 @@ const fuzzerSlice = createSlice({
       const {name} = action.payload;
       const tmp = state.fuzzerSessions.length
       state.fuzzerSessions.push({
-        sessionId: `fuzz-session-${tmp + 1}`,
         name: name,
         fuzzingHistory: []
       });
     },
     
-    removeSession: (state, action: PayloadAction<{sessionId: string}>) => {
-      const {sessionId} = action.payload;
-      state.fuzzerSessions = state.fuzzerSessions.filter(s => s.sessionId !== sessionId);
-    },
+    // removeSession: (state, action: PayloadAction<{sessionId: string}>) => {
+    //   const {sessionId} = action.payload;
+    //   state.fuzzerSessions = state.fuzzerSessions.filter(s => s.sessionId !== sessionId);
+    // },
 
-    setActiveSession: (state, action : PayloadAction<{sessionId: string}>) => {
-      const {sessionId} = action.payload;
-      state.activeSessionId = sessionId;
+    setActiveSession: (state, action : PayloadAction<{sessionIndex: number}>) => {
+      const {sessionIndex} = action.payload;
+      state.activeSessionIndex = sessionIndex;
     },
-    activeFuzzSession: (state, action: PayloadAction<{sessionId: string}>) => {
-      const {sessionId} = action.payload;
-      const session = state.fuzzerSessions.find(s => s.sessionId === sessionId);
+    activeFuzzSession: (state, action: PayloadAction<{sessionIndex: number}>) => {
+      const {sessionIndex} = action.payload;
+      const session = state.fuzzerSessions[sessionIndex]
       if (session) {
-        state.activeSessionId = session.sessionId;
+        state.activeSessionIndex = sessionIndex;
       } else {
-        console.warn(`Session with ID ${sessionId} not found.`);
+        console.warn(`Session with ID ${sessionIndex} not found.`);
       }
     },
 
     // Modify histories
-    addFuzzingHistory: (state, action: PayloadAction<{sessionId: string, history: FuzzerHistory}>) => {
-      const {sessionId, history} = action.payload;
-      const session = state.fuzzerSessions.find(s => s.sessionId === sessionId);
+    addFuzzingHistory: (state, action: PayloadAction<{sessionIndex: number, history: FuzzerHistory}>) => {
+      const {sessionIndex, history} = action.payload;
+      const session = state.fuzzerSessions[sessionIndex];
       if (session) {
         session.fuzzingHistory.push(history);
+      }else {
+        console.warn(`Session with ID ${sessionIndex} not found.`);
       }
     },
+
   },
 });
 
 export const { 
   setActiveSession,
-  removeSession,
+  // removeSession,
    addFuzzSession,
   addFuzzingHistory,
   activeFuzzSession,

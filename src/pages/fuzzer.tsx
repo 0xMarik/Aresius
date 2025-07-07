@@ -14,8 +14,11 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useAppDispatch, useAppSelector } from '@/hooks/redux';
 import ResultsTable, { RequestResult } from '@/components/result-table.components';
-import { addFuzzSession } from '@/store/slices/fuzzerSlice';
-import { Tree } from '@/components/tree.component';
+import { addFuzzingHistory } from '@/store/slices/fuzzerSlice';
+import FuzzSession from '@/components/fuzz-session.component';
+import { FuzzerHistory } from '@/types/fuzzer.type';
+import { Link, Route, Routes } from 'react-router-dom';
+import FuzzerHistoryCompo from '@/components/history.component';
 
 // Type definitions
 interface AsyncResponse {
@@ -63,13 +66,7 @@ const Fuzzer: React.FC = () => {
     // Store active requests to handle multiple concurrent requests
     const activeRequestsRef = useRef<Set<string>>(new Set());
 
-    const { fuzzerSessions } = useAppSelector((state) => state.fuzzerstate)
     const dispatch = useAppDispatch()
-
-    const handleCreateFuzzSession = () => {
-        dispatch(addFuzzSession({ name: "Default session" }))
-
-    }
 
     // Set up the event listener once when component mounts
     useEffect(() => {
@@ -110,6 +107,7 @@ const Fuzzer: React.FC = () => {
                         setIsLoading(false);
                         setRequestId(null);
                     }
+
                 } else {
                     console.log('Ignoring event for unknown request ID:', request_id);
                 }
@@ -352,7 +350,7 @@ const Fuzzer: React.FC = () => {
                     request: request,
                     response: '',
                     status: 'pending',
-                    timestamp: new Date()
+                    requestDate: new Date().toISOString(),
                 });
             }
 
@@ -450,49 +448,58 @@ Connection: close
     }, [isSplitReady]);
 
     const currentParam = fuzzParameters[selectedPayloadIndex];
+    const { activeSessionIndex, fuzzerSessions } = useAppSelector(state => state.fuzzerstate)
 
     useEffect(() => {
-        console.log({ results })
-    }, [results]);
+        if (activeSessionIndex === null) return;
+        if (activeRequestsRef.current.size !== 0) return; // if there are still pending requests
+        if (results.length === 0) return; // don't add empty history
+
+        // const mappedRequests = ;
+
+        // if (mappedRequests.length === 0) return;
+
+        const historyTmp: FuzzerHistory = {
+            date: Date.now(), // Use current timestamp instead of 0
+            requests: results.map(request => ({
+                request: request.request,
+                requestDate: request.requestDate,
+                url: url, // Use the actual URL from state instead of hardcoded "google.com"
+                response: {
+                    response: request.response,
+                    responseTime: 0 // You might want to calculate actual response time
+                },
+            }))
+        }
+
+        // Uncomment and dispatch the action
+        dispatch(addFuzzingHistory({ sessionIndex: activeSessionIndex, history: historyTmp }))
+
+    }, [results, dispatch])
 
     return (
-        <div className="p-4 h-full">
+        <div className="py-1 pr-1 h-full">
 
             <ReactSplit
                 direction={SplitDirection.Horizontal}
                 gutterClassName="custom-gutter-horizontal"
                 draggerClassName="custom-dragger-horizontal"
-                initialSizes={[25, 75]}
+                initialSizes={[20, 80]}
             >
-                <div className='flex flex-col gap-1 h-full'>
-                    <div className='bg-muted/50 flex w-full items-center h-14 p-2'>
-                        <Button onClick={handleCreateFuzzSession}>
-                            <Plus /> Create a session
-                        </Button>
-                    </div>
-                    <div className='bg-muted/50 h-full p-2'>
-                        {
-                            fuzzerSessions.length > 0 ?
-                                <Tree data={
-                                    fuzzerSessions.map(session => ({
-                                        id: session.sessionId,
-                                        label: session.name,
-                                        children: session.fuzzingHistory.map(history => ({
-                                            id: history.id,
-                                            label: `Fuzz #${history.id} - ${history.date}`
-                                        }))
-                                    }))
-                                }
-                                    onSelect={(node: any) => console.log('Selected node:', node)}
-                                />
-
-                                : "Their is no session"
-                        }
-                    </div>
-                </div>
+                <FuzzSession />
                 <div className='flex flex-col gap-1 h-full'>
                     <div className='bg-muted/50 gap-2 flex w-full items-center h-14 p-2'>
+                        {
+                            activeSessionIndex !== null && fuzzerSessions[activeSessionIndex]?.fuzzingHistory.map((history, index) => (
+                                <Link to={`/fuzzer/${index}`} className='text-sm'>
+                                    {new Date(history.date).toISOString()}
+                                    <Button className='size-4 text-sm'>X</Button>
+                                </Link>))
+                        }
                     </div>
+                    <Routes>
+                        <Route path=":historyId" element={<FuzzerHistoryCompo />} />
+                    </Routes>
                     <div className='bg-muted/50 gap-2 flex w-full items-center h-14 p-2'>
                         <Input
                             onChange={(e) => setUrl(e.target.value)}

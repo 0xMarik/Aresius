@@ -1,24 +1,21 @@
 interface FuzzerResponse {
-    id: string;
     response: string;
     responseTime: number;
 }
 
 interface FuzzerRequest {
-    id : string;
     url: string;
     request: string;
     response: FuzzerResponse | null;
+    requestDate: string;
 }
 
 export interface FuzzerHistory {
-    id: string,
     date: number,
     requests: FuzzerRequest[];
 }
 
 export interface FuzzerSession{
-    sessionId: string;
     name: string;
     fuzzingHistory: FuzzerHistory[];
     // active: boolean
@@ -26,6 +23,6 @@ export interface FuzzerSession{
 
 export interface FuzzerState {
   fuzzerSessions: FuzzerSession[];
-  activeSessionId: string | null;
+  activeSessionIndex: number | null;
 };
 

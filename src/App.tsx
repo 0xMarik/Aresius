@@ -25,7 +25,7 @@ export default function App() {
 
                     <Routes>
                         <Route path="/replayer" element={<Tweaker />} />
-                        <Route path="/fuzzer" element={<Fuzzer />} />
+                        <Route path="/fuzzer/*" element={<Fuzzer />} />
                         <Route path="/projects" element={<Projects />} />
                     </Routes>
 

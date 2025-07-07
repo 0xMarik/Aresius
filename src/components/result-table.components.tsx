@@ -5,7 +5,7 @@ export interface RequestResult {
     request: string;
     response: string;
     status: 'pending' | 'completed' | 'error';
-    timestamp: Date;
+    requestDate: string;
 }
 
 const ResultsTable: React.FC<{
@@ -100,7 +100,7 @@ const ResultsTable: React.FC<{
                                                 </span>
                                             </td>
                                             <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-500">
-                                                {result.timestamp.toLocaleTimeString()}
+                                                {new Date(result.requestDate).toLocaleTimeString()}
                                             </td>
                                             <td className="px-4 py-2 text-sm text-gray-900 max-w-xs">
                                                 <div className="truncate font-mono text-xs bg-gray-100 p-1 rounded">

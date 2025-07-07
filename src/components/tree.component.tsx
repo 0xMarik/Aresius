@@ -5,7 +5,7 @@ import { useAppDispatch, useAppSelector } from "@/hooks/redux"
 import { activeFuzzSession } from "@/store/slices/fuzzerSlice"
 
 type TreeNode = {
-    id: string
+    id: number
     label: string
     children?: TreeNode[]
 }
@@ -18,7 +18,7 @@ interface TreeProps {
 export const Tree: React.FC<TreeProps> = ({ data, onSelect }) => {
     return (
         <ul className="space-y-1 text-sm">
-            {data.map(node => (
+            {data.map((node) => (
                 <TreeItem key={node.id} node={node} onSelect={onSelect} />
             ))}
         </ul>
@@ -29,15 +29,17 @@ const TreeItem: React.FC<{
     node: TreeNode
     onSelect?: (node: TreeNode) => void
 }> = ({ node, onSelect }) => {
+    const { activeSessionIndex } = useAppSelector(state => state.fuzzerstate)
+
+
     const [expanded, setExpanded] = useState(false)
     const hasChildren = !!node.children?.length
     const isFolder = node.children !== undefined // Check if children property exists (even if empty)
 
-    const { activeSessionId } = useAppSelector(state => state.fuzzerstate)
     const dispatch = useAppDispatch()
 
-    const chooseSession = ({ sessionId }: { sessionId: string }) => {
-        dispatch(activeFuzzSession({ sessionId }))
+    const chooseSession = ({ sessionIndex }: { sessionIndex: number }) => {
+        dispatch(activeFuzzSession({ sessionIndex }))
     }
 
     const handleArrowClick = (e: React.MouseEvent) => {
@@ -49,7 +51,7 @@ const TreeItem: React.FC<{
 
     const handleItemClick = () => {
         // Set this node as active session
-        chooseSession({ sessionId: node.id })
+        chooseSession({ sessionIndex: node.id })
         onSelect?.(node)
     }
 
@@ -102,7 +104,7 @@ const TreeItem: React.FC<{
                     {node.label}
                 </span>
                 {
-                    activeSessionId === node.id && (<span className="ml-auto h-2 w-2 rounded-full bg-green-500" />)
+                    activeSessionIndex === node.id && (<span className="ml-auto h-2 w-2 rounded-full bg-green-500" />)
                 }
             </div>
 
