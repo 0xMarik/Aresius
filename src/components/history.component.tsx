@@ -1,7 +1,12 @@
 import { useAppSelector } from '@/hooks/redux';
 import { useParams } from 'react-router-dom';
+import ResultsTable from './result-table.components';
 
-const FuzzerHistoryCompo = () => {
+interface ParamsType {
+    isLoading: boolean
+}
+
+const FuzzerHistoryCompo = ({ isLoading}: ParamsType) => {
     const { historyId } = useParams();
     console.log("History ID:", historyId);
 
@@ -21,9 +26,11 @@ const FuzzerHistoryCompo = () => {
 
     return (
         <div>
-            <h1>Fuzzing session ID: {historyId}</h1>
             <div>
-                {session.fuzzingHistory[Number(historyId)].date}
+                <ResultsTable
+                    results={session.fuzzingHistory[Number(historyId)].requests}
+                    isLoading={isLoading}
+                />
             </div>
         </div>
     );

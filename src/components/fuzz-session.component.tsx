@@ -12,6 +12,7 @@ const FuzzSession = () => {
         dispatch(addFuzzSession({ name: "Default session" }))
 
     }
+
     return (
         <div className='flex flex-col gap-1 h-full'>
             <div className='bg-muted/50 flex w-full items-center h-13 p-2'>
@@ -20,7 +21,6 @@ const FuzzSession = () => {
                 </Button>
             </div>
             <div className='bg-muted/50 h-full p-2'>
-                {console.log(fuzzerSessions) ?? ""}
                 {
 
                     fuzzerSessions.length > 0 ?
@@ -36,6 +36,7 @@ const FuzzSession = () => {
 
                             }))
                         }
+                        // onSelect={console.log}
                         />
 
                         : "Their is no session"

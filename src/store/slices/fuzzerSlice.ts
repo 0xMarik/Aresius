@@ -1,4 +1,4 @@
-import { FuzzerHistory, FuzzerSession, FuzzerState } from '@/types/fuzzer.type';
+import { FuzzerHistory, FuzzerParameter, FuzzerSession, FuzzerState } from '@/types/fuzzer.type';
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 
 const initialState: FuzzerState = {
@@ -20,11 +20,29 @@ const initialState: FuzzerState = {
         //     }
         //   ]
         // },
-      ]
+      ],
+      payload: {
+        rawRequest : 'GET / HTTP/1.1\n\n',
+        metadata : {
+          // protocol: "http",
+          targetUrl: "http://google.com"
+        },
+        parameters : [],
+        
+      }
     },
     {
       name: 'Second Session',
-      fuzzingHistory: []
+      fuzzingHistory: [],
+      payload: {
+        rawRequest : 'GET / HTTP/1.1\n\n',
+        metadata : {
+          // protocol: "http",
+          targetUrl: "http://google.com"
+        },
+        parameters : [],
+        
+      }
     }
   ],
   activeSessionIndex: 0
@@ -41,10 +59,17 @@ const fuzzerSlice = createSlice({
     },
     addFuzzSession: (state, action : PayloadAction<{ name: string}>) => {
       const {name} = action.payload;
-      const tmp = state.fuzzerSessions.length
       state.fuzzerSessions.push({
         name: name,
-        fuzzingHistory: []
+        fuzzingHistory: [],
+        payload: { // default payload
+          rawRequest: 'GET / HTTP/1.1\n\n',
+          metadata : {
+            // protocol: "http",
+            targetUrl: "http://google.com"
+          },
+          parameters: []
+        }
       });
     },
     
@@ -78,6 +103,48 @@ const fuzzerSlice = createSlice({
       }
     },
 
+    // Payload
+
+    updatePayloadRawRequest : (state, action: PayloadAction<{content: string}>) => {
+      const {content} = action.payload;
+      if(state.activeSessionIndex !== null) {
+        state.fuzzerSessions[state.activeSessionIndex].payload.rawRequest = content;
+      }else{
+         console.error("Their is no active session!!");
+      }
+    },
+
+    addParameter: (state, action: PayloadAction< FuzzerParameter >) => {
+      if(state.activeSessionIndex !== null) {
+        const currentSession = state.fuzzerSessions[state.activeSessionIndex]
+        currentSession.payload.parameters.push({...action.payload})
+      }else{
+         console.error("Their is no active session!!");
+      }
+    },
+    loadValuesParam: (state, action: PayloadAction<{paramIndex: number, values: string}>) => {
+      const {paramIndex} = action.payload;
+      const values = action.payload.values.split('\n')
+      
+      if(state.activeSessionIndex !== null && 
+        state.fuzzerSessions[state.activeSessionIndex] &&
+        state.fuzzerSessions[state.activeSessionIndex].payload.parameters[paramIndex]
+      ) {
+        state.fuzzerSessions[state.activeSessionIndex].payload.parameters[paramIndex].values = values
+      }else {
+        console.error("Slice Error: session not activated or their is no session in the index passed or their is not parameter in the paramIndexer passed!!");
+      }
+
+    },
+    setTargerUrl :(state, action: PayloadAction<{targetUrl: string}>) => {
+      if(state.activeSessionIndex !== null) {
+        const currentSession = state.fuzzerSessions[state.activeSessionIndex]
+        currentSession.payload.metadata.targetUrl = action.payload.targetUrl;
+      }else{
+         console.error("Their is no active session!!");
+      }
+    }
+
   },
 });
 
@@ -87,6 +154,10 @@ export const {
    addFuzzSession,
   addFuzzingHistory,
   activeFuzzSession,
-  setSessions } = fuzzerSlice.actions;
+  setSessions,
+updatePayloadRawRequest,
+addParameter,
+loadValuesParam,
+setTargerUrl} = fuzzerSlice.actions;
 
 export default fuzzerSlice.reducer;

@@ -3,6 +3,7 @@ import { ChevronRight, ChevronDown, Folder, File } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useAppDispatch, useAppSelector } from "@/hooks/redux"
 import { activeFuzzSession } from "@/store/slices/fuzzerSlice"
+import { useNavigate } from "react-router-dom"
 
 type TreeNode = {
     id: number
@@ -30,7 +31,7 @@ const TreeItem: React.FC<{
     onSelect?: (node: TreeNode) => void
 }> = ({ node, onSelect }) => {
     const { activeSessionIndex } = useAppSelector(state => state.fuzzerstate)
-
+    const navigate = useNavigate();
 
     const [expanded, setExpanded] = useState(false)
     const hasChildren = !!node.children?.length
@@ -39,6 +40,7 @@ const TreeItem: React.FC<{
     const dispatch = useAppDispatch()
 
     const chooseSession = ({ sessionIndex }: { sessionIndex: number }) => {
+        navigate(`/fuzzer/session/${sessionIndex}`)
         dispatch(activeFuzzSession({ sessionIndex }))
     }
 

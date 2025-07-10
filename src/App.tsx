@@ -9,7 +9,7 @@ import {
 
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import Fuzzer from "./pages/fuzzer";
-import Tweaker from "./pages/tweaker/tweaker";
+import Tweaker from "./pages/tweaker/replayer";
 import Projects from "./pages/projects.page";
 import Header from "./components/header.component";
 
