@@ -148,8 +148,11 @@ const Fuzzer: React.FC = () => {
                         <Route path="history/:historyId" element={<FuzzerHistoryCompo
                             isLoading={isLoading}
                         />} />
-                        <Route path="session/:sessionIndex" element={<FuzzRequestPayload
-                        />} />
+                        <Route path="session/:sessionIndex" element={
+
+                            <FuzzRequestPayload
+                            />
+                        } />
                         <Route path="*" element={<h1>Choose a session</h1>} />
                     </Routes>
                 </div>

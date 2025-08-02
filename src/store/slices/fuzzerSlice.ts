@@ -22,7 +22,14 @@ const initialState: FuzzerState = {
         // },
       ],
       payload: {
-        rawRequest : 'GET / HTTP/1.1\n\n',
+        rawRequest : `GET / HTTP/1.1
+Host: google.com
+User-Agent: Rust-TCP-Client/1.0
+Accept: */*
+custom
+Connection: close
+
+`,
         metadata : {
           // protocol: "http",
           targetUrl: "http://google.com"

@@ -1,9 +1,14 @@
-import { StreamLanguage } from '@codemirror/language';
+import { LanguageSupport, StreamLanguage } from '@codemirror/language';
+import { EditorView } from '@codemirror/view';
 
 const httpMode = {
     token(stream: any, state: any) {
         // Skip whitespace
         if (stream.eatSpace()) return null;
+
+        if (stream.match(/^\{\{.*?\}\}/)) {
+            return 'variable';
+        }
 
         // Start of line
         if (stream.sol()) {
@@ -86,9 +91,10 @@ const httpMode = {
         }
 
         // Body parsing based on content type
-        if (state.inBody) {
-            return parseBody(stream, state);
-        }
+        // if (state.inBody) {
+        //     return parseBody(stream, state);
+        // }
+
 
         // Everything else
         stream.next();
@@ -106,114 +112,125 @@ const httpMode = {
     }
 };
 
-function parseBody(stream: any, state: any) {
-    switch (state.contentType) {
-        case 'json':
-            return parseJsonBody(stream, state);
-        case 'html':
-        case 'xml':
-            return parseHtmlBody(stream, state);
-        default:
-            return parseTextBody(stream, state);
-    }
-}
+// function parseBody(stream: any, state: any) {
+//     switch (state.contentType) {
+//         case 'json':
+//             return parseJsonBody(stream, state);
+//         case 'html':
+//         case 'xml':
+//             return parseHtmlBody(stream, state);
+//         default:
+//             return parseTextBody(stream, state);
+//     }
+// }
 
-function parseJsonBody(stream: any, state: any) {
-    // JSON brackets
-    if (stream.match(/^[{}\[\]]/)) {
-        return 'bracket';
-    }
+// function parseJsonBody(stream: any, state: any) {
+//     if (stream.match(/^\{\{[^}]*\}\}/)) {
+//         return 'variable';
+//     }
+//     // JSON brackets
+//     if (stream.match(/^[{}\[\]]/)) {
+//         return 'bracket';
+//     }
 
-    // JSON strings
-    if (stream.match(/^"([^"\\]|\\.)*"/)) {
-        return 'string';
-    }
+//     // JSON strings
+//     if (stream.match(/^"([^"\\]|\\.)*"/)) {
+//         return 'string';
+//     }
 
-    // JSON numbers
-    if (stream.match(/^-?\d+(\.\d+)?([eE][+-]?\d+)?/)) {
-        return 'number';
-    }
+//     // JSON numbers
+//     if (stream.match(/^-?\d+(\.\d+)?([eE][+-]?\d+)?/)) {
+//         return 'number';
+//     }
 
-    // JSON booleans/null
-    if (stream.match(/^(true|false|null)\b/)) {
-        return 'atom';
-    }
+//     // JSON booleans/null
+//     if (stream.match(/^(true|false|null)\b/)) {
+//         return 'atom';
+//     }
 
-    // JSON operators
-    if (stream.match(/^[,:]/)) {
-        return 'operator';
-    }
+//     // JSON operators
+//     if (stream.match(/^[,:]/)) {
+//         return 'operator';
+//     }
 
-    // JSON property names (keys)
-    if (stream.match(/^[a-zA-Z_$][a-zA-Z0-9_$]*(?=\s*:)/)) {
-        return 'property';
-    }
+//     // JSON property names (keys)
+//     if (stream.match(/^[a-zA-Z_$][a-zA-Z0-9_$]*(?=\s*:)/)) {
+//         return 'property';
+//     }
 
-    // Skip other characters
-    stream.next();
-    return null;
-}
+//     // Skip other characters
+//     stream.next();
+//     return null;
+// }
 
-function parseHtmlBody(stream: any, state: any) {
-    // HTML comments
-    if (stream.match(/^<!--[\s\S]*?-->/)) {
-        return 'comment';
-    }
+// function parseHtmlBody(stream: any, state: any) {
+//     if (stream.match(/^\{\{[^}]*\}\}/)) {
+//         return 'variable';
+//     }
+//     // HTML comments
+//     if (stream.match(/^<!--[\s\S]*?-->/)) {
+//         return 'comment';
+//     }
 
-    // HTML tags
-    if (stream.match(/^<\/?[a-zA-Z][a-zA-Z0-9]*(?:\s[^>]*)?>/) ||
-        stream.match(/^<[a-zA-Z][a-zA-Z0-9]*(?:\s[^>]*)?>/)) {
-        return 'tag';
-    }
+//     // HTML tags
+//     if (stream.match(/^<\/?[a-zA-Z][a-zA-Z0-9]*(?:\s[^>]*)?>/) ||
+//         stream.match(/^<[a-zA-Z][a-zA-Z0-9]*(?:\s[^>]*)?>/)) {
+//         return 'tag';
+//     }
 
-    // HTML attributes
-    if (stream.match(/^[a-zA-Z-]+(?==)/)) {
-        return 'attribute';
-    }
+//     // HTML attributes
+//     if (stream.match(/^[a-zA-Z-]+(?==)/)) {
+//         return 'attribute';
+//     }
 
-    // HTML attribute values
-    if (stream.match(/^"[^"]*"/) || stream.match(/^'[^']*'/)) {
-        return 'string';
-    }
+//     // HTML attribute values
+//     if (stream.match(/^"[^"]*"/) || stream.match(/^'[^']*'/)) {
+//         return 'string';
+//     }
 
-    // HTML entities
-    if (stream.match(/^&[a-zA-Z0-9]+;/)) {
-        return 'atom';
-    }
+//     // HTML entities
+//     if (stream.match(/^&[a-zA-Z0-9]+;/)) {
+//         return 'atom';
+//     }
 
-    // Skip other characters
-    stream.next();
-    return null;
-}
+//     // Skip other characters
+//     stream.next();
+//     return null;
+// }
 
-function parseTextBody(stream: any, state: any) {
-    // For plain text, just consume characters without special highlighting
-    stream.next();
-    return null;
-}
+// function parseTextBody(stream: any, state: any) {
+//     if (stream.match(/^\{\{[^}]*\}\}/)) {
+//         return 'variable';
+//     }
+//     // For plain text, just consume characters without special highlighting
+//     stream.next();
+//     return null;
+// }
 
 export const httpStreamLanguage = StreamLanguage.define(httpMode);
 
 // Custom theme for HTTP highlighting with body-specific styles
-// export const httpTheme = EditorView.theme({
-//     '.cm-keyword': { color: '#ff6b6b', fontWeight: 'bold' }, // HTTP methods
-//     '.cm-string': { color: '#4ecdc4' }, // URLs and strings
-//     '.cm-number': { color: '#45b7d1' }, // HTTP version and numbers
-//     '.cm-property': { color: '#96ceb4', fontWeight: 'bold' }, // Header names and JSON keys
-//     '.cm-operator': { color: '#74b9ff' }, // Colons and JSON operators
-//     '.cm-bracket': { color: '#fd79a8' }, // JSON brackets
-//     '.cm-atom': { color: '#fdcb6e' }, // JSON booleans/null and HTML entities
-//     '.cm-tag': { color: '#ff7675' }, // HTML tags
-//     '.cm-attribute': { color: '#a29bfe' }, // HTML attributes
-//     '.cm-comment': { color: '#636e72', fontStyle: 'italic' } // HTML comments
-// });
+export const httpTheme = EditorView.theme({
+    '.cm-keyword': { color: '#ff6b6b', fontWeight: 'bold' }, // HTTP methods
+    '.cm-string': { color: '#4ecdc4' }, // URLs and strings
+    '.cm-number': { color: '#45b7d1' }, // HTTP version and numbers
+    '.cm-property': { color: '#96ceb4', fontWeight: 'bold' }, // Header names and JSON keys
+    '.cm-operator': { color: '#74b9ff' }, // Colons and JSON operators
+    '.cm-bracket': { color: '#fd79a8' }, // JSON brackets
+    '.cm-atom': { color: '#fdcb6e' }, // JSON booleans/null and HTML entities
+    '.cm-tag': { color: '#ff7675' }, // HTML tags
+    '.cm-attribute': { color: '#a29bfe' }, // HTML attributes
+    '.cm-comment': { color: '#636e72', fontStyle: 'italic' }, // HTML comments
+    '.cm-variable': { color: '#e17055', fontWeight: 'bold', backgroundColor: '#ffeaa7' } // Template variables
+});
 
 // Complete language support
-// export function http() {
-//     return new LanguageSupport(httpStreamLanguage, [
-//         // Add additional extensions here if needed
-//     ]);
-// }
+export function http() {
+    return new LanguageSupport(httpStreamLanguage, [
+        // Add additional extensions here if needed
+        httpTheme
+    ]);
+}
 
 // Example usage:
 /*
