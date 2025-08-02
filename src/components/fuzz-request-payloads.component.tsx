@@ -380,7 +380,7 @@
 import React from 'react';
 import { useAppSelector } from '@/hooks/redux';
 
-import RequestEditor from './request-editor.component';
+import RequestEditor from './request-editor/request-editor.component';
 import PayloadConfigurator from './payloads-configurator.component';
 import ReactSplit, { SplitDirection } from '@devbookhq/splitter';
 

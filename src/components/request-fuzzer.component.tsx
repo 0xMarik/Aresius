@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
-import RequestEditor from './request-editor.component'
+import RequestEditor from './request-editor/request-editor.component'
 import { EditorView } from 'codemirror';
 import { Button } from './ui/button';
 import { Minus, Plus } from 'lucide-react';
