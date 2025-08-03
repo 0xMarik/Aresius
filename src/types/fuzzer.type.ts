@@ -11,42 +11,38 @@ export interface FuzzerRequest {
     status: 'pending' | 'completed' | 'error';
 }
 
+// ********************************************** //
+
+// const request : FuzzerRequest = {
+//     targetUrl: 'google.com',
+//     request: 'GET / HTTP/1.1',
+//     response: {
+//         response: 'HTTP 200 OK',
+//         responseTime: 0
+//     },
+//     requestDate: new Date().toISOString(),
+//     status: 'pending' // | 'completed' | 'error'
+// } 
+
+// ********************************************** //
+
+// export interface FuzzerHistory {
+//     date: Date,
+//     requests: FuzzerRequest[];
+// }
+
+// export interface FuzzerSession{
+//     name: string;
+//     fuzzingHistory: FuzzerHistory[];
+//     payload: FuzzerPayload;
+//     // active: boolean
+// }
 
 
-
-export interface FuzzerHistory {
-    date: number,
-    requests: FuzzerRequest[];
-}
-
-export interface FuzzerSession{
-    name: string;
-    fuzzingHistory: FuzzerHistory[];
-    payload: FuzzerPayload;
-    // active: boolean
-}
-
-export interface FuzzerParameter 
-{
-  name: string; // NAME in {{NAME}}
-  replacedValue: string, // the original value before replaced by the place holder
-  payloadSource: PayloadSource; // options of thr source of wordlist
-  values: string[]; // the world list
-}
-
-export interface FuzzerPayload {
-    rawRequest: string;
-    parameters: FuzzerParameter[],
-    metadata: {
-        // protocol: 'http' | 'websocket' | 'grpc'; // Request type
-        targetUrl: string; // Moved from parameter level /// RFC 3986 | ex: http://example.com:80
-    };
-}
-
-export interface FuzzerState {
-  fuzzerSessions: FuzzerSession[];
-  activeSessionIndex: number | null;
-};
+// export interface FuzzerState {
+//   fuzzerSessions: FuzzerSession[];
+//   activeSessionIndex: number | null;
+// };
 
 export type PayloadSource = 
   | 'library' // Predefined payload library
@@ -54,7 +50,86 @@ export type PayloadSource =
   | 'generator'
   | 'manual';
 
-interface FuzzerResult {
-    rawResponse: string;
-    ResponseTime: number; // miliseconds
+// interface FuzzerResult {
+//     rawResponse: string;
+//     ResponseTime: number; // miliseconds
+// }
+
+
+
+export interface HighlightRange {
+    id: string;
+    from: number;
+    to: number;
+    originalText: string;
+    isActive: boolean;
 }
+
+export interface FuzzerParameter {
+    // id: string; // New: unique identifier for each parameter
+    // name: string; // e.g., 'FUZZ_1', 'FUZZ_2'
+    payloadSource: 'manual' | 'wordlist' | 'generator';
+    // replacedValue: string; // The original text that was replaced
+    values: string[];
+    highlightRange: HighlightRange; // Links to the corresponding highlight range
+}
+
+interface SessionPayload {
+    rawRequest: string;
+    parameters: FuzzerParameter[];
+    // highlightRanges: HighlightRange[]; // New: stores all highlight ranges
+    metadata: {
+        targetUrl: string;
+    };
+}
+
+export interface FuzzingHistory {
+    date: Date;
+    requests: FuzzerRequest[]; // Your existing request type
+}
+
+export interface FuzzerSession {
+    name: string;
+    fuzzingHistory: FuzzingHistory[];
+    payload: SessionPayload;
+    selectedHighlightId: string | null;
+}
+
+export interface FuzzerState {
+    fuzzerSessions: FuzzerSession[];
+    activeSessionIndex: number | null;
+}
+
+// *********************************************** //
+
+
+// const fuzzerState: FuzzerState = {
+//     fuzzerSessions: [{
+//         fuzzingHistory: [],
+//         name: 'Default Session',
+//         payload: {
+//             rawRequest: 'GET / HTTP/1.1\nHost: {{targetUrl}}\n\n',
+//             parameters: [{
+//                 highlightRange: {
+//                 id: 'range-1',
+//                 from: 0,
+//                 to: 0,
+//                 originalText: '',
+//                 isActive: false
+//             }, // Default highlight range ID
+//                 id: 'param-1',
+//                 name: 'FUZZ_1',
+//                 payloadSource: 'manual',
+//                 replacedValue: '',
+//                 values: ['/page', '/', '/home', '/about', '/contact', '/products', '/services', '/blog', '/faq', '/terms', '/privacy', '/help', '/support', '/login', '/register', '/dashboard', '/profile', ]
+//             }],
+//             metadata: {
+//                 targetUrl: 'http://example.com:80'
+//             }
+//         }
+//     }],
+//     activeSessionIndex: 0,
+//     selectedHighlightId: "range-1",
+// };
+
+// *********************************************** //

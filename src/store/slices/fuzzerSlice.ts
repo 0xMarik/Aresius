@@ -1,58 +1,20 @@
-import { FuzzerHistory, FuzzerParameter, FuzzerSession, FuzzerState } from '@/types/fuzzer.type';
+import { FuzzingHistory, FuzzerParameter, FuzzerSession, FuzzerState, HighlightRange } from '@/types/fuzzer.type';
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 
-const initialState: FuzzerState = {
-  fuzzerSessions: [
-    {
-      name: 'Default Session',
-      fuzzingHistory: [
-        // {
-        //   date: 0,
-        //   requests: [
-        //     {
-        //       request: 'GET / HTTP/1.1\nHost: example.com\n\n',
-        //       url: 'http://google.com',
-        //       requestDate: new Date().toISOString(),
-        //       response: {
-        //         response: 'HTTP/1.1 200 OK\nContent-Type: text/html\n\n<html>...</html>',
-        //         responseTime: 120
-        //       }
-        //     }
-        //   ]
-        // },
-      ],
-      payload: {
-        rawRequest : `GET / HTTP/1.1
-Host: google.com
-User-Agent: Rust-TCP-Client/1.0
-Accept: */*
-custom
-Connection: close
-
-`,
-        metadata : {
-          // protocol: "http",
-          targetUrl: "http://google.com"
+const initialState : FuzzerState = {
+    fuzzerSessions: [{
+        fuzzingHistory: [],
+        name: 'Default Session',
+        payload: {
+            rawRequest: 'GET / HTTP/1.1\nHost: www.google.com\n\n',
+            parameters: [],
+            metadata: {
+                targetUrl: 'http://example.com:80'
+            }
         },
-        parameters : [],
-        
-      }
-    },
-    {
-      name: 'Second Session',
-      fuzzingHistory: [],
-      payload: {
-        rawRequest : 'GET / HTTP/1.1\n\n',
-        metadata : {
-          // protocol: "http",
-          targetUrl: "http://google.com"
-        },
-        parameters : [],
-        
-      }
-    }
-  ],
-  activeSessionIndex: 0
+        selectedHighlightId: null,
+    }],
+    activeSessionIndex: 0,
 };
 
 
@@ -76,7 +38,8 @@ const fuzzerSlice = createSlice({
             targetUrl: "http://google.com"
           },
           parameters: []
-        }
+        },
+        selectedHighlightId: null,
       });
     },
     
@@ -100,13 +63,72 @@ const fuzzerSlice = createSlice({
     },
 
     // Modify histories
-    addFuzzingHistory: (state, action: PayloadAction<{sessionIndex: number, history: FuzzerHistory}>) => {
+    addFuzzingHistory: (state, action: PayloadAction<{sessionIndex: number, history: FuzzingHistory}>) => {
       const {sessionIndex, history} = action.payload;
       const session = state.fuzzerSessions[sessionIndex];
       if (session) {
         session.fuzzingHistory.push(history);
       }else {
         console.warn(`Session with ID ${sessionIndex} not found.`);
+      }
+    },
+
+    setContent: (state, action: PayloadAction<{ rawRequest: string }>) => {
+  if (state.activeSessionIndex !== null) {
+    state.fuzzerSessions[state.activeSessionIndex].payload.rawRequest = action.payload.rawRequest;
+  }
+},
+
+
+    addParameter: (state, action: PayloadAction<{highlightRange: HighlightRange}>) => {
+      const {highlightRange} = action.payload;
+      if(state.activeSessionIndex !== null) {
+        const currentSession = state.fuzzerSessions[state.activeSessionIndex]
+        currentSession.payload.parameters.push({
+          payloadSource: 'manual',
+          values: ['payload1', 'payload2', 'payload3', 'payload4'],
+          highlightRange: {...highlightRange},
+        })
+      }else{
+         console.error("Their is no active session!!");
+      }
+    },
+
+    setParameters: (state, action: PayloadAction<{parameters: FuzzerParameter[]}>) => {
+      const {parameters} = action.payload;
+      if(state.activeSessionIndex !== null) {
+        const currentSession = state.fuzzerSessions[state.activeSessionIndex]
+        currentSession.payload.parameters = parameters;
+      } else {
+        console.error("Their is no active session!!");
+      }
+    },
+    removeParameter: (state, action: PayloadAction<{paramId: string}>) => {
+      const {paramId} = action.payload;
+      if(state.activeSessionIndex !== null) {
+        const currentSession = state.fuzzerSessions[state.activeSessionIndex]
+        currentSession.payload.parameters = currentSession.payload.parameters.filter(param => param.highlightRange.id !== paramId);
+      } else {
+        console.error("Their is no active session!!");
+      }
+    },
+
+    setSelectedParameter: (state, action: PayloadAction<{parameterId: string | null}>) => {
+      const {parameterId} = action.payload;
+      if(state.activeSessionIndex !== null) {
+        const currentSession = state.fuzzerSessions[state.activeSessionIndex];
+        const parameter = currentSession.payload.parameters.find(param => param.highlightRange.id === parameterId);
+        if (parameter) {
+          currentSession.selectedHighlightId = parameter.highlightRange.id;
+        } 
+        else if (parameterId === null) {
+          currentSession.selectedHighlightId = null; // Deselect if null
+        }
+        else {
+          console.warn(`Parameter with ID ${parameterId} not found in the current session.`);
+        }
+      }else{
+         console.error("Their is no active session!!");
       }
     },
 
@@ -121,14 +143,7 @@ const fuzzerSlice = createSlice({
       }
     },
 
-    addParameter: (state, action: PayloadAction< FuzzerParameter >) => {
-      if(state.activeSessionIndex !== null) {
-        const currentSession = state.fuzzerSessions[state.activeSessionIndex]
-        currentSession.payload.parameters.push({...action.payload})
-      }else{
-         console.error("Their is no active session!!");
-      }
-    },
+
     loadValuesParam: (state, action: PayloadAction<{paramIndex: number, values: string}>) => {
       const {paramIndex} = action.payload;
       const values = action.payload.values.split('\n')
@@ -165,6 +180,10 @@ export const {
 updatePayloadRawRequest,
 addParameter,
 loadValuesParam,
+setSelectedParameter,
+setParameters,
+removeParameter,
+setContent,
 setTargerUrl} = fuzzerSlice.actions;
 
 export default fuzzerSlice.reducer;

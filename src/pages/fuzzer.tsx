@@ -15,31 +15,11 @@ import { useAppDispatch, useAppSelector } from '@/hooks/redux';
 // import ResultsTable from '@/components/result-table.components';
 import { addFuzzingHistory, setTargerUrl } from '@/store/slices/fuzzerSlice';
 import FuzzSession from '@/components/fuzz-session.component';
-import { FuzzerHistory, FuzzerPayload, FuzzerRequest } from '@/types/fuzzer.type';
+import { FuzzingHistory, FuzzerRequest } from '@/types/fuzzer.type';
 import { Link, Route, Routes } from 'react-router-dom';
 import FuzzerHistoryCompo from '@/components/history.component';
 import FuzzRequestPayload from '@/components/fuzz-request-payloads.component';
 
-// Type definitions
-interface AsyncResponse {
-    request_id: string;
-}
-
-interface RequestCompletedPayload {
-    request_id: string;
-    result?: string;
-    error?: string;
-    response_time?: number;
-}
-
-interface FuzzParameter {
-    id: string;
-    placeholder: string;
-    originalText: string;
-    values: string[];
-    payloadType: 'manual' | 'hosted-file' | 'generator';
-    selectedFile?: string;
-}
 
 interface PendingRequest {
     requestId: string;
@@ -70,8 +50,8 @@ const Fuzzer: React.FC = () => {
         if (!currentSessionId) return; // don't add without session ID
         if (isLoading) return;
 
-        const historyTmp: FuzzerHistory = {
-            date: Date.now(),
+        const historyTmp: FuzzingHistory = {
+            date: new Date(),
             requests: currentSessionResults.map(request => ({
                 request: request.request,
                 requestDate: request.requestDate,
