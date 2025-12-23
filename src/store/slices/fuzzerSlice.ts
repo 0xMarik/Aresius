@@ -29,10 +29,10 @@ const fuzzerSlice = createSlice({
     addFuzzSession: (state, action : PayloadAction<{ name: string}>) => {
       const {name} = action.payload;
       state.fuzzerSessions.push({
-        name: name,
+        name: name + ` ${state.fuzzerSessions.length + 1}`,
         fuzzingHistory: [],
         payload: { // default payload
-          rawRequest: 'GET / HTTP/1.1\n\n',
+          rawRequest: 'GET / HTTP/1.1\nHost: facebook.com\n\n',
           metadata : {
             // protocol: "http",
             targetUrl: "http://google.com"
@@ -86,7 +86,7 @@ const fuzzerSlice = createSlice({
         const currentSession = state.fuzzerSessions[state.activeSessionIndex]
         currentSession.payload.parameters.push({
           payloadSource: 'manual',
-          values: ['payload1', 'payload2', 'payload3', 'payload4'],
+          values: [],
           highlightRange: {...highlightRange},
         })
       }else{

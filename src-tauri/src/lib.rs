@@ -4,63 +4,32 @@ mod http_request;
 
 mod ares_utils;
 mod structs;
-use structs::FuzzerPayload;
-
-use serde::Serialize;
-use std::thread;
 
 mod fuzzer;
-use fuzzer::fuzzing;
-
-use std::time::Duration;
-use tauri::AppHandle;
-use tauri::Emitter;
-use uuid::Uuid;
+// src-tauri/src/main.rs
+mod types;
+use types::*;
 
 #[tauri::command]
-fn greet(content: FuzzerPayload, session_index: u32, app_handle: AppHandle) {
-    // let FuzzerPayload {
-    //     raw_request,
-    //     metadata,
-    //     parameters,
-    // } = content;
+async fn process_fuzzer_session(session: FuzzerSession) -> Result<String, String> {
+    println!("Received session: {}", session.name);
+    println!("Raw request: {}", session.payload.raw_request);
+    println!("Target URL: {}", session.payload.metadata.target_url);
 
-    // println!(
-    //     "{raw_request},{:?}, {:?}, {session_index}",
-    //     metadata, parameters
-    // );
+    // Process your fuzzer session here
+    for param in &session.payload.parameters {
+        println!(
+            "Parameter from {} with {} values",
+            format!("{:?}", param.payload_source),
+            param.values.len()
+        );
+        for value in &param.values {
+            println!(" - Value: {}", value);
+        }
+    }
 
-    fuzzing(content);
-
-    // for i in 0..5 {
-    //     let app_handle = app_handle.clone();
-    //     let id = Uuid::new_v4().to_string();
-    //     let index = i;
-
-    //     thread::spawn(move || {
-    //         let sleep_time = Duration::from_secs(2 + index); // Simulate different durations
-    //         thread::sleep(sleep_time);
-
-    //         let result = TaskResult {
-    //             id,
-    //             message: format!("Thread {} finished after {:?}!", i, sleep_time),
-    //         };
-
-    //         let _ = app_handle.emit("greet-finished", result).unwrap();
-    //     });
-    // }
-}
-
-#[derive(Serialize)]
-struct AsyncResponse {
-    request_id: String,
-}
-
-#[derive(Serialize, Clone)]
-struct RequestCompletedPayload {
-    request_id: String,
-    result: Option<String>,
-    error: Option<String>,
+    // Return success
+    Ok(format!("Processed session: {}", session.name))
 }
 
 // #[tauri::command]
@@ -104,7 +73,7 @@ struct RequestCompletedPayload {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![greet])
+        .invoke_handler(tauri::generate_handler![process_fuzzer_session])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

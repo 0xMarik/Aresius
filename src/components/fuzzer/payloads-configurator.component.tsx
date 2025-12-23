@@ -9,10 +9,10 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useAppDispatch, useAppSelector } from "@/hooks/redux";
 import { Textarea } from "@/components/ui/textarea"
 import { loadValuesParam } from "@/store/slices/fuzzerSlice";
+import { FuzzerParameter } from "@/types/fuzzer.type";
 
 export default function PayloadConfigurator() {
-    const [selectedType, setSelectedType] = useState("hosted-file");
-    const [selectedFile, setSelectedFile] = useState("");
+    // const [selectedType, setSelectedType] = useState("hosted-file");
 
     const { activeSessionIndex, fuzzerSessions } = useAppSelector(state => state.fuzzerstate)
 
@@ -21,30 +21,44 @@ export default function PayloadConfigurator() {
     }
 
     const session = fuzzerSessions[activeSessionIndex]
-    if (!session) return <h1>session not found</h1>
+    if (session === undefined) return <h1>session not found</h1>
 
     const { parameters } = session.payload
+
+    // const { parameters } = session.payload
 
     // if (parameters.length == 0) return;
 
     // paramters it has always at least on value cause if not this component will not be redred at first
-    const [selectedParamIndex, setSelectedParamIndex] = useState(0)
+    const [selectedParam, setSelectedParam] = useState<FuzzerParameter | null>(null)
     const dispatch = useAppDispatch()
 
-    const changeParam = (value: string) => {
-        setSelectedParamIndex(Number(value) || 0)
+    const IdToParameter = (id: string | null) => {
+        if (id === null) return null;
+        return parameters.find(param => param.highlightRange.id === id) || null;
     }
+
+    useEffect(() => {
+        setSelectedParam(IdToParameter(session.selectedHighlightId));
+
+    }, [session.selectedHighlightId])
+
+
+    // const changeParam = (value: string) => {
+    //     console.log("change param", value)
+    //     setSelectedParam(IdToParameter(value))
+    // }
 
     const handleValues = (event: any) => {
 
         dispatch(loadValuesParam({
-            paramIndex: selectedParamIndex,
+            paramIndex: parameters.findIndex(param => param.highlightRange.id === selectedParam?.highlightRange.id),
             values: event.target.value
         }))
     }
 
     return (
-        <Tabs defaultValue="payload" className="w-full max-w-lg p-4">
+        selectedParam === null ? "Select a param" : <Tabs defaultValue="payload" className="w-full max-w-lg p-4">
             <TabsList>
                 <TabsTrigger value="payload">Payload</TabsTrigger>
                 <TabsTrigger value="preprocessors">Preprocessors</TabsTrigger>
@@ -57,15 +71,16 @@ export default function PayloadConfigurator() {
                         <Label htmlFor="payloadNumber">Payload #</Label>
                         <Select
                             defaultValue={"0"}
-                            onValueChange={changeParam}>
+                        // onValueChange={changeParam}
+                        >
                             <SelectTrigger className="w-[180px]">
                                 <SelectValue />
                             </SelectTrigger>
                             <SelectContent >
                                 {
                                     parameters.map((param, index) => (
-                                        <SelectItem key={param.name} value={String(index)}>
-                                            {param.name}
+                                        <SelectItem key={index} value={String(index)}>
+                                            {param.highlightRange.id}
                                         </SelectItem>
                                     ))
                                 }
@@ -74,20 +89,22 @@ export default function PayloadConfigurator() {
                     </div>
                     <div>
                         <Label htmlFor="placeholder">Placeholder</Label>
-                        <Input id="placeholder" disabled placeholder="(empty)" value={parameters[selectedParamIndex].replacedValue} />
+                        <Input id="placeholder" disabled placeholder="(empty)" value={selectedParam.highlightRange.originalText} />
                     </div>
                 </div>
 
                 <div>
                     <Label>Type</Label>
-                    <Select defaultValue={parameters[selectedParamIndex].payloadSource} onValueChange={setSelectedType}>
+                    <Select defaultValue={selectedParam.payloadSource}
+                    // onValueChange={setSelectedType}
+                    >
                         <SelectTrigger>
                             <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                            <SelectItem value="library">Library</SelectItem>
+                            {/* <SelectItem value="library">Library</SelectItem>
                             <SelectItem value="file">File</SelectItem>
-                            <SelectItem value="generator">Generator</SelectItem>
+                            <SelectItem value="generator">Generator</SelectItem> */}
                             <SelectItem value="manual">Manual</SelectItem>
                         </SelectContent>
                     </Select>
@@ -97,7 +114,7 @@ export default function PayloadConfigurator() {
                     <Label>Selected File</Label>
                     <Textarea
                         className="h-full"
-                        value={parameters[selectedParamIndex].values.join('\n')}
+                        // value={parameters[selectedParamIndex].values.join('\n')}
                         onChange={handleValues}>
                     </Textarea>
 

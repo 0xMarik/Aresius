@@ -1,13 +1,13 @@
 import { basicSetup, EditorView } from "codemirror";
-import { Decoration, keymap, ViewPlugin } from "@codemirror/view";
-import { useEffect, useRef, useState } from "react";
-import { EditorState, SelectionRange } from '@codemirror/state';
-import { http } from "../http-parser.component";
-import { oneDark } from "@codemirror/theme-one-dark";
+import { Decoration, ViewPlugin } from "@codemirror/view";
+import { useEffect, useRef, } from "react";
+import { EditorState, } from '@codemirror/state';
+import { http } from "../../http-parser.component";
+// import { oneDark } from "@codemirror/theme-one-dark";
 import { javascript } from '@codemirror/lang-javascript';
 import { Minus, Plus } from "lucide-react";
-import { Button } from "../ui/button";
-import { Badge } from "../ui/badge";
+import { Button } from "../../ui/button";
+import { Badge } from "../../ui/badge";
 import { RangeSetBuilder } from "@codemirror/state";
 import { useAppDispatch, useAppSelector } from "@/hooks/redux";
 import { addParameter, removeParameter, setParameters, setSelectedParameter, setContent } from '@/store/slices/fuzzerSlice'
@@ -24,8 +24,6 @@ const fullHeightTheme = EditorView.theme({
         overflow: 'auto',
     },
 });
-
-
 
 interface HighlightRange {
     from: number;
@@ -97,7 +95,7 @@ const fuzzerHighlighter = ViewPlugin.fromClass(class {
                 const rangeId = highlightElement.getAttribute('data-range-id');
                 if (rangeId) {
                     const range = globalRanges.find(r => r.highlightRange.id === rangeId);
-                    console.log({ range });
+                    // console.log({ range });
                     if (range?.highlightRange && range.highlightRange.isActive) {
                         // Toggle selection
                         const newSelectedId = selectedRangeId === rangeId ? null : rangeId;
@@ -232,12 +230,12 @@ const fuzzerHighlighter = ViewPlugin.fromClass(class {
     decorations: v => v.decorations
 });
 
-interface RequestEditorProps {
-    rawRequest: string;
-    activeSessionIndex?: number;
-}
+// interface RequestEditorProps {
+//     rawRequest: string;
+//     activeSessionIndex?: number;
+// }
 
-const RequestEditor: React.FC<RequestEditorProps> = ({ rawRequest }) => {
+const RequestEditor: React.FC = () => {
     const editorRef = useRef<HTMLDivElement | null>(null);
     const viewRef = useRef<EditorView | null>(null);
 
@@ -248,40 +246,45 @@ const RequestEditor: React.FC<RequestEditorProps> = ({ rawRequest }) => {
     const currentFuzzerSession = fuzzerSessions[activeSessionIndex];
     if (currentFuzzerSession === undefined) return <h1>Session not found</h1>;
 
-    // State for managing highlight ranges
-    // const [highlightRanges, setHighlightRanges] = useState<HighlightRange[]>([]);
+    // KEY FIX: Force editor refresh when session changes
+    const forceEditorRefresh = () => {
+        if (viewRef.current) {
+            // Force a complete redraw of decorations
+            viewRef.current.dispatch({
+                effects: [],
+                // This forces the plugin to rebuild decorations
+                // annotations: [EditorView.updateListener.of(() => { })]
+            });
+        }
+    };
 
-    // State for selected range
-    // const [selectedRange, setSelectedRange] = useState<string | null>(null);
-
-    // Sync state with global ranges
+    // MAIN FIX: Update global state and force refresh when session or parameters change
     useEffect(() => {
-        globalRanges = currentFuzzerSession.payload.parameters;
+        console.log('Session or parameters changed, updating global state');
+
+        // Update global state immediately
+        globalRanges = [...currentFuzzerSession.payload.parameters]; // Create new array reference
         selectedRangeId = currentFuzzerSession.selectedHighlightId;
 
         // Set up the callback to update React state when ranges change
         onRangesUpdate = (updatedRanges: FuzzerParameter[]) => {
-            // setHighlightRanges(updatedRanges);
             dispatch(setParameters({ parameters: updatedRanges }));
         };
 
         // Set up the callback to update selection state
         onSelectionUpdate = (selectedId: string | null) => {
-            // setSelectedRange(selectedId);
             dispatch(setSelectedParameter({ parameterId: selectedId }))
         };
 
         // Set up click handler
         onHighlightClick = (id: string, range: HighlightRange) => {
             console.log(`Clicked on highlight ${id}:`, range);
-            // You can handle click events here
         };
 
-        // Trigger a redraw if editor exists
-        if (viewRef.current) {
-            viewRef.current.dispatch({ effects: [] });
-        }
-    }, [currentFuzzerSession.payload.parameters, currentFuzzerSession.selectedHighlightId]);
+        // CRITICAL: Force editor to refresh its decorations
+        forceEditorRefresh();
+
+    }, [activeSessionIndex, currentFuzzerSession.payload.parameters, currentFuzzerSession.selectedHighlightId, dispatch]);
 
     // Function to add a new highlight range
     const addHighlightRange = (from: number, to: number) => {
@@ -298,14 +301,12 @@ const RequestEditor: React.FC<RequestEditorProps> = ({ rawRequest }) => {
                 isActive: true
             };
 
-            // setHighlightRanges(prev => [...prev, newRange]);
             dispatch(addParameter({ highlightRange: newRange }))
         }
     };
 
     // Function to remove a highlight range by id
     const removeHighlightRange = (id: string) => {
-        console.log({ id })
         dispatch(removeParameter({ paramId: id }));
         // Clear selection if the removed range was selected
         if (currentFuzzerSession.selectedHighlightId === id) {
@@ -339,11 +340,14 @@ const RequestEditor: React.FC<RequestEditorProps> = ({ rawRequest }) => {
         }
     };
 
-    // Update editor content when Redux state changes
+    // IMPROVED: Update editor content when Redux state changes with better sync
     useEffect(() => {
         if (viewRef.current && currentFuzzerSession.payload.rawRequest !== undefined) {
             const currentDoc = viewRef.current.state.doc.toString();
             if (currentDoc !== currentFuzzerSession.payload.rawRequest) {
+                console.log('Updating editor content');
+
+                // Update document content
                 viewRef.current.dispatch({
                     changes: {
                         from: 0,
@@ -351,40 +355,50 @@ const RequestEditor: React.FC<RequestEditorProps> = ({ rawRequest }) => {
                         insert: currentFuzzerSession.payload.rawRequest
                     }
                 });
+
+                // Force refresh after content change
+                setTimeout(() => forceEditorRefresh(), 0);
             }
         }
-    }, [currentFuzzerSession.payload.rawRequest]);
+    }, [currentFuzzerSession.payload.rawRequest, activeSessionIndex]); // Added activeSessionIndex as dependency
 
     useEffect(() => {
+        console.log('Active session or sessions changed:', activeSessionIndex, fuzzerSessions)
+    }, [activeSessionIndex, fuzzerSessions])
+
+    // IMPROVED: Recreate editor when session changes (alternative approach)
+    useEffect(() => {
         if (!editorRef.current) return;
+
+        // Clean up existing editor
+        if (viewRef.current) {
+            viewRef.current.destroy();
+            viewRef.current = null;
+        }
 
         const updateListener = EditorView.updateListener.of((update) => {
             if (update.docChanged) {
                 const code = update.state.doc.toString();
-                console.log('Code changed:', code);
                 // Update Redux state with new content
                 dispatch(setContent({ rawRequest: code }));
             }
             if (update.selectionSet) {
                 const selection = update.state.selection.main;
                 if (!selection.empty) {
-                    // User has selected text
                     const from = selection.from;
                     const to = selection.to;
                     const selectedText = update.state.doc.sliceString(from, to);
-
                     console.log(from, to, selectedText);
                 }
             }
         });
 
         const state = EditorState.create({
-            doc: currentFuzzerSession.payload.rawRequest || rawRequest,
+            doc: currentFuzzerSession.payload.rawRequest,
             extensions: [
                 basicSetup,
                 http(),
                 javascript(),
-                // oneDark,
                 fullHeightTheme,
                 updateListener,
                 fuzzerHighlighter,
@@ -399,37 +413,16 @@ const RequestEditor: React.FC<RequestEditorProps> = ({ rawRequest }) => {
 
         viewRef.current = view;
 
-        // Initialize with some example ranges after the editor is created
-        // const doc = view.state.doc;
-        // if (doc.length > 5) { // Only if document has enough content
-        //     console.log('Setting initial parameters');
-        //     const initialRanges: FuzzerParameter[] = [
-        //         {
-        //             highlightRange: {
-        //                 id: 'range-1',
-        //                 from: 0,
-        //                 to: 3,
-        //                 originalText: 'GET',
-        //                 isActive: true
-        //             }, // Default highlight range ID
-        //             // id: 'param-1',
-        //             // name: 'FUZZ_1',
-        //             payloadSource: "manual" as const,
-        //             // replacedValue: '',
-        //             values: ['/page', '/', '/home', '/about', '/contact', '/products', '/services', '/blog', '/faq', '/terms', '/privacy', '/help', '/support', '/login', '/register', '/dashboard', '/profile',]
-        //         }
-        //     ].filter(range => range.highlightRange.originalText.length > 0 && range.highlightRange.from < range.highlightRange.to);
-
-        //     if (initialRanges.length > 0) {
-        //         console.log('Setting initial parameters:', initialRanges);
-        //         dispatch(setParameters({ parameters: initialRanges }));
-        //     }
-        // }
+        // Initialize global state after editor creation
+        globalRanges = [...currentFuzzerSession.payload.parameters];
+        selectedRangeId = currentFuzzerSession.selectedHighlightId;
 
         return () => {
-            view.destroy();
+            if (view) {
+                view.destroy();
+            }
         };
-    }, []); // Only create editor once
+    }, [activeSessionIndex]); // Recreate editor when session changes
 
     return (
         <>
@@ -441,17 +434,17 @@ const RequestEditor: React.FC<RequestEditorProps> = ({ rawRequest }) => {
                     <Badge variant="outline" className="text-xs">
                         HTTP
                     </Badge>
-                    <Badge variant="outline" className="text-xs">
+                    {/* <Badge variant="outline" className="text-xs">
                         Total: {currentFuzzerSession.payload.parameters.length}
-                    </Badge>
-                    <Badge variant="outline" className="text-xs">
+                    </Badge> */}
+                    {/* <Badge variant="outline" className="text-xs">
                         Active: {currentFuzzerSession.payload.parameters.filter(r => r.highlightRange.isActive).length}
-                    </Badge>
-                    {currentFuzzerSession.selectedHighlightId && (
+                    </Badge> */}
+                    {/* {currentFuzzerSession.selectedHighlightId && (
                         <Badge variant="default" className="text-xs bg-yellow-500">
                             Selected: {currentFuzzerSession.payload.parameters.find(r => r.highlightRange.id === currentFuzzerSession.selectedHighlightId)?.highlightRange.originalText || currentFuzzerSession.selectedHighlightId}
                         </Badge>
-                    )}
+                    )} */}
                     <Button
                         className="h-[2rem]"
                         onClick={clearAllHighlights}

@@ -380,8 +380,8 @@
 import React from 'react';
 import { useAppSelector } from '@/hooks/redux';
 
-import RequestEditor from './request-editor/request-editor.component';
-import PayloadConfigurator from './payloads-configurator.component';
+import RequestEditor from './fuzzer/request-editor/request-editor.component';
+import PayloadConfigurator from './fuzzer/payloads-configurator.component';
 import ReactSplit, { SplitDirection } from '@devbookhq/splitter';
 
 
@@ -400,10 +400,9 @@ const FuzzRequestPayload: React.FC = () => {
         gutterClassName="custom-gutter-horizontal"
         draggerClassName="custom-dragger-horizontal"
         classes={["h-full"]}>
-        <RequestEditor rawRequest={rawRequest} activeSessionIndex={activeSessionIndex} />
+        <RequestEditor />
         {
-          // fuzzerSessions[activeSessionIndex].payload.parameters.length === 0 ?
-          //   "Their is no payload yet" : <PayloadConfigurator />
+          <PayloadConfigurator />
         }
       </ReactSplit>
     </>

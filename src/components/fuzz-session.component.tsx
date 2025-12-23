@@ -9,7 +9,7 @@ const FuzzSession = () => {
     const { fuzzerSessions } = useAppSelector((state) => state.fuzzerstate)
 
     const handleCreateFuzzSession = () => {
-        dispatch(addFuzzSession({ name: "Default session" }))
+        dispatch(addFuzzSession({ name: "Session" }))
 
     }
 

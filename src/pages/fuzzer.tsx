@@ -1,16 +1,13 @@
 
 import { useRef, useEffect, useState } from 'react';
-import { EditorView, } from 'codemirror';
 
 import { invoke } from "@tauri-apps/api/core";
-import { listen, UnlistenFn } from "@tauri-apps/api/event";
+// import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import ReactSplit, { SplitDirection } from '@devbookhq/splitter'
 import { Button } from '@/components/ui/button';
-import { Minus, Plus } from 'lucide-react';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Label } from '@/components/ui/label';
+
 import { Input } from '@/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+
 import { useAppDispatch, useAppSelector } from '@/hooks/redux';
 // import ResultsTable from '@/components/result-table.components';
 import { addFuzzingHistory, setTargerUrl } from '@/store/slices/fuzzerSlice';
@@ -71,7 +68,7 @@ const Fuzzer: React.FC = () => {
         if (activeSessionIndex === null) return;
         if (!fuzzerSessions[activeSessionIndex]) return;
 
-        const { payload } = fuzzerSessions[activeSessionIndex]
+        const fuzzSession = fuzzerSessions[activeSessionIndex]
 
         // const payload: FuzzerPayload = {
         //     metadata: {
@@ -86,8 +83,8 @@ const Fuzzer: React.FC = () => {
         //     rawRequest: "GET / HTTP/1.1\n\n",
         // }
 
-        invoke<any>("greet", { content: payload, sessionIndex: activeSessionIndex });
-        console.log({ payload })
+        invoke<any>("process_fuzzer_session", { session: fuzzSession });
+        console.log({ fuzzSession })
     }
 
     return (
