@@ -1,6 +1,6 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 mod http_request;
-// use http_request::http_request;
+use http_request::http_request;
 
 mod ares_utils;
 mod structs;
@@ -10,11 +10,16 @@ mod fuzzer;
 mod types;
 use types::*;
 
+use std::thread;
+
+use crate::fuzzer::building_raw_request;
+
 #[tauri::command]
 async fn process_fuzzer_session(session: FuzzerSession) -> Result<String, String> {
     println!("Received session: {}", session.name);
     println!("Raw request: {}", session.payload.raw_request);
     println!("Target URL: {}", session.payload.metadata.target_url);
+    // println!(" {}", session.payload.parameters[0].highlight_range.id);
 
     // Process your fuzzer session here
     for param in &session.payload.parameters {
@@ -23,51 +28,35 @@ async fn process_fuzzer_session(session: FuzzerSession) -> Result<String, String
             format!("{:?}", param.payload_source),
             param.values.len()
         );
+        println!("{}", param.highlight_range.id);
         for value in &param.values {
             println!(" - Value: {}", value);
+        }
+    }
+
+    // let response = http_request(
+    //     "GET / HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n",
+    //     "http://google.com:80",
+    // )
+    // .map_err(|e| format!("HTTP request failed: {}", e))?;
+
+    // println!("Response: {}", response);
+
+    for param in &session.payload.parameters {
+        for value in &param.values {
+            let modified_request =
+                building_raw_request(&session.payload.raw_request, value, &param.highlight_range);
+            let respond = http_request(&modified_request, &session.payload.metadata.target_url)
+                .map_err(|e| format!("HTTP request failed: {}", e))?;
+
+            println!("Response: {}", respond);
+            println!("Modified Request:\n{}", modified_request);
         }
     }
 
     // Return success
     Ok(format!("Processed session: {}", session.name))
 }
-
-// #[tauri::command]
-// fn send_data_async(
-//     content: String,
-//     app_handle: AppHandle,
-//     url: String,
-// ) -> Result<AsyncResponse, String> {
-//     let request_id = Uuid::new_v4().to_string();
-//     let request_id_clone = request_id.clone();
-
-//     let app_handle_for_thread = app_handle.clone(); // ✅ clone before move into thread
-//                                                     // Spawn a thread to do the work
-//     thread::spawn(move || {
-//         // Do the actual work
-//         let result = http_request(content, url);
-
-//         // Prepare the response
-//         let payload = match result {
-//             Ok(success_result) => RequestCompletedPayload {
-//                 request_id: request_id_clone,
-//                 result: Some(success_result),
-//                 error: None,
-//             },
-//             Err(error_msg) => RequestCompletedPayload {
-//                 request_id: request_id_clone,
-//                 result: None,
-//                 error: Some(error_msg.to_string()),
-//             },
-//         };
-
-//         // Send result back to frontend
-//         let _ = app_handle_for_thread.emit("request-completed", payload);
-//     });
-
-//     // Return immediately with request ID
-//     Ok(AsyncResponse { request_id })
-// }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
