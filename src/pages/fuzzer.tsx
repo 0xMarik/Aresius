@@ -40,29 +40,29 @@ const Fuzzer: React.FC = () => {
 
 
     // Save current session results to history when completed
-    useEffect(() => {
-        if (activeSessionIndex === null) return;
-        if (activeRequestsRef.current.size !== 0) return; // if there are still pending requests
-        if (currentSessionResults.length === 0) return; // don't add empty history
-        if (!currentSessionId) return; // don't add without session ID
-        if (isLoading) return;
+    // useEffect(() => {
+    //     if (activeSessionIndex === null) return;
+    //     if (activeRequestsRef.current.size !== 0) return; // if there are still pending requests
+    //     if (currentSessionResults.length === 0) return; // don't add empty history
+    //     if (!currentSessionId) return; // don't add without session ID
+    //     if (isLoading) return;
 
-        const historyTmp: FuzzingHistory = {
-            date: new Date(),
-            requests: currentSessionResults.map(request => ({
-                request: request.request,
-                requestDate: request.requestDate,
-                status: request.status,
-                targetUrl: request.targetUrl,
-                response: request.response || {
-                    response: '',
-                    responseTime: 0
-                },
-            })),
-        }
+    //     const historyTmp: FuzzingHistory = {
+    //         date: new Date(),
+    //         requests: currentSessionResults.map(request => ({
+    //             request: request.request,
+    //             requestDate: request.requestDate,
+    //             status: request.status,
+    //             targetUrl: request.targetUrl,
+    //             response: request.response || {
+    //                 response: '',
+    //                 responseTime: 0
+    //             },
+    //         })),
+    //     }
 
-        dispatch(addFuzzingHistory({ sessionIndex: activeSessionIndex, history: historyTmp }))
-    }, [currentSessionResults, dispatch, activeSessionIndex, currentSessionId])
+    //     dispatch(addFuzzingHistory({ sessionIndex: activeSessionIndex, history: historyTmp }))
+    // }, [currentSessionResults, dispatch, activeSessionIndex, currentSessionId])
 
     const triggerFuzzing = async () => {
         if (activeSessionIndex === null) return;
@@ -83,8 +83,25 @@ const Fuzzer: React.FC = () => {
         //     rawRequest: "GET / HTTP/1.1\n\n",
         // }
 
-        invoke<any>("process_fuzzer_session", { session: fuzzSession });
-        console.log({ fuzzSession })
+        const reqRes = await invoke<{ request: string, response: string }[]>("process_fuzzer_session", { session: fuzzSession });
+
+        const historyTmp: FuzzingHistory = {
+            date: (new Date()).toISOString(),
+            requests: reqRes.map((rr) => ({
+                // request: rr.request,
+                request: rr.request,
+                response: {
+                    response: rr.response,
+                    responseTime: 1,
+                },
+                requestDate: "",
+                status: 'completed',
+                targetUrl: fuzzSession.name,
+            }))
+        }
+
+        dispatch(addFuzzingHistory({ sessionIndex: activeSessionIndex, history: historyTmp }))
+        console.log({ historyTmp })
     }
 
     return (

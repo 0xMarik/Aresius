@@ -10,12 +10,14 @@ mod fuzzer;
 mod types;
 use types::*;
 
-use std::thread;
+// use std::collections::HashMap;
+
+// use std::thread;
 
 use crate::fuzzer::building_raw_request;
 
 #[tauri::command]
-async fn process_fuzzer_session(session: FuzzerSession) -> Result<String, String> {
+async fn process_fuzzer_session(session: FuzzerSession) -> Result<Vec<ReqRes>, String> {
     println!("Received session: {}", session.name);
     println!("Raw request: {}", session.payload.raw_request);
     println!("Target URL: {}", session.payload.metadata.target_url);
@@ -42,20 +44,26 @@ async fn process_fuzzer_session(session: FuzzerSession) -> Result<String, String
 
     // println!("Response: {}", response);
 
+    let mut results = Vec::new();
+
     for param in &session.payload.parameters {
         for value in &param.values {
             let modified_request =
                 building_raw_request(&session.payload.raw_request, value, &param.highlight_range);
-            let respond = http_request(&modified_request, &session.payload.metadata.target_url)
+            let response = http_request(&modified_request, &session.payload.metadata.target_url)
                 .map_err(|e| format!("HTTP request failed: {}", e))?;
 
-            println!("Response: {}", respond);
+            results.push(ReqRes {
+                request: modified_request.clone(),
+                response: response.clone(),
+            });
+            println!("Response: {}", response);
             println!("Modified Request:\n{}", modified_request);
         }
     }
 
     // Return success
-    Ok(format!("Processed session: {}", session.name))
+    Ok(results)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

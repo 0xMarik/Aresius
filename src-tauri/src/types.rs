@@ -82,3 +82,9 @@ pub struct HighlightRange {
     pub original_text: String,
     pub is_active: bool,
 }
+
+#[derive(Serialize)]
+pub struct ReqRes {
+    pub request: String,
+    pub response: String,
+}

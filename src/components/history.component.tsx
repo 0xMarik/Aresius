@@ -6,7 +6,7 @@ interface ParamsType {
     isLoading: boolean
 }
 
-const FuzzerHistoryCompo = ({ isLoading}: ParamsType) => {
+const FuzzerHistoryCompo = ({ isLoading }: ParamsType) => {
     const { historyId } = useParams();
     console.log("History ID:", historyId);
 

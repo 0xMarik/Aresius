@@ -84,7 +84,7 @@ interface SessionPayload {
 }
 
 export interface FuzzingHistory {
-    date: Date;
+    date: string;
     requests: FuzzerRequest[]; // Your existing request type
 }
 

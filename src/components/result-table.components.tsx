@@ -168,25 +168,14 @@
 
 // export default ResultsTable;
 
+import { FuzzerRequest } from "@/types/fuzzer.type";
 import { useState } from "react";
 
-interface FuzzerResponse {
-    response: string;
-    responseTime: number;
-}
-
-interface FuzzerRequest {
-    url: string;
-    request: string;
-    response: FuzzerResponse | null;
-    requestDate: string;
-    status: 'pending' | 'completed' | 'error';
-}
 
 const ResultsTable: React.FC<{
     results: FuzzerRequest[];
     isLoading: boolean;
-}> = ({ results, isLoading}) => {
+}> = ({ results, isLoading }) => {
     const [selectedRequest, setSelectedRequest] = useState<FuzzerRequest | null>(null);
 
     const getStatusColor = (status: string): string => {
@@ -260,7 +249,7 @@ const ResultsTable: React.FC<{
                                 </thead>
                                 <tbody className="bg-white divide-y divide-gray-200">
                                     {results.map((result, index) => (
-                                        <tr key={`${result.url}-${index}`} className="hover:bg-gray-50">
+                                        <tr key={`${result.targetUrl}-${index}`} className="hover:bg-gray-50">
                                             <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-900">
                                                 {index + 1}
                                             </td>
@@ -274,7 +263,7 @@ const ResultsTable: React.FC<{
                                             </td>
                                             <td className="px-4 py-2 text-sm text-gray-900 max-w-xs">
                                                 <div className="truncate font-mono text-xs bg-gray-100 p-1 rounded">
-                                                    {result.url}
+                                                    {result.targetUrl}
                                                 </div>
                                             </td>
                                             <td className="px-4 py-2 text-sm text-gray-900 max-w-xs">
@@ -317,7 +306,7 @@ const ResultsTable: React.FC<{
                                     Request #{results.indexOf(selectedRequest) + 1} Details
                                 </h3>
                                 <p className="text-sm text-gray-600">
-                                    URL: {selectedRequest.url}
+                                    URL: {selectedRequest.targetUrl}
                                     {selectedRequest.response?.responseTime && (
                                         <span className="ml-4">Response Time: {selectedRequest.response.responseTime}ms</span>
                                     )}
