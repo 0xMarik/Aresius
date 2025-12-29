@@ -1,8 +1,6 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-mod http_request;
-use http_request::http_request;
-
 mod ares_utils;
+mod http_request;
 mod structs;
 
 mod fuzzer;
@@ -12,9 +10,10 @@ use types::*;
 
 // use std::collections::HashMap;
 
-// use std::thread;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
-use crate::fuzzer::building_raw_request;
+use crate::{fuzzer::building_raw_request, http_request::HttpConnection};
 
 #[tauri::command]
 async fn process_fuzzer_session(session: FuzzerSession) -> Result<Vec<ReqRes>, String> {
@@ -44,23 +43,87 @@ async fn process_fuzzer_session(session: FuzzerSession) -> Result<Vec<ReqRes>, S
 
     // println!("Response: {}", response);
 
-    let mut results = Vec::new();
+    // let mut results = Vec::new();
 
+    // for param in &session.payload.parameters {
+    //     for value in &param.values {
+    //         let modified_request =
+    //             building_raw_request(&session.payload.raw_request, value, &param.highlight_range);
+    //         let (response, response_time) =
+    //             http_request(&modified_request, &session.payload.metadata.target_url)
+    //                 .map_err(|e| format!("HTTP request failed: {}", e))?;
+
+    //         results.push(ReqRes {
+    //             request: modified_request.clone(),
+    //             response: response.clone(),
+    //             response_time: response_time.as_millis(),
+    //         });
+    //         println!("Response: {}", response);
+    //         println!("Modified Request:\n{}", modified_request);
+    //     }
+    // }
+    let results = Arc::new(Mutex::new(Vec::new()));
+    let mut handles = vec![];
+
+    // Create all request variants first
+    let mut requests = Vec::new();
     for param in &session.payload.parameters {
         for value in &param.values {
             let modified_request =
                 building_raw_request(&session.payload.raw_request, value, &param.highlight_range);
-            let response = http_request(&modified_request, &session.payload.metadata.target_url)
-                .map_err(|e| format!("HTTP request failed: {}", e))?;
-
-            results.push(ReqRes {
-                request: modified_request.clone(),
-                response: response.clone(),
-            });
-            println!("Response: {}", response);
-            println!("Modified Request:\n{}", modified_request);
+            requests.push(modified_request);
         }
     }
+
+    // Split work across tasks (e.g., 5 concurrent tasks)
+    let num_tasks = 10;
+    let chunk_size = (requests.len() + num_tasks - 1) / num_tasks;
+
+    for chunk in requests.chunks(chunk_size) {
+        let chunk = chunk.to_vec();
+        let url = session.payload.metadata.target_url.clone();
+        let results = Arc::clone(&results);
+
+        let handle = tokio::spawn(async move {
+            // Each task gets its own persistent connection
+            let mut conn = match HttpConnection::new(&url).await {
+                Ok(conn) => conn,
+                Err(e) => {
+                    eprintln!("Connection failed: {}", e);
+                    return;
+                }
+            };
+
+            for modified_request in chunk {
+                match conn.send_request(&modified_request).await {
+                    Ok((response, response_time)) => {
+                        let req_res = ReqRes {
+                            request: modified_request.clone(),
+                            response: response.clone(),
+                            response_time: response_time.as_millis(),
+                        };
+
+                        // Lock only when writing results
+                        results.lock().await.push(req_res);
+
+                        println!("Response: {}", response);
+                        println!("Modified Request:\n{}", modified_request);
+                    }
+                    Err(e) => eprintln!("Request failed: {}", e),
+                }
+            }
+        });
+
+        handles.push(handle);
+    }
+
+    // Wait for all tasks to complete
+    for handle in handles {
+        handle.await.unwrap();
+    }
+
+    // Extract results
+    let results = Arc::try_unwrap(results).unwrap().into_inner();
 
     // Return success
     Ok(results)

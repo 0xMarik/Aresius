@@ -114,7 +114,7 @@ export default function PayloadConfigurator() {
                     <Label>Selected File</Label>
                     <Textarea
                         className="h-full"
-                        // value={parameters[selectedParamIndex].values.join('\n')}
+                        value={selectedParam.values.join('\n')}
                         onChange={handleValues}>
                     </Textarea>
 

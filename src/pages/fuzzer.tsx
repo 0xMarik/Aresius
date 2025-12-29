@@ -83,7 +83,8 @@ const Fuzzer: React.FC = () => {
         //     rawRequest: "GET / HTTP/1.1\n\n",
         // }
 
-        const reqRes = await invoke<{ request: string, response: string }[]>("process_fuzzer_session", { session: fuzzSession });
+        const reqRes = await invoke<{ request: string, response: string, response_time: number }[]>("process_fuzzer_session", { session: fuzzSession });
+        console.log({ reqRes })
 
         const historyTmp: FuzzingHistory = {
             date: (new Date()).toISOString(),
@@ -92,7 +93,7 @@ const Fuzzer: React.FC = () => {
                 request: rr.request,
                 response: {
                     response: rr.response,
-                    responseTime: 1,
+                    responseTime: rr.response_time,
                 },
                 requestDate: "",
                 status: 'completed',
@@ -101,7 +102,7 @@ const Fuzzer: React.FC = () => {
         }
 
         dispatch(addFuzzingHistory({ sessionIndex: activeSessionIndex, history: historyTmp }))
-        console.log({ historyTmp })
+        // console.log({ historyTmp })
     }
 
     return (

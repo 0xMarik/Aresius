@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 // src-tauri/src/types.rs (or in main.rs)
 use serde::{Deserialize, Serialize};
 
@@ -5,27 +7,27 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase")]
 pub struct FuzzerSession {
     pub name: String,
-    pub fuzzing_history: Vec<FuzzingHistory>,
+    // pub fuzzing_history: Vec<FuzzingHistory>,
     pub payload: SessionPayload,
     pub selected_highlight_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FuzzingHistory {
-    pub date: String, // or use chrono::DateTime if you want proper dates
-    pub requests: Vec<FuzzerRequest>,
-}
+// #[derive(Debug, Clone, Serialize, Deserialize)]
+// #[serde(rename_all = "camelCase")]
+// pub struct FuzzingHistory {
+//     pub date: String, // or use chrono::DateTime if you want proper dates
+//     pub requests: Vec<FuzzerRequest>,
+// }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FuzzerRequest {
-    pub target_url: String,
-    pub request: String,
-    pub response: Option<FuzzerResponse>,
-    pub request_date: String,
-    pub status: RequestStatus,
-}
+// #[derive(Debug, Clone, Serialize, Deserialize)]
+// #[serde(rename_all = "camelCase")]
+// pub struct FuzzerRequest {
+//     pub target_url: String,
+//     pub request: String,
+//     pub response: String,
+//     pub request_date: String,
+//     pub status: RequestStatus,
+// }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -33,14 +35,6 @@ pub enum RequestStatus {
     Pending,
     Completed,
     Error,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FuzzerResponse {
-    // Add your response fields here
-    pub status_code: u16,
-    pub body: String,
-    // etc.
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -83,8 +77,9 @@ pub struct HighlightRange {
     pub is_active: bool,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 pub struct ReqRes {
     pub request: String,
     pub response: String,
+    pub response_time: u128,
 }
