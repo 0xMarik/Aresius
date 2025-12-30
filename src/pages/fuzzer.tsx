@@ -84,7 +84,7 @@ const Fuzzer: React.FC = () => {
         //     rawRequest: "GET / HTTP/1.1\n\n",
         // }
 
-        const reqRes = await invoke<{ request: string, response: string, response_time: number }[]>("process_fuzzer_session", { session: fuzzSession, fuzzingAttackType: fuzzSession.payload.fuzzingAttackType });
+        const reqRes = await invoke<{ request: string, response: string, response_time: number }[]>("process_fuzzer_session", { session: fuzzSession, fuzzingAttackType: fuzzSession.payload.fuzzingAttackType, numThreads: fuzzSession.payload.numThreads });
         console.log({ reqRes })
 
         const historyTmp: FuzzingHistory = {
@@ -107,7 +107,7 @@ const Fuzzer: React.FC = () => {
     }
 
     return (
-        <div className="py-1 pr-1 h-full">
+        <div className="py-1 pr-1 h-screen">
             <ReactSplit
                 direction={SplitDirection.Horizontal}
                 gutterClassName="custom-gutter-horizontal"

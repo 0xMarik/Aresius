@@ -16,6 +16,7 @@ use crate::fuzzer::*;
 async fn process_fuzzer_session(
     session: FuzzerSession,
     fuzzing_attack_type: FuzzingAttackType,
+    num_threads: usize,
 ) -> Result<Vec<ReqRes>, String> {
     println!("fuzzing attack type: {:?}", fuzzing_attack_type);
 
@@ -82,12 +83,13 @@ async fn process_fuzzer_session(
     // // Extract results
     // let results = Arc::try_unwrap(results).unwrap().into_inner();
 
-
     let results = match fuzzing_attack_type {
-        FuzzingAttackType::Rotator => execute_rotator_fuzzing(&session, 10).await,
-        FuzzingAttackType::Echo => execute_echo_fuzzing(&session, 10).await,
-        FuzzingAttackType::Zipped => execute_zipped_fuzzing(&session, 10).await,
-        FuzzingAttackType::Combinatorial => execute_combinatorial_fuzzing(&session, 10).await,
+        FuzzingAttackType::Rotator => execute_rotator_fuzzing(&session, num_threads).await,
+        FuzzingAttackType::Echo => execute_echo_fuzzing(&session, num_threads).await,
+        FuzzingAttackType::Zipped => execute_zipped_fuzzing(&session, num_threads).await,
+        FuzzingAttackType::Combinatorial => {
+            execute_combinatorial_fuzzing(&session, num_threads).await
+        }
     };
 
     // Return success

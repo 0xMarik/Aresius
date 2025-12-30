@@ -15,8 +15,6 @@ const RequestFuzzer = () => {
     const viewRef = useRef<EditorView | null>(null);
     const editorRef = useRef<any>(null);
 
-    const [fuzzValues, setFuzzValues] = useState<string>('www\n123'); // this is the list
-
     const [textSelected, setSelectedText] = React.useState<string>('');
     const [fuzzParameters, setFuzzParameters] = useState<FuzzParameter[]>([]);
 

@@ -8,7 +8,7 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useAppDispatch, useAppSelector } from "@/hooks/redux";
 import { Textarea } from "@/components/ui/textarea"
-import { loadValuesParam, setSelectedParameter } from "@/store/slices/fuzzerSlice";
+import { loadValuesParam, setNumThreads, setSelectedParameter } from "@/store/slices/fuzzerSlice";
 import { FuzzerParameter, FuzzingAttackType } from "@/types/fuzzer.type";
 
 export default function PayloadConfigurator() {
@@ -72,7 +72,7 @@ export default function PayloadConfigurator() {
             <Tabs defaultValue="payload" className="w-full max-w-lg p-4 h-full">
                 <TabsList>
                     <TabsTrigger value="payload">Payload</TabsTrigger>
-                    <TabsTrigger value="preprocessors">Preprocessors</TabsTrigger>
+                    <TabsTrigger value="pipline-processing">Pipline Processing</TabsTrigger>
                     <TabsTrigger value="settings">Settings</TabsTrigger>
                 </TabsList>
 
@@ -165,12 +165,31 @@ export default function PayloadConfigurator() {
 
                 </TabsContent >
 
-                <TabsContent value="preprocessors">
-                    <p>Preprocessor config goes here</p>
+                <TabsContent value="pipline-processing">
+                    <p>Defining a traitement on payload before they are sent</p>
                 </TabsContent>
 
                 <TabsContent value="settings">
-                    <p>Settings config goes here</p>
+                    <p>Settings configuration</p>
+                    <Label htmlFor="numThreads">Number of Threads</Label>
+                    <Input
+                        id="numThreads"
+                        type="number"
+                        min={1}
+                        max={20}
+                        value={session.payload.numThreads}
+                        onChange={(event) => {
+                            dispatch(setNumThreads({ numThreads: parseInt(event.target.value) }))
+                            // console.log()
+                        }}
+                    />
+                    <br />
+                    <Label htmlFor="delais">Delais between Requests</Label>
+                    <Input
+                        id="numThreads"
+                        type="number"
+                        min={0}
+                    />
                 </TabsContent>
             </Tabs >
         </>

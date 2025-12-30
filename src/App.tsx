@@ -18,19 +18,21 @@ import Header from "./components/header.component";
 export default function App() {
     return (
         <Router>
-            <SidebarProvider>
-                <AppSidebar />
-                <SidebarInset>
-                    <Header />
+            <div className="">
+                <SidebarProvider >
+                    <AppSidebar />
+                    <SidebarInset >
+                        {/* <Header /> */}
 
-                    <Routes>
-                        <Route path="/replayer" element={<Tweaker />} />
-                        <Route path="/fuzzer/*" element={<Fuzzer />} />
-                        <Route path="/projects" element={<Projects />} />
-                    </Routes>
+                        <Routes>
+                            <Route path="/replayer" element={<Tweaker />} />
+                            <Route path="/fuzzer/*" element={<Fuzzer />} />
+                            <Route path="/projects" element={<Projects />} />
+                        </Routes>
 
-                </SidebarInset>
-            </SidebarProvider>
+                    </SidebarInset>
+                </SidebarProvider>
+            </div>
         </Router>
     )
 }

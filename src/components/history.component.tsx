@@ -25,14 +25,13 @@ const FuzzerHistoryCompo = ({ isLoading }: ParamsType) => {
     }
 
     return (
-        <div>
-            <div>
-                <ResultsTable
-                    results={session.fuzzingHistory[Number(historyId)].requests}
-                    isLoading={isLoading}
-                />
-            </div>
+        <div className='h-full'>
+            <ResultsTable
+                results={session.fuzzingHistory[Number(historyId)].requests}
+                isLoading={isLoading}
+            />
         </div>
+
     );
 };
 

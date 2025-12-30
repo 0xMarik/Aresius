@@ -12,6 +12,7 @@ import { RangeSetBuilder } from "@codemirror/state";
 import { useAppDispatch, useAppSelector } from "@/hooks/redux";
 import { addParameter, removeParameter, setParameters, setSelectedParameter, setContent } from '@/store/slices/fuzzerSlice'
 import { FuzzerParameter } from "@/types/fuzzer.type";
+import { oneDark } from '@codemirror/theme-one-dark';
 
 const fullHeightTheme = EditorView.theme({
     '&': {
@@ -399,6 +400,7 @@ const RequestEditor: React.FC = () => {
                 basicSetup,
                 http(),
                 javascript(),
+                oneDark,
                 fullHeightTheme,
                 updateListener,
                 fuzzerHighlighter,
@@ -478,3 +480,4 @@ const RequestEditor: React.FC = () => {
 };
 
 export default RequestEditor;
+
