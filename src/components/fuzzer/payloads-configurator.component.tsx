@@ -21,7 +21,6 @@ export default function PayloadConfigurator() {
     }
 
 
-
     const session = fuzzerSessions[activeSessionIndex]
 
     // In your selector or as a useMemo

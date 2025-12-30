@@ -403,7 +403,7 @@ const FuzzRequestPayload: React.FC = () => {
         classes={["h-full"]}>
         <RequestEditor />
         {
-          <PayloadConfigurator />
+          <PayloadConfigurator key={fuzzerSessions[activeSessionIndex].name} />
 
         }
       </ReactSplit>
