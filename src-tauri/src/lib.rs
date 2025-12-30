@@ -8,95 +8,87 @@ mod fuzzer;
 mod types;
 use types::*;
 
+use crate::fuzzer::*;
+
 // use std::collections::HashMap;
 
-use std::sync::Arc;
-use tokio::sync::Mutex;
-
-use crate::{fuzzer::building_raw_request, http_request::HttpConnection};
-
 #[tauri::command]
-async fn process_fuzzer_session(session: FuzzerSession) -> Result<Vec<ReqRes>, String> {
-    println!("Received session: {}", session.name);
-    println!("Raw request: {}", session.payload.raw_request);
-    println!("Target URL: {}", session.payload.metadata.target_url);
-    // println!(" {}", session.payload.parameters[0].highlight_range.id);
+async fn process_fuzzer_session(
+    session: FuzzerSession,
+    fuzzing_attack_type: FuzzingAttackType,
+) -> Result<Vec<ReqRes>, String> {
+    println!("fuzzing attack type: {:?}", fuzzing_attack_type);
 
-    // Process your fuzzer session here
-    for param in &session.payload.parameters {
-        println!(
-            "Parameter from {} with {} values",
-            format!("{:?}", param.payload_source),
-            param.values.len()
-        );
-        println!("{}", param.highlight_range.id);
-        for value in &param.values {
-            println!(" - Value: {}", value);
-        }
-    }
+    // let results = Arc::new(Mutex::new(Vec::new()));
+    // let mut handles = vec![];
 
-    let results = Arc::new(Mutex::new(Vec::new()));
-    let mut handles = vec![];
+    // // Create all request variants first
+    // let mut requests = Vec::new();
+    // for param in &session.payload.parameters {
+    //     for value in &param.values {
+    //         let modified_request =
+    //             building_raw_request(&session.payload.raw_request, value, &param.highlight_range);
+    //         requests.push(modified_request);
+    //     }
+    // }
 
-    // Create all request variants first
-    let mut requests = Vec::new();
-    for param in &session.payload.parameters {
-        for value in &param.values {
-            let modified_request =
-                building_raw_request(&session.payload.raw_request, value, &param.highlight_range);
-            requests.push(modified_request);
-        }
-    }
+    // // Split work across tasks (e.g., 5 concurrent tasks)
+    // let num_tasks = 10;
+    // let chunk_size = (requests.len() + num_tasks - 1) / num_tasks;
 
-    // Split work across tasks (e.g., 5 concurrent tasks)
-    let num_tasks = 10;
-    let chunk_size = (requests.len() + num_tasks - 1) / num_tasks;
+    // for chunk in requests.chunks(chunk_size) {
+    //     let chunk = chunk.to_vec();
+    //     let url = session.payload.metadata.target_url.clone();
+    //     let results = Arc::clone(&results);
 
-    for chunk in requests.chunks(chunk_size) {
-        let chunk = chunk.to_vec();
-        let url = session.payload.metadata.target_url.clone();
-        let results = Arc::clone(&results);
+    //     let handle = tokio::spawn(async move {
+    //         // Each task gets its own persistent connection
+    //         let mut conn = match HttpConnection::new(&url).await {
+    //             Ok(conn) => conn,
+    //             Err(e) => {
+    //                 eprintln!("Connection failed: {}", e);
+    //                 return;
+    //             }
+    //         };
 
-        let handle = tokio::spawn(async move {
-            // Each task gets its own persistent connection
-            let mut conn = match HttpConnection::new(&url).await {
-                Ok(conn) => conn,
-                Err(e) => {
-                    eprintln!("Connection failed: {}", e);
-                    return;
-                }
-            };
+    //         for modified_request in chunk {
+    //             match conn.send_request(&modified_request).await {
+    //                 Ok((response, response_time)) => {
+    //                     let req_res = ReqRes {
+    //                         request: modified_request.clone(),
+    //                         response: response.clone(),
+    //                         response_time: response_time.as_millis(),
+    //                     };
 
-            for modified_request in chunk {
-                match conn.send_request(&modified_request).await {
-                    Ok((response, response_time)) => {
-                        let req_res = ReqRes {
-                            request: modified_request.clone(),
-                            response: response.clone(),
-                            response_time: response_time.as_millis(),
-                        };
+    //                     // Lock only when writing results
+    //                     results.lock().await.push(req_res);
 
-                        // Lock only when writing results
-                        results.lock().await.push(req_res);
+    //                     // println!("Response: {}", response);
+    //                     // println!("Modified Request:\n{}", modified_request);
+    //                 }
+    //                 Err(e) => eprintln!("Request failed: {}", e),
+    //             }
+    //         }
+    //     });
 
-                        println!("Response: {}", response);
-                        println!("Modified Request:\n{}", modified_request);
-                    }
-                    Err(e) => eprintln!("Request failed: {}", e),
-                }
-            }
-        });
+    //     handles.push(handle);
+    // }
 
-        handles.push(handle);
-    }
+    // // Wait for all tasks to complete
+    // for handle in handles {
+    //     handle.await.unwrap();
+    // }
 
-    // Wait for all tasks to complete
-    for handle in handles {
-        handle.await.unwrap();
-    }
+    // // Extract results
+    // let results = Arc::try_unwrap(results).unwrap().into_inner();
 
-    // Extract results
-    let results = Arc::try_unwrap(results).unwrap().into_inner();
+
+    let results = match fuzzing_attack_type {
+        FuzzingAttackType::Rotator => execute_rotator_fuzzing(&session, 10).await,
+        FuzzingAttackType::Echo => execute_echo_fuzzing(&session, 10).await,
+        FuzzingAttackType::Zipped => execute_zipped_fuzzing(&session, 10).await,
+        FuzzingAttackType::Combinatorial => execute_combinatorial_fuzzing(&session, 10).await,
+    };
 
     // Return success
     Ok(results)

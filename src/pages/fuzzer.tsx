@@ -84,7 +84,7 @@ const Fuzzer: React.FC = () => {
         //     rawRequest: "GET / HTTP/1.1\n\n",
         // }
 
-        const reqRes = await invoke<{ request: string, response: string, response_time: number }[]>("process_fuzzer_session", { session: fuzzSession });
+        const reqRes = await invoke<{ request: string, response: string, response_time: number }[]>("process_fuzzer_session", { session: fuzzSession, fuzzingAttackType: fuzzSession.payload.fuzzingAttackType });
         console.log({ reqRes })
 
         const historyTmp: FuzzingHistory = {
