@@ -1,7 +1,6 @@
 use crate::ares_utils;
 use anyhow::{anyhow, Result};
 use ares_utils::url_parsing;
-use std::io::{Read, Write};
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;

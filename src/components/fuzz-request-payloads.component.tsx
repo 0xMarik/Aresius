@@ -383,6 +383,7 @@ import { useAppSelector } from '@/hooks/redux';
 import RequestEditor from './fuzzer/request-editor/request-editor.component';
 import PayloadConfigurator from './fuzzer/payloads-configurator.component';
 import ReactSplit, { SplitDirection } from '@devbookhq/splitter';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 
 
 const FuzzRequestPayload: React.FC = () => {
@@ -390,7 +391,7 @@ const FuzzRequestPayload: React.FC = () => {
   const { activeSessionIndex, fuzzerSessions } = useAppSelector(state => state.fuzzerstate);
   if (activeSessionIndex === null) return null;
   if (fuzzerSessions[activeSessionIndex] === undefined) return null;
-  const { rawRequest } = fuzzerSessions[activeSessionIndex].payload;
+  // const { rawRequest } = fuzzerSessions[activeSessionIndex].payload;
 
   return (
     <>
@@ -403,6 +404,7 @@ const FuzzRequestPayload: React.FC = () => {
         <RequestEditor />
         {
           <PayloadConfigurator />
+
         }
       </ReactSplit>
     </>

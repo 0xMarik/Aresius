@@ -35,33 +35,6 @@ async fn process_fuzzer_session(session: FuzzerSession) -> Result<Vec<ReqRes>, S
         }
     }
 
-    // let response = http_request(
-    //     "GET / HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n",
-    //     "http://google.com:80",
-    // )
-    // .map_err(|e| format!("HTTP request failed: {}", e))?;
-
-    // println!("Response: {}", response);
-
-    // let mut results = Vec::new();
-
-    // for param in &session.payload.parameters {
-    //     for value in &param.values {
-    //         let modified_request =
-    //             building_raw_request(&session.payload.raw_request, value, &param.highlight_range);
-    //         let (response, response_time) =
-    //             http_request(&modified_request, &session.payload.metadata.target_url)
-    //                 .map_err(|e| format!("HTTP request failed: {}", e))?;
-
-    //         results.push(ReqRes {
-    //             request: modified_request.clone(),
-    //             response: response.clone(),
-    //             response_time: response_time.as_millis(),
-    //         });
-    //         println!("Response: {}", response);
-    //         println!("Modified Request:\n{}", modified_request);
-    //     }
-    // }
     let results = Arc::new(Mutex::new(Vec::new()));
     let mut handles = vec![];
 

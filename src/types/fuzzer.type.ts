@@ -11,6 +11,15 @@ export interface FuzzerRequest {
     status: 'pending' | 'completed' | 'error';
 }
 
+// Fuzzing attack types
+export enum FuzzingAttackType {
+  ROTATOR = 'rotator',           // Single payload set, iterates through one position at a time
+  ECHO = 'echo', // Single payload set, same value in all positions
+  ZIPPED = 'zipped',     // Multiple payload sets, parallel iteration
+  COMBINATORIAL = 'combinatorial' // Multiple payload sets, all combinations
+}
+
+
 // ********************************************** //
 
 // const request : FuzzerRequest = {
@@ -74,10 +83,11 @@ export interface FuzzerParameter {
     highlightRange: HighlightRange; // Links to the corresponding highlight range
 }
 
+
 interface SessionPayload {
     rawRequest: string;
     parameters: FuzzerParameter[];
-    // highlightRanges: HighlightRange[]; // New: stores all highlight ranges
+    fuzzingAttackType: FuzzingAttackType;
     metadata: {
         targetUrl: string;
     };

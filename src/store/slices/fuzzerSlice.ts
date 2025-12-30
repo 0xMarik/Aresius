@@ -1,4 +1,4 @@
-import { FuzzingHistory, FuzzerParameter, FuzzerSession, FuzzerState, HighlightRange } from '@/types/fuzzer.type';
+import { FuzzingHistory, FuzzerParameter, FuzzerSession, FuzzerState, HighlightRange, FuzzingAttackType } from '@/types/fuzzer.type';
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 
 const initialState : FuzzerState = {
@@ -6,10 +6,11 @@ const initialState : FuzzerState = {
         fuzzingHistory: [],
         name: 'Default Session',
         payload: {
+            fuzzingAttackType: FuzzingAttackType.ROTATOR,
             rawRequest: 'GET / HTTP/1.1\nHost: www.google.com\n\n',
             parameters: [],
             metadata: {
-                targetUrl: 'http://example.com:80'
+                targetUrl: 'http://google.com:80'
             }
         },
         selectedHighlightId: null,
@@ -32,6 +33,7 @@ const fuzzerSlice = createSlice({
         name: name + ` ${state.fuzzerSessions.length + 1}`,
         fuzzingHistory: [],
         payload: { // default payload
+          fuzzingAttackType: FuzzingAttackType.ROTATOR,
           rawRequest: 'GET / HTTP/1.1\nHost: facebook.com\n\n',
           metadata : {
             // protocol: "http",
@@ -158,10 +160,21 @@ const fuzzerSlice = createSlice({
       }
 
     },
+
+
     setTargerUrl :(state, action: PayloadAction<{targetUrl: string}>) => {
       if(state.activeSessionIndex !== null) {
         const currentSession = state.fuzzerSessions[state.activeSessionIndex]
         currentSession.payload.metadata.targetUrl = action.payload.targetUrl;
+      }else{
+         console.error("Their is no active session!!");
+      }
+    },
+
+    setFuzzingAttackType :(state, action: PayloadAction<{fuzzingAttackingType: FuzzingAttackType}>) => {
+      if(state.activeSessionIndex !== null) {
+        const currentSession = state.fuzzerSessions[state.activeSessionIndex]
+        currentSession.payload.fuzzingAttackType = action.payload.fuzzingAttackingType;
       }else{
          console.error("Their is no active session!!");
       }
@@ -184,6 +197,7 @@ setSelectedParameter,
 setParameters,
 removeParameter,
 setContent,
-setTargerUrl} = fuzzerSlice.actions;
+setTargerUrl,
+setFuzzingAttackType} = fuzzerSlice.actions;
 
 export default fuzzerSlice.reducer;

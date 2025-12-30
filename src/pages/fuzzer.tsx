@@ -10,12 +10,13 @@ import { Input } from '@/components/ui/input';
 
 import { useAppDispatch, useAppSelector } from '@/hooks/redux';
 // import ResultsTable from '@/components/result-table.components';
-import { addFuzzingHistory, setTargerUrl } from '@/store/slices/fuzzerSlice';
+import { addFuzzingHistory, setFuzzingAttackType, setTargerUrl } from '@/store/slices/fuzzerSlice';
 import FuzzSession from '@/components/fuzz-session.component';
-import { FuzzingHistory, FuzzerRequest } from '@/types/fuzzer.type';
+import { FuzzingHistory, FuzzerRequest, FuzzingAttackType } from '@/types/fuzzer.type';
 import { Link, Route, Routes } from 'react-router-dom';
 import FuzzerHistoryCompo from '@/components/history.component';
 import FuzzRequestPayload from '@/components/fuzz-request-payloads.component';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 
 interface PendingRequest {
@@ -131,6 +132,31 @@ const Fuzzer: React.FC = () => {
                             value={fuzzerSessions[activeSessionIndex || 0].payload.metadata.targetUrl}
                             placeholder="http://example.com"
                         />
+
+                        <Select
+                            defaultValue={"1"}
+                            value={fuzzerSessions[activeSessionIndex || 0].payload.fuzzingAttackType}
+                            onValueChange={(value) => dispatch(setFuzzingAttackType({ fuzzingAttackingType: value as FuzzingAttackType }))}
+                        >
+                            <SelectTrigger className="w-[180px]">
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent >
+                                <SelectItem value={FuzzingAttackType.ROTATOR}>
+                                    Rotator
+                                </SelectItem>
+                                <SelectItem value={FuzzingAttackType.ECHO}>
+                                    Echo
+                                </SelectItem>
+                                <SelectItem value={FuzzingAttackType.ZIPPED}>
+                                    Zipped
+                                </SelectItem>
+                                <SelectItem value={FuzzingAttackType.COMBINATORIAL}>
+                                    Combinatorial
+                                </SelectItem>
+                            </SelectContent>
+                        </Select>
+
                         <Button
                             onClick={triggerFuzzing}
                             disabled={isLoading}
