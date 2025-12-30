@@ -137,7 +137,13 @@ export default function PayloadConfigurator() {
                         }
                         onChange={handleValues}>
                     </Textarea>
-
+                    <div>
+                        Number of requests : {
+                            isOnePayload ? session.payload.parameters[0].values.length : (session.payload.fuzzingAttackType === FuzzingAttackType.ZIPPED ? session.payload.parameters.reduce((acc, param) => param.values.length < acc ? param.values.length : acc, Infinity) :
+                                session.payload.fuzzingAttackType === FuzzingAttackType.COMBINATORIAL ? session.payload.parameters.reduce((acc, param) => acc * param.values.length, 1) :
+                                    session.payload.parameters[0].values.length)
+                        }
+                    </div>
                     {/* <Select disabled={!selectedType.includes("file")} value={selectedFile} onValueChange={setSelectedFile}>
                         <SelectTrigger>
                             <SelectValue placeholder="Choose file" />
