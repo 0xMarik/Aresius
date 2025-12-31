@@ -10,6 +10,7 @@ import { useAppDispatch, useAppSelector } from "@/hooks/redux";
 import { Textarea } from "@/components/ui/textarea"
 import { loadValuesParam, setDelaisTime, setNumThreads, setSelectedParameter } from "@/store/slices/fuzzerSlice";
 import { FuzzerParameter, FuzzingAttackType } from "@/types/fuzzer.type";
+import { IconUpload } from "@tabler/icons-react";
 
 export default function PayloadConfigurator() {
     // const [selectedType, setSelectedType] = useState("hosted-file");
@@ -64,6 +65,41 @@ export default function PayloadConfigurator() {
             values: event.target.value
         }))
     }
+
+    const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const fileContent = e.target?.result as string;
+
+            // Get existing values
+            const existingValues = isOnePayload
+                ? parameters[0]?.values.join("\n") || ""
+                : parameters.find(param => param.highlightRange.id === selectedParam?.highlightRange.id)?.values.join("\n") || "";
+
+            // Append file content to existing values
+            const updatedValues = existingValues
+                ? `${existingValues}\n${fileContent}`
+                : fileContent;
+
+            // Dispatch the Redux action with appended content
+            dispatch(loadValuesParam({
+                paramIndex: isOnePayload ? 0 : parameters.findIndex(param => param.highlightRange.id === selectedParam?.highlightRange.id),
+                values: updatedValues
+            }));
+        };
+
+        reader.onerror = () => {
+            console.error("Error reading file");
+        };
+
+        reader.readAsText(file);
+
+        // Reset file input so same file can be loaded again
+        event.target.value = '';
+    };
 
     return (
         selectedParam === null ? "Select a param" : <>
@@ -128,15 +164,36 @@ export default function PayloadConfigurator() {
 
 
                     <Label>Selected File</Label>
-                    <Textarea
-                        className="h-48"
-                        value={
-                            isOnePayload
-                                ? parameters[0]?.values.join("\n") || ""
-                                : parameters.find(param => param.highlightRange.id === selectedParam?.highlightRange.id)?.values.join("\n") || ""
-                        }
-                        onChange={handleValues}>
-                    </Textarea>
+                    <div className="space-y-2">
+
+
+                        {/* Textarea */}
+                        <Textarea
+                            className="h-48"
+                            value={
+                                isOnePayload
+                                    ? parameters[0]?.values.join("\n") || ""
+                                    : parameters.find(param => param.highlightRange.id === selectedParam?.highlightRange.id)?.values.join("\n") || ""
+                            }
+                            onChange={handleValues}>
+                        </Textarea>
+
+                        {/* File input with custom button */}
+                        <div className="flex gap-2 w-full">
+                            <label htmlFor="file-upload" className="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 border border-input bg-background hover:bg-accent hover:text-accent-foreground h-10 px-4 py-2 cursor-pointer w-full">
+
+                                <IconUpload className="mr-2 " />
+                                Load from File
+                            </label>
+                            <input
+                                id="file-upload"
+                                type="file"
+                                accept=".txt,.csv"
+                                onChange={handleFileUpload}
+                                className="hidden"
+                            />
+                        </div>
+                    </div>
                     <div>
                         Number of requests : {
                             isOnePayload ? session.payload.parameters[0].values.length : (session.payload.fuzzingAttackType === FuzzingAttackType.ZIPPED ? session.payload.parameters.reduce((acc, param) => param.values.length < acc ? param.values.length : acc, Infinity) :
@@ -171,6 +228,7 @@ export default function PayloadConfigurator() {
 
                 <TabsContent value="settings">
                     <p>Settings configuration</p>
+                    <br />
                     <Label htmlFor="numThreads">Number of Threads</Label>
                     <Input
                         id="numThreads"
@@ -184,7 +242,8 @@ export default function PayloadConfigurator() {
                         }}
                     />
                     <br />
-                    <Label htmlFor="delais">Delais between Requests</Label>
+                    <Label htmlFor="delais">Delais between Requests (ms)</Label>
+                    <p className="text-xs">This delais are between request in the same threads, so if you have restriction to send just one request every 1s use 1 thread and 10,000ms</p>
                     <Input
                         id="numThreads"
                         type="number"
