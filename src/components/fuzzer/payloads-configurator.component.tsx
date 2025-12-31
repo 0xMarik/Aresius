@@ -72,7 +72,10 @@ export default function PayloadConfigurator() {
 
         const reader = new FileReader();
         reader.onload = (e) => {
-            const fileContent = e.target?.result as string;
+            let fileContent = e.target?.result as string;
+
+            // Remove \r characters (Windows line endings)
+            fileContent = fileContent.replace(/\r/g, '');
 
             // Get existing values
             const existingValues = isOnePayload
