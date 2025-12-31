@@ -41,6 +41,7 @@ pub struct SessionPayload {
     pub raw_request: String,
     pub parameters: Vec<FuzzerParameter>,
     pub metadata: PayloadMetadata,
+    pub delais_time: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

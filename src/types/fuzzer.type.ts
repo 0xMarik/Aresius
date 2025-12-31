@@ -89,6 +89,7 @@ interface SessionPayload {
     parameters: FuzzerParameter[];
     fuzzingAttackType: FuzzingAttackType;
     numThreads: number;
+    delaisTime: number;
     metadata: {
         targetUrl: string;
     };

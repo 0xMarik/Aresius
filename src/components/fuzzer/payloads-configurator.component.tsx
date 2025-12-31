@@ -8,7 +8,7 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useAppDispatch, useAppSelector } from "@/hooks/redux";
 import { Textarea } from "@/components/ui/textarea"
-import { loadValuesParam, setNumThreads, setSelectedParameter } from "@/store/slices/fuzzerSlice";
+import { loadValuesParam, setDelaisTime, setNumThreads, setSelectedParameter } from "@/store/slices/fuzzerSlice";
 import { FuzzerParameter, FuzzingAttackType } from "@/types/fuzzer.type";
 
 export default function PayloadConfigurator() {
@@ -189,6 +189,10 @@ export default function PayloadConfigurator() {
                         id="numThreads"
                         type="number"
                         min={0}
+                        value={session.payload.delaisTime}
+                        onChange={(event) => {
+                            dispatch(setDelaisTime({ delaisTime: parseInt(event.target.value) }))
+                        }}
                     />
                 </TabsContent>
             </Tabs >

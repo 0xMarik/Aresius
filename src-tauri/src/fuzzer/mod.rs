@@ -1,6 +1,6 @@
 use std::sync::Arc;
-
 use tokio::sync::Mutex;
+use tokio::time::{sleep, Duration};
 
 use crate::{
     http_request::HttpConnection,
@@ -53,6 +53,7 @@ pub async fn execute_rotator_fuzzing(session: &FuzzerSession, num_tasks: usize) 
         let chunk = chunk.to_vec();
         let url = session.payload.metadata.target_url.clone();
         let results = Arc::clone(&results);
+        let delay = session.payload.delais_time.clone(); // Clone the delay for this task
 
         let handle = tokio::spawn(async move {
             let mut conn = match HttpConnection::new(&url).await {
@@ -75,6 +76,10 @@ pub async fn execute_rotator_fuzzing(session: &FuzzerSession, num_tasks: usize) 
                     }
                     Err(e) => eprintln!("Request failed: {}", e),
                 }
+
+                if delay > 0 {
+                    sleep(Duration::from_millis(delay)).await;
+                }
             }
         });
         handles.push(handle);
@@ -93,6 +98,7 @@ pub async fn execute_echo_fuzzing(session: &FuzzerSession, num_tasks: usize) -> 
     let results = Arc::new(Mutex::new(Vec::new()));
     let mut handles = vec![];
     let mut requests = Vec::new();
+    let delay = session.payload.delais_time.clone(); // Clone the delay for this task
 
     // ECHO: Use first parameter's values, apply same value to ALL positions simultaneously
     if let Some(first_param) = session.payload.parameters.first() {
@@ -141,6 +147,10 @@ pub async fn execute_echo_fuzzing(session: &FuzzerSession, num_tasks: usize) -> 
                     }
                     Err(e) => eprintln!("Request failed: {}", e),
                 }
+
+                if delay > 0 {
+                    sleep(Duration::from_millis(delay)).await;
+                }
             }
         });
         handles.push(handle);
@@ -159,6 +169,7 @@ pub async fn execute_zipped_fuzzing(session: &FuzzerSession, num_tasks: usize) -
     let results = Arc::new(Mutex::new(Vec::new()));
     let mut handles = vec![];
     let mut requests = Vec::new();
+    let delay = session.payload.delais_time.clone(); // Clone the delay for this task
 
     // PITCHFORK: Iterate through all parameters simultaneously
     // Stop when the shortest parameter list is exhausted
@@ -218,6 +229,10 @@ pub async fn execute_zipped_fuzzing(session: &FuzzerSession, num_tasks: usize) -
                     }
                     Err(e) => eprintln!("Request failed: {}", e),
                 }
+
+                if delay > 0 {
+                    sleep(Duration::from_millis(delay)).await;
+                }
             }
         });
         handles.push(handle);
@@ -239,6 +254,7 @@ pub async fn execute_combinatorial_fuzzing(
     let results = Arc::new(Mutex::new(Vec::new()));
     let mut handles = vec![];
     let mut requests = Vec::new();
+    let delay = session.payload.delais_time.clone(); // Clone the delay for this task
 
     // CLUSTER BOMB: Test every possible combination of all parameter values
     // This creates a cartesian product of all parameter value lists
@@ -290,6 +306,10 @@ pub async fn execute_combinatorial_fuzzing(
                         results.lock().await.push(req_res);
                     }
                     Err(e) => eprintln!("Request failed: {}", e),
+                }
+
+                if delay > 0 {
+                    sleep(Duration::from_millis(delay)).await;
                 }
             }
         });

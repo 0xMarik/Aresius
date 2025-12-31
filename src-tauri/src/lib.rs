@@ -1,7 +1,6 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 mod ares_utils;
 mod http_request;
-mod structs;
 
 mod fuzzer;
 // src-tauri/src/main.rs

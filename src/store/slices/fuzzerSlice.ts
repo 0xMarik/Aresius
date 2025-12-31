@@ -7,6 +7,7 @@ const initialState : FuzzerState = {
         name: 'Default Session',
         payload: {
             numThreads: 1,
+            delaisTime: 0,
             fuzzingAttackType: FuzzingAttackType.ROTATOR,
             rawRequest: 'GET / HTTP/1.1\nHost: www.google.com\n\n',
             parameters: [],
@@ -35,6 +36,7 @@ const fuzzerSlice = createSlice({
         fuzzingHistory: [],
         payload: { // default payload
           numThreads: 1,
+          delaisTime: 0,
           fuzzingAttackType: FuzzingAttackType.ROTATOR,
           rawRequest: 'GET / HTTP/1.1\nHost: facebook.com\n\n',
           metadata : {
@@ -172,6 +174,15 @@ const fuzzerSlice = createSlice({
       }
     },
 
+      setDelaisTime : (state, action: PayloadAction<{delaisTime: number}>) => {
+      if(state.activeSessionIndex !== null) {
+        const currentSession = state.fuzzerSessions[state.activeSessionIndex]
+        currentSession.payload.delaisTime = action.payload.delaisTime;
+      }else{
+         console.error("Their is no active session!!");
+      }
+    },
+
 
     setTargerUrl :(state, action: PayloadAction<{targetUrl: string}>) => {
       if(state.activeSessionIndex !== null) {
@@ -209,6 +220,7 @@ setParameters,
 removeParameter,
 setContent,
 setNumThreads,
+setDelaisTime,
 setTargerUrl,
 setFuzzingAttackType} = fuzzerSlice.actions;
 
