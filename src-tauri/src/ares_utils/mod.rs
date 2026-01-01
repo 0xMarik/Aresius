@@ -1,5 +1,4 @@
-use std::fs;
-use std::sync::Arc;
+pub mod certs;
 use url::Url;
 
 #[derive(Debug, Clone)]
