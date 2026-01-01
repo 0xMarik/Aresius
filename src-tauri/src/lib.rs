@@ -9,6 +9,9 @@ use types::*;
 
 use crate::fuzzer::*;
 
+mod proxy;
+use crate::proxy::*;
+
 // use std::collections::HashMap;
 
 #[tauri::command]
@@ -99,6 +102,17 @@ async fn process_fuzzer_session(
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .setup(|app| {
+            // let handle = app.handle();
+
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = start_http_proxy("127.0.0.1:8080").await {
+                    eprintln!("Proxy error: {}", e);
+                }
+            });
+
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![process_fuzzer_session])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
