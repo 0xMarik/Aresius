@@ -1,6 +1,3 @@
-
-import { useRef, useEffect, useState } from 'react';
-
 import { invoke } from "@tauri-apps/api/core";
 // import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import ReactSplit, { SplitDirection } from '@devbookhq/splitter'
@@ -12,28 +9,24 @@ import { useAppDispatch, useAppSelector } from '@/hooks/redux';
 // import ResultsTable from '@/components/result-table.components';
 import { addFuzzingHistory, setFuzzingAttackType, setTargerUrl } from '@/store/slices/fuzzerSlice';
 import FuzzSession from '@/components/fuzz-session.component';
-import { FuzzingHistory, FuzzerRequest, FuzzingAttackType } from '@/types/fuzzer.type';
+import { FuzzingHistory, FuzzingAttackType } from '@/types/fuzzer.type';
 import { Link, Route, Routes } from 'react-router-dom';
 import FuzzerHistoryCompo from '@/components/history.component';
 import FuzzRequestPayload from '@/components/fuzz-request-payloads.component';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 
-interface PendingRequest {
-    requestId: string;
-    sessionId: string;
-    index: number;
-}
 
 const Fuzzer: React.FC = () => {
-    const [isLoading, setIsLoading] = useState<boolean>(false);
+    // const [isLoading, setIsLoading] = useState<boolean>(false);
+    const isLoading = false;
 
     // Current session results - reset for each new fuzz session
-    const [currentSessionResults, setCurrentSessionResults] = useState<FuzzerRequest[]>([]);
-    const [currentSessionId, setCurrentSessionId] = useState<string>('');
+    // const [currentSessionResults, setCurrentSessionResults] = useState<FuzzerRequest[]>([]);
+    // const [currentSessionId, setCurrentSessionId] = useState<string>('');
 
     // Store active requests for current session only
-    const activeRequestsRef = useRef<Map<string, PendingRequest>>(new Map());
+    // const activeRequestsRef = useRef<Map<string, PendingRequest>>(new Map());
     const dispatch = useAppDispatch()
 
 

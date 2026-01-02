@@ -11,6 +11,7 @@ import {
   Settings2,
   Repeat2,
   SquareTerminal,
+  Antenna,
 } from "lucide-react"
 
 // import { NavMain } from '@/components/nav-main'
@@ -24,7 +25,7 @@ import {
   SidebarHeader,
   // SidebarRail,
 } from '@/components/ui/sidebar'
-import { IconSatellite } from "@tabler/icons-react"
+// import { IconSatellite } from "@tabler/icons-react"
 
 // This is sample data.
 const data = {
@@ -157,7 +158,7 @@ const data = {
   proxy: [{
     name: "Interceptor",
     url: "/interceptor",
-    icon: IconSatellite,
+    icon: Antenna,
   }],
   workspace: [
     {
