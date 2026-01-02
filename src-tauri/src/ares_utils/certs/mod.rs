@@ -1,15 +1,10 @@
 use anyhow::{anyhow, Result};
 use rcgen::{Certificate, CertificateParams, DistinguishedName, DnType, Issuer, KeyPair};
-use rustls::{
-    pki_types::{CertificateDer, PrivateKeyDer},
-    ServerConfig,
-};
+use rustls::{pki_types::CertificateDer, ServerConfig};
 use rustls_pemfile;
 use std::fs;
 use std::io::BufReader;
 use std::sync::Arc;
-use tokio::io::AsyncWriteExt;
-use tokio::net::TcpStream;
 use tokio_rustls::TlsAcceptor;
 
 pub fn generate_ca_cert() -> Result<(Certificate, KeyPair)> {
@@ -96,35 +91,35 @@ pub fn create_tls_acceptor(cert_pem: &[u8], key_pem: &[u8]) -> Result<TlsAccepto
     Ok(TlsAcceptor::from(Arc::new(config)))
 }
 
-pub async fn handle_http_request(
-    mut client_stream: TcpStream,
-    request: &str,
-    initial_data: &[u8],
-) -> std::io::Result<()> {
-    println!("=== HTTP REQUEST ===");
-    println!("{}", request);
+// pub async fn handle_http_request(
+//     mut client_stream: TcpStream,
+//     request: &str,
+//     initial_data: &[u8],
+// ) -> std::io::Result<()> {
+//     println!("=== HTTP REQUEST ===");
+//     println!("{}", request);
 
-    let target = parse_target(request)?;
-    let mut server_stream = TcpStream::connect(&target).await?;
-    server_stream.write_all(initial_data).await?;
+//     let target = parse_target(request)?;
+//     let mut server_stream = TcpStream::connect(&target).await?;
+//     server_stream.write_all(initial_data).await?;
 
-    tokio::io::copy_bidirectional(&mut client_stream, &mut server_stream).await?;
-    Ok(())
-}
+//     tokio::io::copy_bidirectional(&mut client_stream, &mut server_stream).await?;
+//     Ok(())
+// }
 
-pub fn parse_target(request: &str) -> std::io::Result<String> {
-    for line in request.lines() {
-        if line.to_lowercase().starts_with("host:") {
-            let host = line[5..].trim();
-            if host.contains(':') {
-                return Ok(host.to_string());
-            } else {
-                return Ok(format!("{}:80", host));
-            }
-        }
-    }
-    Err(std::io::Error::new(
-        std::io::ErrorKind::InvalidInput,
-        "No Host header found",
-    ))
-}
+// pub fn parse_target(request: &str) -> std::io::Result<String> {
+//     for line in request.lines() {
+//         if line.to_lowercase().starts_with("host:") {
+//             let host = line[5..].trim();
+//             if host.contains(':') {
+//                 return Ok(host.to_string());
+//             } else {
+//                 return Ok(format!("{}:80", host));
+//             }
+//         }
+//     }
+//     Err(std::io::Error::new(
+//         std::io::ErrorKind::InvalidInput,
+//         "No Host header found",
+//     ))
+// }

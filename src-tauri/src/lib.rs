@@ -102,7 +102,7 @@ async fn process_fuzzer_session(
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .setup(|app| {
+        .setup(|_| {
             // let handle = app.handle();
 
             tauri::async_runtime::spawn(async move {

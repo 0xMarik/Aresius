@@ -24,6 +24,7 @@ import {
   SidebarHeader,
   // SidebarRail,
 } from '@/components/ui/sidebar'
+import { IconSatellite } from "@tabler/icons-react"
 
 // This is sample data.
 const data = {
@@ -153,6 +154,11 @@ const data = {
     //   icon: Map,
     // },
   ],
+  proxy: [{
+    name: "Interceptor",
+    url: "/interceptor",
+    icon: IconSatellite,
+  }],
   workspace: [
     {
       name: "Projects",
@@ -170,6 +176,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       </SidebarHeader>
       <SidebarContent>
         {/* <NavMain items={data.navMain} /> */}
+        <NavProjects name="Proxy" items={data.proxy} />
         <NavProjects name="Testing" items={data.projects} />
         <NavProjects name="Workspace" items={data.workspace} />
       </SidebarContent>
