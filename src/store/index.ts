@@ -1,6 +1,7 @@
 import { configureStore } from '@reduxjs/toolkit';
 import ProjectsReducer from './slices/projectSlice';
 import FuzzerReducer from './slices/fuzzerSlice';
+import ReplayerReducer from './slices/replayerSlice';
 // src/middleware/logger.ts
 import { Middleware } from '@reduxjs/toolkit'
 
@@ -14,7 +15,8 @@ export const loggerMiddleware: Middleware = store => next => action => {
 const store = configureStore({
   reducer: {
     workspacestate: ProjectsReducer,
-    fuzzerstate: FuzzerReducer
+    fuzzerstate: FuzzerReducer,
+    replayerstate: ReplayerReducer,
   },
   middleware: (getDefaultMiddleware) =>
     getDefaultMiddleware().concat(loggerMiddleware),

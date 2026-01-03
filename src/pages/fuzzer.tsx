@@ -155,7 +155,7 @@ const Fuzzer: React.FC = () => {
                             disabled={isLoading}
                             className="p-4  text-white rounded disabled:bg-gray-400"
                         >
-                            {isLoading ? "..." : "Run"}
+                            RUN
                         </Button>
                     </div>
                     <Routes>
