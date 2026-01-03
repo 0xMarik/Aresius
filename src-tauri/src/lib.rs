@@ -5,11 +5,15 @@ mod http_request;
 mod fuzzer;
 // src-tauri/src/main.rs
 mod types;
+// use tauri::http::response;
 use types::*;
+
+use types::replayer::*;
 
 use crate::fuzzer::*;
 
 mod proxy;
+use crate::http_request::HttpConnection;
 use crate::proxy::*;
 
 // use std::collections::HashMap;
@@ -20,71 +24,6 @@ async fn process_fuzzer_session(
     fuzzing_attack_type: FuzzingAttackType,
     num_threads: usize,
 ) -> Result<Vec<ReqRes>, String> {
-    println!("fuzzing attack type: {:?}", fuzzing_attack_type);
-
-    // let results = Arc::new(Mutex::new(Vec::new()));
-    // let mut handles = vec![];
-
-    // // Create all request variants first
-    // let mut requests = Vec::new();
-    // for param in &session.payload.parameters {
-    //     for value in &param.values {
-    //         let modified_request =
-    //             building_raw_request(&session.payload.raw_request, value, &param.highlight_range);
-    //         requests.push(modified_request);
-    //     }
-    // }
-
-    // // Split work across tasks (e.g., 5 concurrent tasks)
-    // let num_tasks = 10;
-    // let chunk_size = (requests.len() + num_tasks - 1) / num_tasks;
-
-    // for chunk in requests.chunks(chunk_size) {
-    //     let chunk = chunk.to_vec();
-    //     let url = session.payload.metadata.target_url.clone();
-    //     let results = Arc::clone(&results);
-
-    //     let handle = tokio::spawn(async move {
-    //         // Each task gets its own persistent connection
-    //         let mut conn = match HttpConnection::new(&url).await {
-    //             Ok(conn) => conn,
-    //             Err(e) => {
-    //                 eprintln!("Connection failed: {}", e);
-    //                 return;
-    //             }
-    //         };
-
-    //         for modified_request in chunk {
-    //             match conn.send_request(&modified_request).await {
-    //                 Ok((response, response_time)) => {
-    //                     let req_res = ReqRes {
-    //                         request: modified_request.clone(),
-    //                         response: response.clone(),
-    //                         response_time: response_time.as_millis(),
-    //                     };
-
-    //                     // Lock only when writing results
-    //                     results.lock().await.push(req_res);
-
-    //                     // println!("Response: {}", response);
-    //                     // println!("Modified Request:\n{}", modified_request);
-    //                 }
-    //                 Err(e) => eprintln!("Request failed: {}", e),
-    //             }
-    //         }
-    //     });
-
-    //     handles.push(handle);
-    // }
-
-    // // Wait for all tasks to complete
-    // for handle in handles {
-    //     handle.await.unwrap();
-    // }
-
-    // // Extract results
-    // let results = Arc::try_unwrap(results).unwrap().into_inner();
-
     let results = match fuzzing_attack_type {
         FuzzingAttackType::Rotator => execute_rotator_fuzzing(&session, num_threads).await,
         FuzzingAttackType::Echo => execute_echo_fuzzing(&session, num_threads).await,
@@ -97,6 +36,61 @@ async fn process_fuzzer_session(
     // Return success
     Ok(results)
 }
+
+#[tauri::command]
+async fn replay_request(url: String, request_tmp: String) -> Result<ReplayerResponse, String> {
+    let url = url.clone();
+    let req = request_tmp.clone();
+
+    let mut conn = HttpConnection::new(&url)
+        .await
+        .map_err(|e| format!("Connection failed: {e}"))?;
+
+    let (response, response_time) = conn
+        .send_request(&req)
+        .await
+        .map_err(|e| format!("Request failed: {e}"))?;
+
+    conn.close()
+        .await
+        .map_err(|e| format!("Request failed to close: {e}"))?;
+
+    Ok(ReplayerResponse {
+        response_raw: response,
+        response_time: response_time.as_millis(),
+        request_raw: req,
+    })
+}
+
+// async fn replay_request(request: ReaplayerRequest) -> ReplayerResponse {
+//     let url = request.url.clone();
+//     let request = request.request_tmp.clone();
+//     let mut replayer_response;
+
+//     let handler = tokio::spawn(async move {
+//         let mut conn = match HttpConnection::new(&url).await {
+//             Ok(conn) => conn,
+//             Err(e) => {
+//                 eprintln!("Connection failed: {}", e);
+//                 return;
+//             }
+//         };
+
+//         match conn.send_request(&request).await {
+//             Ok((response, response_time)) => {
+//                 replayer_response = ReplayerResponse {
+//                     response_raw: response.clone(),
+//                     response_time: response_time.as_millis(),
+//                     request_raw: request.clone(),
+//                 };
+//                 // response = req_res;
+//             }
+//             Err(e) => eprintln!("Request failed: {}", e),
+//         }
+//     });
+
+//     return replayer_response;
+// }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -113,7 +107,10 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![process_fuzzer_session])
+        .invoke_handler(tauri::generate_handler![
+            process_fuzzer_session,
+            replay_request
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

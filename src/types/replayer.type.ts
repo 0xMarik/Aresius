@@ -1,6 +1,6 @@
 
-interface ReplayerHistoryItem {
-    time: number;
+export interface ReplayerHistoryItem {
+    requestTime: number;
     requestRaw: string
     responseRaw: string;   
 }

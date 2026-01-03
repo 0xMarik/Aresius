@@ -6,10 +6,12 @@ import { useEffect, useRef } from 'react'
 import { http } from '@/components/http-parser.component';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { useAppDispatch, useAppSelector } from '@/hooks/redux';
-import { setReaplayerContent } from '@/store/slices/replayerSlice';
+import { addReplayerHistory, setReaplayerContent, setReaplayerURL } from '@/store/slices/replayerSlice';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { invoke } from '@tauri-apps/api/core';
+import { ReplayerHistoryItem } from '@/types/replayer.type';
+import React from 'react';
 
 // type TaskResult = {
 //     id: string;
@@ -64,8 +66,7 @@ const RequestCodeEditor = () => {
                 oneDark,
                 fullHeightTheme,
                 updateListener,
-                // fuzzerHighlighter,
-                // readOnlyTransactionFilter,
+                EditorView.lineWrapping,
             ],
         });
 
@@ -93,15 +94,87 @@ const RequestCodeEditor = () => {
     )
 }
 
+const ResponseCodeEditor = () => {
+    const editorRef = useRef<HTMLDivElement | null>(null);
+    const viewRef = useRef<EditorView | null>(null);
+    // const [content, setContent] = useState<string>("");
+    const { collections, selectedCollectionIndex } = useAppSelector(state => state.replayerstate);
+    const { history } = collections[selectedCollectionIndex].sessions[collections[selectedCollectionIndex].selectedSessionIndex];
+    // const dispatch = useAppDispatch();
+
+    useEffect(() => {
+        if (!editorRef.current) return;
+
+        // Clean up existing editor
+        if (viewRef.current) {
+            viewRef.current.destroy();
+            viewRef.current = null;
+        }
+
+        // const updateListener = EditorView.updateListener.of((update) => {
+        //     if (update.docChanged) {
+        //         const code = update.state.doc.toString();
+        //         // Update Redux state with new content
+        //         // setContent(code);
+        //         console.log({ code })
+        //         dispatch(setReaplayerContent({ rawRequest: code }));
+        //     }
+        // });
+
+        const state = EditorState.create({
+            doc: history.length > 0 ? history[history.length - 1].responseRaw : "",
+            extensions: [
+                basicSetup,
+                http(),
+                // javascript(),
+                oneDark,
+                fullHeightTheme,
+                EditorView.lineWrapping,
+                EditorView.editable.of(false),
+                EditorState.readOnly.of(true),
+            ],
+        });
+
+        const view = new EditorView({
+            state,
+            parent: editorRef.current,
+        });
+
+        viewRef.current = view;
+
+        // Initialize global state after editor creation
+        // globalRanges = [...currentFuzzerSession.payload.parameters];
+        // selectedRangeId = currentFuzzerSession.selectedHighlightId;
+
+        return () => {
+            if (view) {
+                view.destroy();
+            }
+        };
+    }, [history]);
+
+    return (
+        <div ref={editorRef} className="h-full w-full border rounded-lg">
+        </div>
+    )
+}
+
 
 
 function Replayer() {
     const { collections, selectedCollectionIndex } = useAppSelector(state => state.replayerstate);
     const { url, requestTmp } = collections[selectedCollectionIndex].sessions[collections[selectedCollectionIndex].selectedSessionIndex];
+    const [responseLoading, setResponseLoading] = React.useState<boolean>(false);
 
-    const triggerRequest = () => {
-        const response = invoke('replay_request', { requestTmp: requestTmp, url: url });
-        console.log({ response });
+    const dispatch = useAppDispatch();
+
+    const triggerRequest = async () => {
+        console.log("Triggering request with:", { requestTmp, url });
+        setResponseLoading(true)
+        const response = await invoke<ReplayerHistoryItem>('replay_request', { requestTmp: requestTmp, url: url });
+        setResponseLoading(false)
+        dispatch(addReplayerHistory({ historyItem: response }));
+        // console.log({ response });
     }
 
     return (
@@ -120,6 +193,7 @@ function Replayer() {
                 <div className=' flex  justify-center items-center h-16 bg-muted/50 aspect-video rounded-lg p-1'>
                     <Input placeholder='Enter URL to replay...' className='w-full h-full bg-transparent border-0 focus:ring-0'
                         value={url}
+                        onChange={(event) => dispatch(setReaplayerURL({ url: event.target.value }))}
                     />
                     <Button
                         onClick={triggerRequest}
@@ -137,7 +211,8 @@ function Replayer() {
                         <RequestCodeEditor />
                     </div>
                     <div className="bg-muted/50 aspect-video rounded-lg p-1 w-full h-full">
-                        Request response
+                        {responseLoading ? "Response is loading..." : <ResponseCodeEditor />}
+
                     </div>
                 </ReactSplit>
             </div>

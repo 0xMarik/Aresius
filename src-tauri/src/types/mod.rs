@@ -1,4 +1,5 @@
 // src-tauri/src/types.rs (or in main.rs)
+pub mod replayer;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

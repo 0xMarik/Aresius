@@ -1,4 +1,4 @@
-import { ReplayerCollection } from "@/types/replayer.type";
+import { ReplayerCollection, ReplayerHistoryItem } from "@/types/replayer.type";
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 
 interface ReaplyerState {
@@ -33,9 +33,21 @@ const replayerSlice = createSlice({
         const collection = state.collections[state.selectedCollectionIndex];
         const session = collection.sessions[collection.selectedSessionIndex];
         session.requestTmp = rawRequest;
+    },
+    setReaplayerURL: (state, action: PayloadAction<{ url: string }>) => {
+        const { url } = action.payload;
+        const collection = state.collections[state.selectedCollectionIndex];
+        const session = collection.sessions[collection.selectedSessionIndex];
+        session.url = url;
+    },
+    addReplayerHistory: (state, action: PayloadAction<{ historyItem: ReplayerHistoryItem }>) => {
+        const { historyItem } = action.payload;
+        const collection = state.collections[state.selectedCollectionIndex];
+        const session = collection.sessions[collection.selectedSessionIndex];
+        session.history.push(historyItem);   
     }
-}
-})
 
-export const {setReaplayerContent} = replayerSlice.actions;
+}})
+
+export const {setReaplayerContent,setReaplayerURL,addReplayerHistory} = replayerSlice.actions;
 export default replayerSlice.reducer;
