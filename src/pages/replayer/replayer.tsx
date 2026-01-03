@@ -6,12 +6,13 @@ import { useEffect, useRef } from 'react'
 import { http } from '@/components/http-parser.component';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { useAppDispatch, useAppSelector } from '@/hooks/redux';
-import { addReplayerHistory, setReaplayerContent, setReaplayerURL } from '@/store/slices/replayerSlice';
+import { addReplayerHistory, selectedHisotryIndex, setReaplayerContent, setReaplayerURL } from '@/store/slices/replayerSlice';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { invoke } from '@tauri-apps/api/core';
 import { ReplayerHistoryItem } from '@/types/replayer.type';
 import React from 'react';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 // type TaskResult = {
 //     id: string;
@@ -35,7 +36,7 @@ const RequestCodeEditor = () => {
     const viewRef = useRef<EditorView | null>(null);
     // const [content, setContent] = useState<string>("");
     const { collections, selectedCollectionIndex } = useAppSelector(state => state.replayerstate);
-    const { requestTmp } = collections[selectedCollectionIndex].sessions[collections[selectedCollectionIndex].selectedSessionIndex];
+    const { requestTmp, history, selectedHistoryIndex } = collections[selectedCollectionIndex].sessions[collections[selectedCollectionIndex].selectedSessionIndex];
     const dispatch = useAppDispatch();
 
     useEffect(() => {
@@ -86,7 +87,7 @@ const RequestCodeEditor = () => {
                 view.destroy();
             }
         };
-    }, []);
+    }, [selectedHistoryIndex]);
 
     return (
         <div ref={editorRef} className="h-full w-full border rounded-lg">
@@ -99,7 +100,7 @@ const ResponseCodeEditor = () => {
     const viewRef = useRef<EditorView | null>(null);
     // const [content, setContent] = useState<string>("");
     const { collections, selectedCollectionIndex } = useAppSelector(state => state.replayerstate);
-    const { history } = collections[selectedCollectionIndex].sessions[collections[selectedCollectionIndex].selectedSessionIndex];
+    const { history, selectedHistoryIndex } = collections[selectedCollectionIndex].sessions[collections[selectedCollectionIndex].selectedSessionIndex];
     // const dispatch = useAppDispatch();
 
     useEffect(() => {
@@ -122,7 +123,7 @@ const ResponseCodeEditor = () => {
         // });
 
         const state = EditorState.create({
-            doc: history.length > 0 ? history[history.length - 1].responseRaw : "",
+            doc: selectedHistoryIndex !== null ? history[selectedHistoryIndex].responseRaw : "",
             extensions: [
                 basicSetup,
                 http(),
@@ -151,7 +152,7 @@ const ResponseCodeEditor = () => {
                 view.destroy();
             }
         };
-    }, [history]);
+    }, [history, selectedHistoryIndex]);
 
     return (
         <div ref={editorRef} className="h-full w-full border rounded-lg">
@@ -163,7 +164,7 @@ const ResponseCodeEditor = () => {
 
 function Replayer() {
     const { collections, selectedCollectionIndex } = useAppSelector(state => state.replayerstate);
-    const { url, requestTmp } = collections[selectedCollectionIndex].sessions[collections[selectedCollectionIndex].selectedSessionIndex];
+    const { url, requestTmp, history, selectedHistoryIndex } = collections[selectedCollectionIndex].sessions[collections[selectedCollectionIndex].selectedSessionIndex];
     const [responseLoading, setResponseLoading] = React.useState<boolean>(false);
 
     const dispatch = useAppDispatch();
@@ -174,7 +175,13 @@ function Replayer() {
         const response = await invoke<ReplayerHistoryItem>('replay_request', { requestTmp: requestTmp, url: url });
         setResponseLoading(false)
         dispatch(addReplayerHistory({ historyItem: response }));
+        dispatch(selectedHisotryIndex({ historyIndex: 0 }));
+
         // console.log({ response });
+    }
+
+    const handleSelectedHisotry = (value: string) => {
+        dispatch(selectedHisotryIndex({ historyIndex: parseInt(value) }));
     }
 
     return (
@@ -190,8 +197,8 @@ function Replayer() {
                 Title Left
             </div>
             <div className='h-full flex flex-col gap-1'>
-                <div className=' flex  justify-center items-center h-16 bg-muted/50 aspect-video rounded-lg p-1'>
-                    <Input placeholder='Enter URL to replay...' className='w-full h-full bg-transparent border-0 focus:ring-0'
+                <div className=' flex  justify-around items-center h-16 bg-muted/50 aspect-video rounded-lg p-1 gap-5'>
+                    <Input placeholder='Enter URL to replay...' className='h-full bg-transparent border-0 focus:ring-0'
                         value={url}
                         onChange={(event) => dispatch(setReaplayerURL({ url: event.target.value }))}
                     />
@@ -202,6 +209,23 @@ function Replayer() {
                     >
                         RUN
                     </Button>
+                    <Select
+                        value={selectedHistoryIndex?.toString() || ""}
+                        onValueChange={handleSelectedHisotry}
+                        disabled={history.length === 0}>
+                        <SelectTrigger className="w-[280px]">
+                            <SelectValue placeholder="Select Session" />
+                        </SelectTrigger>
+                        <SelectContent >
+                            {
+                                history.map((item, index) => (
+                                    <SelectItem key={index} value={index.toString()}>
+                                        {item.requestRaw.slice(0, 30).replace(/\r?\n|\r/g, ' ')}...
+                                    </SelectItem>
+                                ))
+                            }
+                        </SelectContent>
+                    </Select>
                 </div>
                 <ReactSplit
                     gutterClassName="custom-gutter-horizontal"

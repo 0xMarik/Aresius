@@ -13,7 +13,8 @@ const initialState : ReaplyerState  = {
                 {
                     history: [],
                     requestTmp: 'GET / HTTP/1.1\nHost: example.com\n\n',
-                    url: 'https://example.com'
+                    url: 'https://example.com',
+                    selectedHistoryIndex: null,
                 }
             ],
             selectedSessionIndex: 0,
@@ -44,10 +45,18 @@ const replayerSlice = createSlice({
         const { historyItem } = action.payload;
         const collection = state.collections[state.selectedCollectionIndex];
         const session = collection.sessions[collection.selectedSessionIndex];
-        session.history.push(historyItem);   
+        session.requestTmp = historyItem.requestRaw;
+        session.history = [historyItem, ...session.history];
+    },
+    selectedHisotryIndex: (state, action: PayloadAction<{ historyIndex: number }>) => {
+        const { historyIndex } = action.payload;
+        const collection = state.collections[state.selectedCollectionIndex];
+        const session = collection.sessions[collection.selectedSessionIndex];
+        session.requestTmp = session.history[historyIndex].requestRaw;
+        session.selectedHistoryIndex = historyIndex;
     }
 
 }})
 
-export const {setReaplayerContent,setReaplayerURL,addReplayerHistory} = replayerSlice.actions;
+export const {setReaplayerContent,setReaplayerURL,addReplayerHistory,selectedHisotryIndex} = replayerSlice.actions;
 export default replayerSlice.reducer;
