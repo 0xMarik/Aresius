@@ -2,17 +2,18 @@ import ReactSplit, { SplitDirection } from '@devbookhq/splitter'
 import { basicSetup, EditorView } from "codemirror";
 import './replayer.style.css'
 import { EditorState, } from '@codemirror/state';
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { http } from '@/components/http-parser.component';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { useAppDispatch, useAppSelector } from '@/hooks/redux';
-import { addReplayerHistory, selectedHisotryIndex, setReaplayerContent, setReaplayerURL } from '@/store/slices/replayerSlice';
+import { addCollection, addReplayerHistory, selectColSess, selectedHisotryIndex, setReaplayerContent, setReaplayerURL } from '@/store/slices/replayerSlice';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { invoke } from '@tauri-apps/api/core';
 import { ReplayerHistoryItem } from '@/types/replayer.type';
 import React from 'react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { RsTree, TreeNode } from 'rstree-ui';
 
 // type TaskResult = {
 //     id: string;
@@ -36,7 +37,7 @@ const RequestCodeEditor = () => {
     const viewRef = useRef<EditorView | null>(null);
     // const [content, setContent] = useState<string>("");
     const { collections, selectedCollectionIndex } = useAppSelector(state => state.replayerstate);
-    const { requestTmp, history, selectedHistoryIndex } = collections[selectedCollectionIndex].sessions[collections[selectedCollectionIndex].selectedSessionIndex];
+    const { requestTmp, selectedHistoryIndex } = collections[selectedCollectionIndex].sessions[collections[selectedCollectionIndex].selectedSessionIndex];
     const dispatch = useAppDispatch();
 
     useEffect(() => {
@@ -87,7 +88,7 @@ const RequestCodeEditor = () => {
                 view.destroy();
             }
         };
-    }, [selectedHistoryIndex]);
+    }, [selectedHistoryIndex, selectedCollectionIndex]);
 
     return (
         <div ref={editorRef} className="h-full w-full border rounded-lg">
@@ -112,15 +113,6 @@ const ResponseCodeEditor = () => {
             viewRef.current = null;
         }
 
-        // const updateListener = EditorView.updateListener.of((update) => {
-        //     if (update.docChanged) {
-        //         const code = update.state.doc.toString();
-        //         // Update Redux state with new content
-        //         // setContent(code);
-        //         console.log({ code })
-        //         dispatch(setReaplayerContent({ rawRequest: code }));
-        //     }
-        // });
 
         const state = EditorState.create({
             doc: selectedHistoryIndex !== null ? history[selectedHistoryIndex].responseRaw : "",
@@ -143,16 +135,12 @@ const ResponseCodeEditor = () => {
 
         viewRef.current = view;
 
-        // Initialize global state after editor creation
-        // globalRanges = [...currentFuzzerSession.payload.parameters];
-        // selectedRangeId = currentFuzzerSession.selectedHighlightId;
-
         return () => {
             if (view) {
                 view.destroy();
             }
         };
-    }, [history, selectedHistoryIndex]);
+    }, [history, selectedHistoryIndex, selectedCollectionIndex]);
 
     return (
         <div ref={editorRef} className="h-full w-full border rounded-lg">
@@ -169,6 +157,15 @@ function Replayer() {
 
     const dispatch = useAppDispatch();
 
+    const [selectedIds, setSelectedIds] = React.useState<string[]>([]);
+
+    const handleSelection = (value: string[]) => {
+        if (value !== undefined && value.length === 1 && value[0].includes("-")) {
+            const newValue = value[0]?.split("-") || [];
+            dispatch(selectColSess({ collectionIndex: Number(newValue[0]), sessionIndex: Number(newValue[1]) }));
+        }
+        setSelectedIds(value)
+    }
     const triggerRequest = async () => {
         console.log("Triggering request with:", { requestTmp, url });
         setResponseLoading(true)
@@ -176,25 +173,53 @@ function Replayer() {
         setResponseLoading(false)
         dispatch(addReplayerHistory({ historyItem: response }));
         dispatch(selectedHisotryIndex({ historyIndex: 0 }));
-
-        // console.log({ response });
     }
+    const [searchTerm, setSearchTerm] = useState('')
 
     const handleSelectedHisotry = (value: string) => {
         dispatch(selectedHisotryIndex({ historyIndex: parseInt(value) }));
     }
 
+    const data: TreeNode<unknown>[] = collections.map((collection, colIndex) => ({
+        id: `${colIndex}`,
+        label: `Collection ${colIndex + 1}`,
+        children: collection.sessions.map((session, sessIndex) => ({
+            id: `${colIndex}-${sessIndex}`,
+            label: `Session ${sessIndex + 1} - ${session.url}`,
+            // You can add more nesting if needed
+        }))
+    }))
+
+
     return (
         <ReactSplit
             direction={SplitDirection.Horizontal}
-            initialSizes={[25, 75]} // 👈 Initial widths: 40% left, 60% right
+            initialSizes={[20, 80]} // 👈 Initial widths: 40% left, 60% right
             // minSizes={[20, 20]} // 👈 Optional: Prevent collapsing below 20%
             gutterClassName="custom-gutter-horizontal"
             draggerClassName="custom-dragger-horizontal"
             classes={["py-1", "py-1"]}
         >
-            <div className="bg-muted/50 aspect-video rounded-lg p-1 w-full h-full">
-                Title Left
+            <div className='h-full'>
+                <Button onClick={() => { dispatch(addCollection()) }} className='mb-2 w-full'>+ New Collection</Button>
+                <div className="bg-muted/50 aspect-video rounded-lg p-1 w-full h-full ">
+                    <Input value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        placeholder="Search..."
+                    />
+                    <RsTree
+                        className='!h-full'
+                        data={data}
+                        selectedIds={selectedIds}
+                        onSelect={handleSelection}
+                        searchTerm={searchTerm}
+                        showIcons={true}
+                        virtualizeEnabled={true}
+
+                    // multiSelect={true}
+                    // checkable={true}
+                    />
+                </div>
             </div>
             <div className='h-full flex flex-col gap-1'>
                 <div className=' flex  justify-around items-center h-16 bg-muted/50 aspect-video rounded-lg p-1 gap-5'>
