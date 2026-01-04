@@ -14,7 +14,7 @@ import { addParameter, removeParameter, setParameters, setSelectedParameter, set
 import { FuzzerParameter } from "@/types/fuzzer.type";
 import { oneDark } from '@codemirror/theme-one-dark';
 
-const fullHeightTheme = EditorView.theme({
+export const fullHeightTheme = EditorView.theme({
     '&': {
         height: '100%',
         display: 'flex',

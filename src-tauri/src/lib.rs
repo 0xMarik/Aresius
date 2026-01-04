@@ -96,11 +96,11 @@ async fn replay_request(url: String, request_tmp: String) -> Result<ReplayerResp
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .setup(|_| {
-            // let handle = app.handle();
+        .setup(|app| {
+            let app_handle = app.handle().clone();
 
             tauri::async_runtime::spawn(async move {
-                if let Err(e) = start_http_proxy("127.0.0.1:8080").await {
+                if let Err(e) = start_http_proxy(app_handle, "127.0.0.1:8080").await {
                     eprintln!("Proxy error: {}", e);
                 }
             });

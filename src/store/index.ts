@@ -2,14 +2,18 @@ import { configureStore } from '@reduxjs/toolkit';
 import ProjectsReducer from './slices/projectSlice';
 import FuzzerReducer from './slices/fuzzerSlice';
 import ReplayerReducer from './slices/replayerSlice';
-// src/middleware/logger.ts
+import HttpHistoryReducer from './slices/http-historySlice';
 import { Middleware } from '@reduxjs/toolkit'
 
 export const loggerMiddleware: Middleware = store => next => action => {
-  console.log('[Logger] Dispatching:', action)
-  const result = next(action)
-  console.log('[Logger] Next state:', store.getState())
-  return result
+  if((action as any).type !== "http-history/addToHttpHistory"){
+    console.log('[Logger] Dispatching:', action)
+  }
+  const result = next(action); // Call next for ALL actions
+  if((action as any).type !== "http-history/addToHttpHistory"){
+    console.log('[Logger] Next state:', store.getState())
+  }
+  return result;
 }
 
 const store = configureStore({
@@ -17,6 +21,7 @@ const store = configureStore({
     workspacestate: ProjectsReducer,
     fuzzerstate: FuzzerReducer,
     replayerstate: ReplayerReducer,
+    httpHistory: HttpHistoryReducer,
   },
   middleware: (getDefaultMiddleware) =>
     getDefaultMiddleware().concat(loggerMiddleware),

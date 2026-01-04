@@ -78,4 +78,5 @@ const replayerSlice = createSlice({
 }})
 
 export const {setReaplayerContent,setReaplayerURL,addReplayerHistory,selectedHisotryIndex,addCollection,selectColSess} = replayerSlice.actions;
+
 export default replayerSlice.reducer;

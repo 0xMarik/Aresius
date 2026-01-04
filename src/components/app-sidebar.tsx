@@ -12,6 +12,7 @@ import {
   Repeat2,
   SquareTerminal,
   Antenna,
+  Logs,
 } from "lucide-react"
 
 // import { NavMain } from '@/components/nav-main'
@@ -159,6 +160,10 @@ const data = {
     name: "Interceptor",
     url: "/interceptor",
     icon: Antenna,
+  }, {
+    name: "HTTP History",
+    url: "/http-history",
+    icon: Logs,
   }],
   workspace: [
     {

@@ -38,6 +38,7 @@ const RequestCodeEditor = () => {
     // const [content, setContent] = useState<string>("");
     const { collections, selectedCollectionIndex } = useAppSelector(state => state.replayerstate);
     const { requestTmp, selectedHistoryIndex } = collections[selectedCollectionIndex].sessions[collections[selectedCollectionIndex].selectedSessionIndex];
+    const { selectedSessionIndex } = collections[selectedCollectionIndex]
     const dispatch = useAppDispatch();
 
     useEffect(() => {
@@ -88,7 +89,7 @@ const RequestCodeEditor = () => {
                 view.destroy();
             }
         };
-    }, [selectedHistoryIndex, selectedCollectionIndex]);
+    }, [selectedHistoryIndex, selectedCollectionIndex, selectedSessionIndex]);
 
     return (
         <div ref={editorRef} className="h-full w-full border rounded-lg">
@@ -100,8 +101,10 @@ const ResponseCodeEditor = () => {
     const editorRef = useRef<HTMLDivElement | null>(null);
     const viewRef = useRef<EditorView | null>(null);
     // const [content, setContent] = useState<string>("");
-    const { collections, selectedCollectionIndex } = useAppSelector(state => state.replayerstate);
-    const { history, selectedHistoryIndex } = collections[selectedCollectionIndex].sessions[collections[selectedCollectionIndex].selectedSessionIndex];
+    const { collections, selectedCollectionIndex, } = useAppSelector(state => state.replayerstate);
+
+    const { history, selectedHistoryIndex, } = collections[selectedCollectionIndex].sessions[collections[selectedCollectionIndex].selectedSessionIndex];
+    const { selectedSessionIndex } = collections[selectedCollectionIndex]
     // const dispatch = useAppDispatch();
 
     useEffect(() => {
@@ -140,7 +143,9 @@ const ResponseCodeEditor = () => {
                 view.destroy();
             }
         };
-    }, [history, selectedHistoryIndex, selectedCollectionIndex]);
+    }, [history, selectedHistoryIndex, selectedCollectionIndex, selectedSessionIndex]);
+    // SelectedHistoryIndex for re-render when changeing the history item
+    // SelectedCollectionIndex for re-render when changing collection
 
     return (
         <div ref={editorRef} className="h-full w-full border rounded-lg">

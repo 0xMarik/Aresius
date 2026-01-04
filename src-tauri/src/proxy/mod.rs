@@ -1,13 +1,22 @@
 use crate::ares_utils::certs::*;
+use rcgen::KeyPair;
+use rustls::{pki_types::ServerName, ClientConfig, RootCertStore};
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
+use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
 
-use rcgen::KeyPair;
-use rustls::{pki_types::ServerName, ClientConfig, RootCertStore};
+#[derive(serde::Serialize, Clone)]
+struct HttpHistoryPayload {
+    request: String,
+    response: String,
+    host: String,
+    timestamp: u128,
+}
 
-pub async fn start_http_proxy(bind_addr: &str) -> std::io::Result<()> {
+pub async fn start_http_proxy(app_handle: AppHandle, bind_addr: &str) -> std::io::Result<()> {
     // Generate CA certificate once at startup
     let (_, key_pair) =
         generate_ca_cert().map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
@@ -17,15 +26,17 @@ pub async fn start_http_proxy(bind_addr: &str) -> std::io::Result<()> {
     let listener = tokio::net::TcpListener::bind(bind_addr).await?;
     println!("MITM Proxy listening on {}", bind_addr);
 
+    let app = app_handle.clone();
     loop {
         match listener.accept().await {
             Ok((client_stream, addr)) => {
                 println!("New connection from: {}", addr);
                 // let ca_cert = ca_cert.clone();
                 let key_pair = key_pair.clone();
+                let app = app.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = handle_client(client_stream, key_pair).await {
-                        println!("Error: {}", e);
+                    if let Err(e) = handle_client(app, client_stream, key_pair).await {
+                        println!("Error #11-11-11: {}", e);
                     }
                 });
             }
@@ -36,6 +47,7 @@ pub async fn start_http_proxy(bind_addr: &str) -> std::io::Result<()> {
 
 // Main client handler
 async fn handle_client(
+    app_handle: AppHandle,
     mut client_stream: TcpStream,
     ca_key_pair: Arc<KeyPair>,
 ) -> std::io::Result<()> {
@@ -86,6 +98,10 @@ async fn handle_client(
         }
         println!("╚═══════════════════════════════");
 
+        let ts_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
         // Connect to real server with TLS
         let server_stream = TcpStream::connect(target).await?;
 
@@ -123,6 +139,17 @@ async fn handle_client(
         }
         println!("╚════════════════════════════════");
 
+        app_handle
+            .emit(
+                "http_history",
+                HttpHistoryPayload {
+                    request: decrypted_request.to_string(),
+                    response: decrypted_response.to_string(),
+                    host: target.to_string(),
+                    timestamp: ts_ms,
+                },
+            )
+            .ok();
         // Send response back to client
         client_tls
             .write_all(&response_buffer[..response_bytes])

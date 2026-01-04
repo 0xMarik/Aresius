@@ -11,14 +11,37 @@ import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import Fuzzer from "./pages/fuzzer";
 import Tweaker from "./pages/replayer/replayer";
 import Projects from "./pages/projects.page";
-// import Header from "./components/header.component";
+import HTTPHisotry from "./pages/http-history.page";
+import { useDispatch } from "react-redux";
+import { useEffect } from "react";
+import { listen } from "@tauri-apps/api/event";
+import { addToHttpHistory } from "./store/slices/http-historySlice";
 
 
 
 export default function App() {
+    const dispatch = useDispatch();
+
+    useEffect(() => {
+        // Listen for HTTP requests from Rust
+        const setupListener = async () => {
+            const unlisten = await listen('http_history', (event) => {
+                console.log("listenner: ", event.payload)
+                dispatch(addToHttpHistory({ historyItem: event.payload as any }));
+            });
+
+            return unlisten;
+        };
+
+        const unlistenPromise = setupListener();
+
+        return () => {
+            unlistenPromise.then(unlisten => unlisten());
+        };
+    }, [dispatch]);
     return (
         <Router>
-            <div className="">
+            <div className="h-screen">
                 <SidebarProvider >
                     <AppSidebar />
                     <SidebarInset >
@@ -26,8 +49,10 @@ export default function App() {
 
                         <Routes>
                             <Route path="/replayer" element={<Tweaker />} />
+                            <Route path="/http-history" element={<HTTPHisotry />} />
                             <Route path="/fuzzer/*" element={<Fuzzer />} />
                             <Route path="/projects" element={<Projects />} />
+
                         </Routes>
 
                     </SidebarInset>

@@ -8,6 +8,7 @@ import { EditorState } from '@codemirror/state';
 // import { http } from '@codemirror/legacy-modes/mode/http';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { http } from './http-parser.component';
+import { fullHeightTheme } from './fuzzer/request-editor/request-editor.component';
 
 
 interface FuzzerResponse {
@@ -111,7 +112,7 @@ const getContentLength = (headers: Record<string, string>): number => {
     return contentLength ? parseInt(contentLength) : 0;
 };
 
-const CodeMirrorEditor: React.FC<{ value: string }> = ({ value }) => {
+export const CodeMirrorEditor: React.FC<{ value: string }> = ({ value }) => {
     const editorRef = useRef<HTMLDivElement>(null);
     const viewRef = useRef<EditorView | null>(null);
 
@@ -120,18 +121,9 @@ const CodeMirrorEditor: React.FC<{ value: string }> = ({ value }) => {
             const state = EditorState.create({
                 doc: value,
                 extensions: [
-                    // StreamLanguage.define(http),
                     basicSetup,
-                    //         extensions: [
-                    //     basicSetup,
-                    //     http(),
-                    //     javascript(),
-                    //     fullHeightTheme,
-                    //     updateListener,
-                    //     fuzzerHighlighter,
-                    //     readOnlyTransactionFilter,
-                    // ],
                     EditorView.lineWrapping,
+                    fullHeightTheme,
                     http(),
                     oneDark,
                     EditorView.editable.of(false),
