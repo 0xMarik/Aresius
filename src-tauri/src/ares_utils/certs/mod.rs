@@ -4,10 +4,56 @@ use rustls::{pki_types::CertificateDer, ServerConfig};
 use rustls_pemfile;
 use std::fs;
 use std::io::BufReader;
+use std::path::Path;
 use std::sync::Arc;
 use tokio_rustls::TlsAcceptor;
 
 pub fn generate_ca_cert() -> Result<(Certificate, KeyPair)> {
+    let ca_cert_path = "ca_cert.pem";
+    let ca_key_path = "ca_key.pem";
+
+    // Check if CA certificate already exists
+    if Path::new(ca_cert_path).exists() && Path::new(ca_key_path).exists() {
+        println!("Loading existing CA certificate from {}", ca_cert_path);
+
+        // Read the existing key
+        let key_pem = fs::read_to_string(ca_key_path)?;
+
+        // Parse the key pair
+        let key_pair = KeyPair::from_pem(&key_pem)?;
+
+        // Regenerate certificate params
+        let mut params = CertificateParams::default();
+        params.distinguished_name = DistinguishedName::new();
+        params
+            .distinguished_name
+            .push(DnType::CountryName, "AresProxy");
+        params
+            .distinguished_name
+            .push(DnType::StateOrProvinceName, "AresProxy");
+        params
+            .distinguished_name
+            .push(DnType::LocalityName, "AresProxy");
+        params
+            .distinguished_name
+            .push(DnType::OrganizationName, "AresProxy");
+        params
+            .distinguished_name
+            .push(DnType::OrganizationalUnitName, "AresProxy CA");
+        params
+            .distinguished_name
+            .push(DnType::CommonName, "AresProxy CA");
+        params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+
+        // Recreate the certificate with the existing key
+        let cert = params.self_signed(&key_pair)?;
+
+        return Ok((cert, key_pair));
+    }
+
+    // Generate new CA certificate if it doesn't exist
+    println!("Generating new CA certificate...");
+
     let mut params = CertificateParams::default();
 
     // Set up Distinguished Name with all fields
@@ -40,11 +86,15 @@ pub fn generate_ca_cert() -> Result<(Certificate, KeyPair)> {
     // Create self-signed certificate (Issuer = Subject)
     let cert = params.self_signed(&key_pair)?;
 
-    // Save CA cert for installing in browser
+    // Save CA cert and key for future use
     let ca_cert_pem = cert.pem();
-    fs::write("ca_cert.pem", &ca_cert_pem)?;
+    let ca_key_pem = key_pair.serialize_pem();
 
-    println!("CA certificate generated: ca_cert.pem");
+    fs::write(ca_cert_path, &ca_cert_pem)?;
+    fs::write(ca_key_path, &ca_key_pem)?;
+
+    println!("CA certificate generated: {}", ca_cert_path);
+    println!("CA private key saved: {}", ca_key_path);
     println!("Install this in Chrome: Settings > Privacy > Security > Manage certificates");
 
     Ok((cert, key_pair))
