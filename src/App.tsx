@@ -16,6 +16,8 @@ import { useDispatch } from "react-redux";
 import { useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { addToHttpHistory } from "./store/slices/http-historySlice";
+import Interceptor from "./pages/interceptor/Interceptor.page";
+import { addInterceptedRequest } from "./store/slices/interceptorSlice";
 
 
 
@@ -39,6 +41,23 @@ export default function App() {
             unlistenPromise.then(unlisten => unlisten());
         };
     }, [dispatch]);
+
+    useEffect(() => {
+        const setupListener = async () => {
+            const unlisten = await listen("intercept_request", (event) => {
+                console.log({ payload: event.payload })
+                dispatch(addInterceptedRequest({ interceptedRequest: event.payload as any }))
+            })
+
+            return unlisten;
+        }
+
+        const unlistenPromise = setupListener();
+        return () => {
+            unlistenPromise.then(unlisten => unlisten());
+        };
+    }, [])
+
     return (
         <Router>
             <div className="h-screen">
@@ -48,11 +67,11 @@ export default function App() {
                         {/* <Header /> */}
 
                         <Routes>
+                            <Route path="/interceptor" element={<Interceptor />} />
                             <Route path="/replayer" element={<Tweaker />} />
                             <Route path="/http-history" element={<HTTPHisotry />} />
                             <Route path="/fuzzer/*" element={<Fuzzer />} />
                             <Route path="/projects" element={<Projects />} />
-
                         </Routes>
 
                     </SidebarInset>

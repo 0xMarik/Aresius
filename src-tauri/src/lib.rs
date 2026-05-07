@@ -5,6 +5,7 @@ mod http_request;
 mod fuzzer;
 // src-tauri/src/main.rs
 mod types;
+use tauri::Manager;
 // use tauri::http::response;
 use types::*;
 
@@ -95,8 +96,12 @@ async fn replay_request(url: String, request_tmp: String) -> Result<ReplayerResp
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(InterceptState::new())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            // if let Some(window) = app.get_webview_window("main") {
+            //     window.maximize().unwrap();
+            // }
             let app_handle = app.handle().clone();
 
             tauri::async_runtime::spawn(async move {
@@ -109,7 +114,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             process_fuzzer_session,
-            replay_request
+            replay_request,
+            resolve_intercept
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

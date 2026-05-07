@@ -27,8 +27,8 @@ const HTTPHisotry = () => {
                         direction={SplitDirection.Horizontal}
                         initialSizes={[50, 50]} // 👈 Initial widths: 40% left, 60% right
                         // minSizes={[20, 20]} // 👈 Optional: Prevent collapsing below 20%
-                        gutterClassName="custom-gutter-horizontal"
-                        draggerClassName="custom-dragger-horizontal"
+                        // gutterClassName="custom-gutter-horizontal"
+                        // draggerClassName="custom-dragger-horizontal"
                         classes={["py-1", "py-1"]}
                     >
                         <div className=' h-full'>

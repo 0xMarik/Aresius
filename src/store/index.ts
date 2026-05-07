@@ -4,6 +4,7 @@ import FuzzerReducer from './slices/fuzzerSlice';
 import ReplayerReducer from './slices/replayerSlice';
 import HttpHistoryReducer from './slices/http-historySlice';
 import { Middleware } from '@reduxjs/toolkit'
+import interceptorReducer from './slices/interceptorSlice';
 
 export const loggerMiddleware: Middleware = store => next => action => {
   if((action as any).type !== "http-history/addToHttpHistory"){
@@ -22,6 +23,7 @@ const store = configureStore({
     fuzzerstate: FuzzerReducer,
     replayerstate: ReplayerReducer,
     httpHistory: HttpHistoryReducer,
+    interceptor: interceptorReducer,
   },
   middleware: (getDefaultMiddleware) =>
     getDefaultMiddleware().concat(loggerMiddleware),

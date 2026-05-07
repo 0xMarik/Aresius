@@ -1,4 +1,5 @@
 pub mod certs;
+use colored::*;
 use url::Url;
 
 #[derive(Debug, Clone)]
@@ -23,4 +24,15 @@ pub fn url_parsing(url_str: &str) -> Option<UrlComponents> {
         port,
     };
     Some(components)
+}
+
+pub fn log(level: &str, msg: &str) {
+    let level = match level {
+        "INFO" => level.blue(),
+        "WARN" => level.yellow(),
+        "ERROR" => level.red().bold(),
+        _ => level.white(),
+    };
+
+    println!("[{}] {}", level, msg);
 }
