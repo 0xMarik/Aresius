@@ -18,6 +18,7 @@ import { listen } from "@tauri-apps/api/event";
 import { addToHttpHistory } from "./store/slices/http-historySlice";
 import Interceptor from "./pages/interceptor/Interceptor.page";
 import { addInterceptedRequest } from "./store/slices/interceptorSlice";
+import MenubarDemo from "./components/MenuBar";
 
 
 
@@ -60,22 +61,27 @@ export default function App() {
 
     return (
         <Router>
-            <div className="h-screen">
-                <SidebarProvider >
-                    <AppSidebar />
-                    <SidebarInset >
-                        {/* <Header /> */}
+            <div className="flex flex-col h-svh">
+                <div className="h-10 shrink-0 relative">
+                    <MenubarDemo />
+                </div>
+                <div className="flex-1 min-h-0 overflow-hidden">
+                    {/* <Headers/> */}
+                    <SidebarProvider className="h-full" >
+                        <AppSidebar />
+                        <SidebarInset >
 
-                        <Routes>
-                            <Route path="/interceptor" element={<Interceptor />} />
-                            <Route path="/replayer" element={<Tweaker />} />
-                            <Route path="/http-history" element={<HTTPHisotry />} />
-                            <Route path="/fuzzer/*" element={<Fuzzer />} />
-                            <Route path="/projects" element={<Projects />} />
-                        </Routes>
+                            <Routes>
+                                <Route path="/interceptor" element={<Interceptor />} />
+                                <Route path="/replayer" element={<Tweaker />} />
+                                <Route path="/http-history" element={<HTTPHisotry />} />
+                                <Route path="/fuzzer/*" element={<Fuzzer />} />
+                                <Route path="/projects" element={<Projects />} />
+                            </Routes>
 
-                    </SidebarInset>
-                </SidebarProvider>
+                        </SidebarInset>
+                    </SidebarProvider>
+                </div>
             </div>
         </Router>
     )

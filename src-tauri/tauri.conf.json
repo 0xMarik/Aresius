@@ -28,6 +28,7 @@
       },
       {
         "label": "main",
+        "decorations": false,
         "title": "Aresius",
         "maximized": true,
         "visible": false,

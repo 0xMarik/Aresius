@@ -9,6 +9,9 @@ use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 use tokio_rustls::TlsAcceptor;
 
+pub mod certification_installation;
+pub mod check_cert_installed;
+
 pub struct CaCertPaths {
     pub cert_path: PathBuf,
     pub key_path: PathBuf,

@@ -5,7 +5,6 @@ mod http_request;
 mod fuzzer;
 // src-tauri/src/main.rs
 mod types;
-use std::thread;
 
 use tauri::Manager;
 // use tauri::http::response;
@@ -20,6 +19,9 @@ use crate::http_request::HttpConnection;
 use crate::proxy::*;
 
 use tracing;
+
+use ares_utils::certs::certification_installation::install_cert;
+use ares_utils::certs::check_cert_installed::check_cert_installed;
 
 // use std::collections::HashMap;
 
@@ -122,10 +124,6 @@ pub fn run() {
         .manage(InterceptState::new())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
-            // if let Some(window) = app.get_webview_window("main") {
-            //     window.maximize().unwrap();
-            // }
-
             if let Some(_splash) = app.get_webview_window("splashscreen") {
                 // splash.set_shadow(false).unwrap();
                 // print!("Closing splashscreen...");
@@ -138,7 +136,7 @@ pub fn run() {
 
                 let app_handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
-                    thread::sleep(std::time::Duration::from_secs(10));
+                    // thread::sleep(std::time::Duration::from_secs(10));
                     close_splashscreen(app_handle).await;
                 });
             }
@@ -148,7 +146,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             process_fuzzer_session,
             replay_request,
-            resolve_intercept
+            resolve_intercept,
+            install_cert,
+            check_cert_installed,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
