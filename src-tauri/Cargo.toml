@@ -37,8 +37,5 @@ tokio-rustls = "0.26.4"
 rustls = "0.23.35"
 rustls-pemfile = "2.2.0"
 rustls-native-certs = "0.8.3"
-colored = "3.0.0"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
-x509-parser = "0.18.1"
-pem = "3.0.6"

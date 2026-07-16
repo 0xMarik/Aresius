@@ -1,5 +1,4 @@
 pub mod certs;
-use colored::*;
 use url::Url;
 
 #[derive(Debug, Clone)]
