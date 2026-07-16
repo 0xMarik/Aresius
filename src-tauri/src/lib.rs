@@ -5,6 +5,8 @@ mod http_request;
 mod fuzzer;
 // src-tauri/src/main.rs
 mod types;
+use std::thread;
+
 use tauri::Manager;
 // use tauri::http::response;
 use types::*;
@@ -16,6 +18,8 @@ use crate::fuzzer::*;
 mod proxy;
 use crate::http_request::HttpConnection;
 use crate::proxy::*;
+
+use tracing;
 
 // use std::collections::HashMap;
 
@@ -93,8 +97,27 @@ async fn replay_request(url: String, request_tmp: String) -> Result<ReplayerResp
 //     return replayer_response;
 // }
 
+async fn close_splashscreen(app: tauri::AppHandle) {
+    if let Some(splash) = app.get_webview_window("splashscreen") {
+        splash.close().unwrap();
+    }
+    if let Some(main) = app.get_webview_window("main") {
+        main.show().unwrap();
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "aresius=debug,tauri=info".into()),
+        )
+        .with_target(true)
+        .init();
+
+    tracing::info!("Aresius starting up");
+
     tauri::Builder::default()
         .manage(InterceptState::new())
         .plugin(tauri_plugin_opener::init())
@@ -102,13 +125,23 @@ pub fn run() {
             // if let Some(window) = app.get_webview_window("main") {
             //     window.maximize().unwrap();
             // }
-            let app_handle = app.handle().clone();
 
-            tauri::async_runtime::spawn(async move {
-                if let Err(e) = start_http_proxy(app_handle, "127.0.0.1:8080").await {
-                    eprintln!("Proxy error: {}", e);
-                }
-            });
+            if let Some(_splash) = app.get_webview_window("splashscreen") {
+                // splash.set_shadow(false).unwrap();
+                // print!("Closing splashscreen...");
+                let app_handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) = start_http_proxy(app_handle, "127.0.0.1:8080").await {
+                        tracing::error!("Proxy error: {}", e);
+                    }
+                });
+
+                let app_handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    thread::sleep(std::time::Duration::from_secs(10));
+                    close_splashscreen(app_handle).await;
+                });
+            }
 
             Ok(())
         })

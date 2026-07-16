@@ -1,8 +1,8 @@
 [package]
-name = "Ares_proxy"
+name = "Aresius"
 version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
+description = "An open-source HTTP interception proxy for web security testing and bug bounty workflows"
+authors = ["Soufiane AMIMI"]
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -11,7 +11,7 @@ edition = "2021"
 # The `_lib` suffix may seem redundant but it is necessary
 # to make the lib name unique and wouldn't conflict with the bin name.
 # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
-name = "ares_lib"
+name = "aresius_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
@@ -32,9 +32,13 @@ tokio = { version = "1.40", features = [
     "macros",
 ] }
 anyhow = "1.0.100"
-rcgen = "0.14.6"
+rcgen = { version = "0.14.6", features = ["pem", "x509-parser"] }
 tokio-rustls = "0.26.4"
 rustls = "0.23.35"
 rustls-pemfile = "2.2.0"
 rustls-native-certs = "0.8.3"
 colored = "3.0.0"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+x509-parser = "0.18.1"
+pem = "3.0.6"

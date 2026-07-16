@@ -4,55 +4,64 @@ use rustls::{pki_types::CertificateDer, ServerConfig};
 use rustls_pemfile;
 use std::fs;
 use std::io::BufReader;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use tauri::{AppHandle, Manager};
 use tokio_rustls::TlsAcceptor;
 
-pub fn generate_ca_cert() -> Result<(Certificate, KeyPair)> {
-    let ca_cert_path = "ca_cert.pem";
-    let ca_key_path = "ca_key.pem";
+pub struct CaCertPaths {
+    pub cert_path: PathBuf,
+    pub key_path: PathBuf,
+}
+
+impl CaCertPaths {
+    pub fn new(app_handle: &AppHandle) -> std::io::Result<Self> {
+        // Use Tauri's app data dir so it's per-user, persistent, and OS-appropriate
+        let app_dir = app_handle
+            .path()
+            .app_data_dir()
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+
+        fs::create_dir_all(&app_dir)?;
+
+        Ok(Self {
+            cert_path: app_dir.join("aresius-ca-cert.pem"),
+            key_path: app_dir.join("aresius-ca-key.pem"),
+        })
+    }
+
+    pub fn exists(&self) -> bool {
+        self.cert_path.exists() && self.key_path.exists()
+    }
+}
+
+pub fn generate_ca_cert(app_handle: &AppHandle) -> anyhow::Result<(String, KeyPair)> {
+    let ca_paths = CaCertPaths::new(&app_handle)?;
 
     // Check if CA certificate already exists
-    if Path::new(ca_cert_path).exists() && Path::new(ca_key_path).exists() {
-        println!("Loading existing CA certificate from {}", ca_cert_path);
+    if ca_paths.exists() {
+        tracing::info!(
+            "Loading existing CA certificate from {}",
+            ca_paths.cert_path.display()
+        );
 
         // Read the existing key
-        let key_pem = fs::read_to_string(ca_key_path)?;
-
+        let key_pem = fs::read_to_string(ca_paths.key_path)?;
         // Parse the key pair
         let key_pair = KeyPair::from_pem(&key_pem)?;
 
-        // Regenerate certificate params
-        let mut params = CertificateParams::default();
-        params.distinguished_name = DistinguishedName::new();
-        params
-            .distinguished_name
-            .push(DnType::CountryName, "AresProxy");
-        params
-            .distinguished_name
-            .push(DnType::StateOrProvinceName, "AresProxy");
-        params
-            .distinguished_name
-            .push(DnType::LocalityName, "AresProxy");
-        params
-            .distinguished_name
-            .push(DnType::OrganizationName, "AresProxy");
-        params
-            .distinguished_name
-            .push(DnType::OrganizationalUnitName, "AresProxy CA");
-        params
-            .distinguished_name
-            .push(DnType::CommonName, "AresProxy CA");
-        params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        // Read the existing certificate (Should be PEM format)
+        let cert_pem = fs::read_to_string(&ca_paths.cert_path)?;
 
-        // Recreate the certificate with the existing key
-        let cert = params.self_signed(&key_pair)?;
+        // Validate the existing certificate by creating an Issuer
+        Issuer::from_ca_cert_pem(&cert_pem, &key_pair)
+            .map_err(|e| anyhow!("Failed to parse existing CA certificate: {}", e))?;
 
-        return Ok((cert, key_pair));
+        return Ok((cert_pem, key_pair));
     }
 
     // Generate new CA certificate if it doesn't exist
-    println!("Generating new CA certificate...");
+    tracing::info!("Generating new CA certificate...");
 
     let mut params = CertificateParams::default();
 
@@ -60,22 +69,22 @@ pub fn generate_ca_cert() -> Result<(Certificate, KeyPair)> {
     params.distinguished_name = DistinguishedName::new();
     params
         .distinguished_name
-        .push(DnType::CountryName, "AresProxy");
+        .push(DnType::CountryName, "Aresius");
     params
         .distinguished_name
-        .push(DnType::StateOrProvinceName, "AresProxy");
+        .push(DnType::StateOrProvinceName, "Aresius");
     params
         .distinguished_name
-        .push(DnType::LocalityName, "AresProxy");
+        .push(DnType::LocalityName, "Aresius");
     params
         .distinguished_name
-        .push(DnType::OrganizationName, "AresProxy");
+        .push(DnType::OrganizationName, "Aresius");
     params
         .distinguished_name
-        .push(DnType::OrganizationalUnitName, "AresProxy CA");
+        .push(DnType::OrganizationalUnitName, "Aresius CA");
     params
         .distinguished_name
-        .push(DnType::CommonName, "AresProxy CA");
+        .push(DnType::CommonName, "Aresius CA");
 
     // Mark as CA certificate
     params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
@@ -90,30 +99,34 @@ pub fn generate_ca_cert() -> Result<(Certificate, KeyPair)> {
     let ca_cert_pem = cert.pem();
     let ca_key_pem = key_pair.serialize_pem();
 
-    fs::write(ca_cert_path, &ca_cert_pem)?;
-    fs::write(ca_key_path, &ca_key_pem)?;
+    fs::write(&ca_paths.cert_path, &ca_cert_pem)?;
+    fs::write(&ca_paths.key_path, &ca_key_pem)?;
 
-    println!("CA certificate generated: {}", ca_cert_path);
-    println!("CA private key saved: {}", ca_key_path);
-    println!("Install this in Chrome: Settings > Privacy > Security > Manage certificates");
+    tracing::info!("CA certificate generated: {}", ca_paths.cert_path.display());
+    tracing::info!("CA private key saved: {}", ca_paths.key_path.display());
+    tracing::info!("Install this in Chrome: Settings > Privacy > Security > Manage certificates");
 
-    Ok((cert, key_pair))
+    Ok((cert.pem(), key_pair))
 }
 
 // Generate server certificate signed by CA
-pub fn generate_server_cert(ca_key_pair: &KeyPair, domain: &str) -> Result<(Vec<u8>, Vec<u8>)> {
+pub fn generate_server_cert(
+    ca_cert_pem: &str,
+    ca_key_pair: &KeyPair,
+    domain: &str,
+) -> Result<(Vec<u8>, Vec<u8>)> {
     let mut params = CertificateParams::new(vec![domain.to_string()])?;
 
     params.distinguished_name = DistinguishedName::new();
     params.distinguished_name.push(DnType::CommonName, domain);
     params
         .distinguished_name
-        .push(DnType::OrganizationName, "AresProxy");
+        .push(DnType::OrganizationName, "Aresius");
+    params.is_ca = rcgen::IsCa::NoCa;
 
     let key_pair = KeyPair::generate()?;
-
     // Create issuer reference
-    let issuer = Issuer::new(params.clone(), &ca_key_pair);
+    let issuer = Issuer::from_ca_cert_pem(&ca_cert_pem, &ca_key_pair)?;
     let cert = params.signed_by(&key_pair, &issuer)?;
 
     let cert_pem = cert.pem();

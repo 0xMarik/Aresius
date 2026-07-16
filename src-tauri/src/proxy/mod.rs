@@ -1,5 +1,4 @@
 use crate::ares_utils::certs::*;
-use crate::ares_utils::log;
 use rcgen::KeyPair;
 use rustls::{pki_types::ServerName, ClientConfig, RootCertStore};
 use std::collections::HashMap;
@@ -68,30 +67,30 @@ pub async fn resolve_intercept(
 
 pub async fn start_http_proxy(app_handle: AppHandle, bind_addr: &str) -> std::io::Result<()> {
     // Generate CA certificate once at startup
-    let (_, key_pair) =
-        generate_ca_cert().map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    let (ca_cert_pem, key_pair) = generate_ca_cert(&app_handle)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
     // let ca_cert = Arc::new(ca_cert);
     let key_pair = Arc::new(key_pair);
 
     let listener = tokio::net::TcpListener::bind(bind_addr).await?;
-    println!("MITM Proxy listening on {}", bind_addr);
+    tracing::info!("MITM Proxy listening on {}", bind_addr);
 
     let app = app_handle.clone();
     loop {
         match listener.accept().await {
             Ok((client_stream, addr)) => {
-                println!("New connection from: {}", addr);
-                // let ca_cert = ca_cert.clone();
+                tracing::info!("New connection from: {}", addr);
+                let ca_cert_pem = ca_cert_pem.clone();
                 let key_pair = key_pair.clone();
                 let app = app.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = handle_client(app, client_stream, key_pair).await {
+                    if let Err(e) = handle_client(app, client_stream, ca_cert_pem, key_pair).await {
                         // println!("Error #11-11-11: {}", e);
-                        log("ERROR", e.to_string().as_str());
+                        tracing::error!("Error handling client {}: {}", addr, e);
                     }
                 });
             }
-            Err(e) => println!("Connection failed: {}", e),
+            Err(e) => tracing::error!("Connection failed: {}", e),
         }
     }
 }
@@ -100,6 +99,7 @@ pub async fn start_http_proxy(app_handle: AppHandle, bind_addr: &str) -> std::io
 async fn handle_client(
     app_handle: AppHandle,
     mut client_stream: TcpStream,
+    ca_cert_pem: String,
     ca_key_pair: Arc<KeyPair>,
 ) -> std::io::Result<()> {
     let mut buffer = [0u8; 8192];
@@ -129,7 +129,7 @@ async fn handle_client(
             .await?;
 
         // Generate certificate for this domain
-        let (cert_pem, key_pem) = generate_server_cert(&ca_key_pair, domain)
+        let (cert_pem, key_pem) = generate_server_cert(&ca_cert_pem, &ca_key_pair, domain)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
 
         let acceptor = create_tls_acceptor(&cert_pem, &key_pem)
@@ -255,20 +255,18 @@ async fn handle_client(
                         {
                             // This is normal - just log it
                             // println!("Connection closed abruptly (normal): {}", e);
-                            log(
-                                "INFO",
-                                format!("Connection closed abruptly (normal): {}", e).as_str(),
-                            )
+
+                            tracing::info!("Connection closed abruptly (normal): {}", e);
                         } else {
                             // Actual error
-                            log("INFO", format!("Tunnel error: {}", e).as_str());
+                            tracing::info!("Tunnel error: {}", e);
                         }
                         // Don't try to shutdown - connection already dead
                     }
                 }
             }
             _ => {
-                println!("Unknown action: {}", decision.action);
+                tracing::info!("Unknown action: {}", decision.action);
                 let error_response = b"HTTP/1.1 400 Bad Request\r\n\r\n";
                 client_tls.write_all(error_response).await.ok();
                 client_tls.shutdown().await.ok();

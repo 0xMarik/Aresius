@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Ares Proxy",
+  "productName": "Aresius",
   "version": "0.1.0",
-  "identifier": "com.ares-proxy.app",
+  "identifier": "com.aresius.app",
   "build": {
     "beforeDevCommand": "bun run dev",
     "devUrl": "http://localhost:1420",
@@ -12,10 +12,26 @@
   "app": {
     "windows": [
       {
-        "title": "Ares Proxy",
-        "width": 800,
-        "height": 600,
-        "maximized": true
+        "label": "splashscreen",
+        "title": "",
+        "skipTaskbar": false,
+        "width": 820,
+        "height": 380,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "center": true,
+        "resizable": false,
+        "url": "splashscreen.html",
+        "visible": true,
+        "shadow": false
+      },
+      {
+        "label": "main",
+        "title": "Aresius",
+        "maximized": true,
+        "visible": false,
+        "url": "index.html"
       }
     ],
     "security": {
