@@ -18,7 +18,6 @@ import { Avatar, AvatarFallback, AvatarImage } from "./ui/avatar"
 import { useEffect, useState } from "react"
 import { getCurrentWindow } from "@tauri-apps/api/window"
 import { Minus, Square, Copy, X } from "lucide-react"
-import { invoke } from "@tauri-apps/api/core"
 import InstallCertificateDialog from "./InstallCert"
 
 const appWindow = getCurrentWindow()
@@ -196,14 +195,8 @@ export default function MenubarDemo() {
                             >Install Certificate</MenubarItem>
                         </MenubarGroup>
                         <MenubarSeparator />
-                        <MenubarRadioGroup value="benoit">
-                            <MenubarRadioItem value="andy">Andy</MenubarRadioItem>
-                            <MenubarRadioItem value="benoit">Benoit</MenubarRadioItem>
-                            <MenubarRadioItem value="Luis">Luis</MenubarRadioItem>
-                        </MenubarRadioGroup>
-                        <MenubarSeparator />
                         <MenubarGroup>
-                            <MenubarItem inset>Add Profile...</MenubarItem>
+                            <MenubarItem>Reset All Aresius Certificates</MenubarItem>
                         </MenubarGroup>
                     </MenubarContent>
                 </MenubarMenu>

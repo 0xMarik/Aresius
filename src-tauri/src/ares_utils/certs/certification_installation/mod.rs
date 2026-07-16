@@ -4,7 +4,6 @@ use std::process::Command;
 #[tauri::command]
 #[cfg(target_os = "windows")]
 pub fn install_cert(app: tauri::AppHandle) -> Result<(), String> {
-    tracing::info!("Installing certificate on Windows...");
     let paths = CaCertPaths::new(&app).map_err(|e| e.to_string())?;
 
     let status = Command::new("certutil")

@@ -1,10 +1,10 @@
 use anyhow::{anyhow, Result};
-use rcgen::{Certificate, CertificateParams, DistinguishedName, DnType, Issuer, KeyPair};
+use rcgen::{CertificateParams, DistinguishedName, DnType, Issuer, KeyPair};
 use rustls::{pki_types::CertificateDer, ServerConfig};
 use rustls_pemfile;
 use std::fs;
 use std::io::BufReader;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 use tokio_rustls::TlsAcceptor;
@@ -25,11 +25,12 @@ impl CaCertPaths {
             .app_data_dir()
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
 
-        fs::create_dir_all(&app_dir)?;
+        let certs_dir = app_dir.join("certs");
+        fs::create_dir_all(&certs_dir)?;
 
         Ok(Self {
-            cert_path: app_dir.join("aresius-ca-cert.pem"),
-            key_path: app_dir.join("aresius-ca-key.pem"),
+            cert_path: certs_dir.join("aresius-ca-cert.pem"),
+            key_path: certs_dir.join("aresius-ca-key.pem"),
         })
     }
 
