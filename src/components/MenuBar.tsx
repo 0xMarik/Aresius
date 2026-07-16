@@ -19,6 +19,7 @@ import { useEffect, useState } from "react"
 import { getCurrentWindow } from "@tauri-apps/api/window"
 import { Minus, Square, Copy, X } from "lucide-react"
 import InstallCertificateDialog from "./InstallCert"
+import { open } from "@tauri-apps/plugin-shell";
 
 const appWindow = getCurrentWindow()
 
@@ -198,6 +199,22 @@ export default function MenubarDemo() {
                         <MenubarGroup>
                             <MenubarItem>Reset All Aresius Certificates</MenubarItem>
                         </MenubarGroup>
+                    </MenubarContent>
+                </MenubarMenu>
+                <MenubarMenu>
+                    <MenubarTrigger>Help</MenubarTrigger>
+                    <MenubarContent>
+
+                        <MenubarGroup >
+                            <MenubarItem onSelect={() => open("https://github.com/0xMarik/Aresius/issues")}>Report Bugs?...</MenubarItem>
+                        </MenubarGroup>
+                        <MenubarSeparator />
+                        <MenubarGroup >
+                            <MenubarItem>
+                                About
+                            </MenubarItem>
+                        </MenubarGroup>
+
                     </MenubarContent>
                 </MenubarMenu>
             </Menubar>

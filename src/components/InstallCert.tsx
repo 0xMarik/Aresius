@@ -105,7 +105,7 @@ const InstallCertificateDialog = ({
 
                             {status === "installed" && (
                                 <p className="text-xs text-muted-foreground">
-                                    AresProxy CA certificate is installed & trusted
+                                    Aresius CA certificate is installed & trusted
                                 </p>
                             )}
 

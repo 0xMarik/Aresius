@@ -9,7 +9,6 @@ import {
     ColumnDef,
 } from '@tanstack/react-table';
 import { ChevronUp, ChevronDown, ChevronsUpDown } from 'lucide-react';
-import { useAppSelector } from '@/hooks/redux';
 import { parseRequest, parseResponse } from './utils';
 
 

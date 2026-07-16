@@ -1,4 +1,3 @@
-import InstallCertificateDialog from "@/components/InstallCert";
 import { useAppSelector } from "@/hooks/redux"
 import { removeInterceptedRequest } from "@/store/slices/interceptorSlice";
 import { invoke } from "@tauri-apps/api/core";

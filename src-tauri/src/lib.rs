@@ -18,6 +18,7 @@ mod proxy;
 use crate::http_request::HttpConnection;
 use crate::proxy::*;
 
+use tauri_plugin_shell::ShellExt;
 use tracing;
 
 use ares_utils::certs::certification_installation::install_cert;
@@ -123,6 +124,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(InterceptState::new())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_shell::init())
         .setup(|app| {
             if let Some(_splash) = app.get_webview_window("splashscreen") {
                 // splash.set_shadow(false).unwrap();
