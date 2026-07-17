@@ -24,6 +24,8 @@ import {
   SidebarContent,
   SidebarFooter,
   SidebarHeader,
+  SidebarProvider,
+  SidebarTrigger,
   // SidebarRail,
 } from '@/components/ui/sidebar'
 // import { IconSatellite } from "@tabler/icons-react"
@@ -176,7 +178,7 @@ const data = {
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   return (
-    <Sidebar variant="sidebar" collapsible="icon" className="mt-auto h-[calc(100svh-2.5rem)]" {...props}>
+    <Sidebar collapsible="icon" variant="floating" className="mt-auto h-[calc(100svh-2.5rem)] " {...props} >
       <SidebarHeader>
         <TeamSwitcher teams={data.teams} />
       </SidebarHeader>
@@ -187,8 +189,10 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         <NavProjects name="Workspace" items={data.workspace} />
       </SidebarContent>
       <SidebarFooter>
-        <NavUser user={data.user} />
+        {/* <NavUser user={data.user} /> */}
+        <SidebarTrigger />
       </SidebarFooter>
+
       {/* <SidebarRail /> */}
     </Sidebar>
   )

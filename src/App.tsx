@@ -29,7 +29,7 @@ export default function App() {
         // Listen for HTTP requests from Rust
         const setupListener = async () => {
             const unlisten = await listen('http_history', (event) => {
-                console.log("listenner: ", event.payload)
+                console.log("Http History interceptor: ", event.payload)
                 dispatch(addToHttpHistory({ historyItem: event.payload as any }));
             });
 
@@ -61,13 +61,16 @@ export default function App() {
 
     return (
         <Router>
-            <div className="flex flex-col h-svh">
+            <div className="flex flex-col h-svh [&_*]:text-[12px]">
                 <div className="h-10 shrink-0 relative">
                     <MenubarDemo />
                 </div>
                 <div className="flex-1 min-h-0 overflow-hidden">
                     {/* <Headers/> */}
-                    <SidebarProvider className="h-full" >
+                    <SidebarProvider className="h-full" style={{
+                        "--sidebar-width": "13rem",
+                        "--sidebar-width-icon": "3rem",
+                    } as React.CSSProperties} >
                         <AppSidebar />
                         <SidebarInset >
 
@@ -83,6 +86,6 @@ export default function App() {
                     </SidebarProvider>
                 </div>
             </div>
-        </Router>
+        </Router >
     )
 }
