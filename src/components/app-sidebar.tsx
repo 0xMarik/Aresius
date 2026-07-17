@@ -13,6 +13,8 @@ import {
   SquareTerminal,
   Antenna,
   Logs,
+  Network,
+  Crosshair
 } from "lucide-react"
 
 // import { NavMain } from '@/components/nav-main'
@@ -158,6 +160,15 @@ const data = {
     //   icon: Map,
     // },
   ],
+  discovery: [{
+    name: "Sitemap",
+    url: "/site-map",
+    icon: Network,
+  }, {
+    name: "Scope",
+    url: "/scope",
+    icon: Crosshair
+  }],
   proxy: [{
     name: "Interceptor",
     url: "/interceptor",
@@ -184,6 +195,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       </SidebarHeader>
       <SidebarContent>
         {/* <NavMain items={data.navMain} /> */}
+        <NavProjects name="Discovery" items={data.discovery} />
         <NavProjects name="Proxy" items={data.proxy} />
         <NavProjects name="Testing" items={data.projects} />
         <NavProjects name="Workspace" items={data.workspace} />
