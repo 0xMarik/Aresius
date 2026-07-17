@@ -122,6 +122,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .manage(InterceptState::new())
+        .manage(CertCache::new())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {

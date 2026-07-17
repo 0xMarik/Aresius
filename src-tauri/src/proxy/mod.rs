@@ -47,6 +47,18 @@ impl InterceptState {
     }
 }
 
+pub struct CertCache {
+    pub certs: Mutex<HashMap<String, (Vec<u8>, Vec<u8>)>>, // domain -> (cert_pem, key_pem)
+}
+
+impl CertCache {
+    pub fn new() -> Self {
+        Self {
+            certs: Mutex::new(HashMap::new()),
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn resolve_intercept(
     state: tauri::State<'_, InterceptState>,
@@ -129,9 +141,21 @@ async fn handle_client(
             .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
             .await?;
 
-        // Generate certificate for this domain
-        let (cert_pem, key_pem) = generate_server_cert(&ca_cert_pem, &ca_key_pair, domain)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        // Get cert cache state
+        let cert_cache: tauri::State<CertCache> = app_handle.state();
+
+        let (cert_pem, key_pem) = {
+            let mut cache = cert_cache.certs.lock().await;
+            tracing::debug!("the cached domain is {}", domain);
+            if let Some((cert, key)) = cache.get(domain) {
+                (cert.clone(), key.clone())
+            } else {
+                let (cert, key) = generate_server_cert(&ca_cert_pem, &ca_key_pair, domain)
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+                cache.insert(domain.to_string(), (cert.clone(), key.clone()));
+                (cert, key)
+            }
+        };
 
         let acceptor = create_tls_acceptor(&cert_pem, &key_pem)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
@@ -237,7 +261,7 @@ async fn handle_client(
                             response: decrypted_response.to_string(),
                             host: target.to_string(),
                             timestamp: ts_ms,
-                            duration: Some(duration.as_millis() as u64), // You can calculate the duration if needed
+                            duration: Some(duration.as_millis() as u64),
                         },
                     )
                     .ok();
