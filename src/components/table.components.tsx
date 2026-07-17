@@ -73,11 +73,12 @@ type RawReqRes = {
     response: string;
     host: string;
     timestamp: number;
+    duration: number;
 };
 
 interface HttpHistoryTableProps {
     /** Already-normalized rows. Defaults to generated sample data so this component is testable standalone. */
-    data?: HttpTransaction[];
+    data?: RawReqRes[];
     /** Fires with the id of the single selected row, or null when zero/multiple rows are selected. */
     setSelectedRequest?: (id: number | null) => void;
 }
@@ -102,9 +103,9 @@ export function adaptFromReqRes(items: RawReqRes[]): HttpTransaction[] {
         const req = parseRequest(item.request);
         const res = parseResponse(item.response);
         let host = item.host;
-        let path = req.url ?? '/';
+        let path = req.path ?? '/';
         try {
-            const asUrl = req.url?.startsWith('http') ? req.url : `https://${item.host}${req.url ?? ''}`;
+            const asUrl = req.path?.startsWith('http') ? req.path : `https://${item.host}${req.path ?? ''}`;
             const parsed = new URL(asUrl);
             host = parsed.host;
             path = parsed.pathname + parsed.search;
@@ -118,7 +119,7 @@ export function adaptFromReqRes(items: RawReqRes[]): HttpTransaction[] {
             method: req.method,
             code: res.statusCode ?? null,
             time: item.timestamp,
-            duration: (res as any).duration ?? 0,
+            duration: item.duration ?? 0,
             state: stateFromCode(res.statusCode ?? null),
         };
     });
@@ -409,7 +410,7 @@ function DropdownCheckboxItem({ label, checked, onToggle }: { label: string; che
 /* ================================================================== */
 
 export default function HttpHistoryTable({ data: initialData, setSelectedRequest }: HttpHistoryTableProps) {
-    const [rows, setRows] = useState<HttpTransaction[]>(() => initialData ?? generateDumpData());
+    const [rows, setRows] = useState<HttpTransaction[]>(() => adaptFromReqRes(initialData ?? []));
     const [sorting, setSorting] = useState<SortingState>([]);
     const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
 
@@ -427,7 +428,7 @@ export default function HttpHistoryTable({ data: initialData, setSelectedRequest
 
     /* -- keep in sync if the parent swaps the data prop -- */
     useEffect(() => {
-        if (initialData) setRows(initialData);
+        if (initialData) setRows(adaptFromReqRes(initialData ?? []));
     }, [initialData]);
 
     /* -- available facets, derived from current data -- */

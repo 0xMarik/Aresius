@@ -18,7 +18,6 @@ mod proxy;
 use crate::http_request::HttpConnection;
 use crate::proxy::*;
 
-use tauri_plugin_shell::ShellExt;
 use tracing;
 
 use ares_utils::certs::certification_installation::install_cert;

@@ -20,7 +20,7 @@ const HTTPHisotry = () => {
                 classes={["py-1", "py-1"]}
             >
                 <div className='overflow-scroll h-full'>
-                    <HttpHistoryTable reqReses={history} setSelectedRequest={setSelectedRequest} />
+                    <HttpHistoryTable data={history} setSelectedRequest={setSelectedRequest} />
                 </div>
                 <div className='h-full'>
                     <ReactSplit

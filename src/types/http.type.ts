@@ -20,3 +20,11 @@ export interface HttpResponse {
   responseTime: number
   timestamp: string
 }
+
+export interface HttpHistory {
+    request: string;
+    response: string;
+    host: string;
+    timestamp: number;
+    duration: number
+}

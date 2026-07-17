@@ -17,6 +17,7 @@ struct HttpHistoryPayload {
     response: String,
     host: String,
     timestamp: u128,
+    duration: Option<u64>,
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -160,7 +161,7 @@ async fn handle_client(
         }
 
         // Send event to frontend
-        println!("Sending intercept event to frontend: {}", request_id);
+        tracing::debug!("Sending intercept event to frontend: {}", request_id);
         app_handle
             .emit(
                 "intercept_request",
@@ -186,7 +187,7 @@ async fn handle_client(
             }
         };
 
-        println!("Decison: {}", decision.action.as_str());
+        tracing::debug!("Decison: {}", decision.action.as_str());
 
         match decision.action.as_str() {
             "drop" => {
@@ -194,6 +195,7 @@ async fn handle_client(
                 return Ok(());
             }
             "forward" | "modify" => {
+                let start = std::time::Instant::now();
                 // Connect to real server with TLS
                 let server_stream = TcpStream::connect(target).await?;
 
@@ -225,6 +227,8 @@ async fn handle_client(
                 let decrypted_response =
                     String::from_utf8_lossy(&response_buffer[..response_bytes]);
 
+                // Calculate duration
+                let duration = start.elapsed();
                 app_handle
                     .emit(
                         "http_history",
@@ -233,6 +237,7 @@ async fn handle_client(
                             response: decrypted_response.to_string(),
                             host: target.to_string(),
                             timestamp: ts_ms,
+                            duration: Some(duration.as_millis() as u64), // You can calculate the duration if needed
                         },
                     )
                     .ok();

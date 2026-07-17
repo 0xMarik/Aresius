@@ -1,11 +1,7 @@
+import { HttpHistory } from "@/types/http.type";
 import { createSlice, PayloadAction } from "@reduxjs/toolkit"
 
-interface HttpHistory {
-    request: string;
-    response: string;
-    host: string;
-    timestamp: number;
-}
+
 
 interface HttpHistoryState {
     history: HttpHistory[]
