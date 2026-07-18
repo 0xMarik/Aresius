@@ -12,8 +12,8 @@ const initialState : ReaplyerState  = {
             sessions: [
                 {
                     history: [],
-                    requestTmp: 'GET / HTTP/1.1\nHost: example.com\n\n',
-                    url: 'https://example.com',
+                    requestTmp: 'GET / HTTP/1.1\n\n',
+                    url: 'https://',
                     selectedHistoryIndex: null,
                 }
             ],

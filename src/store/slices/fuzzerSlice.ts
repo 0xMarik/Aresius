@@ -5,6 +5,7 @@ const initialState : FuzzerState = {
     fuzzerSessions: [{
         fuzzingHistory: [],
         name: 'Default Session',
+        selectedHistoryId: null,
         payload: {
             numThreads: 1,
             delaisTime: 0,
@@ -34,6 +35,7 @@ const fuzzerSlice = createSlice({
       state.fuzzerSessions.push({
         name: name + ` ${state.fuzzerSessions.length + 1}`,
         fuzzingHistory: [],
+        selectedHistoryId: null,
         payload: { // default payload
           numThreads: 1,
           delaisTime: 0,
@@ -138,6 +140,30 @@ const fuzzerSlice = createSlice({
       }
     },
 
+setSelectedFuzz: (state, action: PayloadAction<{ sessionIndex: number | null, historyIndex: number | null }>) => {
+    const { sessionIndex, historyIndex } = action.payload;
+
+    if (sessionIndex === null && historyIndex !== null) {
+        console.error("There is no active session to choose history from");
+        return;
+    }
+
+    if (sessionIndex === null) {
+        // valid case: clearing selection entirely
+        state.activeSessionIndex = null;
+        return;
+    }
+
+    const currentSession = state.fuzzerSessions[sessionIndex];
+    if (!currentSession) {
+        console.error(`No session found at index ${sessionIndex}`);
+        return;
+    }
+
+    state.activeSessionIndex = sessionIndex;
+    currentSession.selectedHistoryId = historyIndex;
+},
+
     // Payload
 
     updatePayloadRawRequest : (state, action: PayloadAction<{content: string}>) => {
@@ -222,6 +248,7 @@ setContent,
 setNumThreads,
 setDelaisTime,
 setTargerUrl,
+setSelectedFuzz,
 setFuzzingAttackType} = fuzzerSlice.actions;
 
 export default fuzzerSlice.reducer;

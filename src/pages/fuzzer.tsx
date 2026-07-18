@@ -158,7 +158,19 @@ const Fuzzer: React.FC = () => {
                             RUN
                         </Button>
                     </div>
-                    <Routes>
+                    {
+                        activeSessionIndex !== null ?
+                            (
+                                fuzzerSessions[activeSessionIndex].selectedHistoryId !== null ?
+
+                                    <FuzzerHistoryCompo
+                                        isLoading={false}
+                                    /> :
+                                    <FuzzRequestPayload />
+                            )
+                            : <h1>Choose a session</h1>
+                    }
+                    {/* <Routes>
                         <Route path="history/:historyId" element={<FuzzerHistoryCompo
                             isLoading={isLoading}
                         />} />
@@ -168,7 +180,7 @@ const Fuzzer: React.FC = () => {
                             />
                         } />
                         <Route path="*" element={<h1>Choose a session</h1>} />
-                    </Routes>
+                    </Routes> */}
                 </div>
             </ReactSplit>
 
