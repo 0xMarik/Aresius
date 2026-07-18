@@ -103,7 +103,7 @@ export interface FuzzingHistory {
 export interface FuzzerSession {
     name: string;
     fuzzingHistory: FuzzingHistory[];
-    selectedHistoryId: number | null;
+    selectedHistoryIndex: number | null;
     payload: SessionPayload;
     selectedHighlightId: string | null;
 }

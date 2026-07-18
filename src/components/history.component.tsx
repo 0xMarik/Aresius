@@ -19,13 +19,13 @@ const FuzzerHistoryCompo = ({ isLoading }: ParamsType) => {
         return <div>Session not found</div>;
     }
 
-    const { selectedHistoryId } = session;
+    const { selectedHistoryIndex } = session;
 
-    if (selectedHistoryId === null) {
+    if (selectedHistoryIndex === null) {
         return <div>No history entry selected</div>;
     }
 
-    const historyEntry = session.fuzzingHistory[selectedHistoryId];
+    const historyEntry = session.fuzzingHistory[selectedHistoryIndex];
 
     if (!historyEntry) {
         return <div>History entry not found</div>;

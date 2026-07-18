@@ -161,7 +161,7 @@ const Fuzzer: React.FC = () => {
                     {
                         activeSessionIndex !== null ?
                             (
-                                fuzzerSessions[activeSessionIndex].selectedHistoryId !== null ?
+                                fuzzerSessions[activeSessionIndex].selectedHistoryIndex !== null ?
 
                                     <FuzzerHistoryCompo
                                         isLoading={false}

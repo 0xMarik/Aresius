@@ -5,7 +5,7 @@ const initialState : FuzzerState = {
     fuzzerSessions: [{
         fuzzingHistory: [],
         name: 'Default Session',
-        selectedHistoryId: null,
+        selectedHistoryIndex: null,
         payload: {
             numThreads: 1,
             delaisTime: 0,
@@ -35,7 +35,7 @@ const fuzzerSlice = createSlice({
       state.fuzzerSessions.push({
         name: name + ` ${state.fuzzerSessions.length + 1}`,
         fuzzingHistory: [],
-        selectedHistoryId: null,
+        selectedHistoryIndex: null,
         payload: { // default payload
           numThreads: 1,
           delaisTime: 0,
@@ -161,7 +161,7 @@ setSelectedFuzz: (state, action: PayloadAction<{ sessionIndex: number | null, hi
     }
 
     state.activeSessionIndex = sessionIndex;
-    currentSession.selectedHistoryId = historyIndex;
+    currentSession.selectedHistoryIndex = historyIndex;
 },
 
     // Payload
