@@ -78,6 +78,8 @@ browser and you're ready to intercept HTTPS traffic.
 | Open source | ✅ | ❌ | ❌ |
 | Native (non-JVM/Electron) | ✅ | ❌ | ✅ |
 | Free to use fully | ✅ | Limited (Community) | Limited (free tier) |
+|No Limit Fuzzing|✅|❌|✅|
+|No Limit Projects|✅|❌|✅|
 
 <br/>
 

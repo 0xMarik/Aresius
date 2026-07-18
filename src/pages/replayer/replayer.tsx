@@ -12,7 +12,6 @@ import { Button } from '@/components/ui/button';
 import { invoke } from '@tauri-apps/api/core';
 import { ReplayerHistoryItem } from '@/types/replayer.type';
 import React from 'react';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { RsTree, TreeNode } from 'rstree-ui';
 import { ChevronDown, ChevronDownIcon, ChevronLeft, ChevronRight, Plus, } from 'lucide-react';
 import { ButtonGroup } from '@/components/ui/button-group';
@@ -21,7 +20,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 // Add to imports
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { parseRequest, parseResponse } from '@/components/utils';
+import { parseRequest } from '@/components/utils';
 
 
 // type TaskResult = {
