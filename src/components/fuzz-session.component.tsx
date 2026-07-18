@@ -12,7 +12,7 @@ const FuzzSession = () => {
 
     const data: TreeNode<unknown>[] = fuzzerSessions.map((fuzzSession, colIndex) => ({
         id: `${colIndex}`,
-        label: `Collection ${colIndex + 1}`,
+        label: `Session ${colIndex + 1}`,
         icon: <SlidersVertical size={12} />,
         children: fuzzSession.fuzzingHistory.map((history, sessIndex) => ({
             id: `${colIndex}-${sessIndex}`,

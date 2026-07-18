@@ -14,9 +14,15 @@ import { ReplayerHistoryItem } from '@/types/replayer.type';
 import React from 'react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { RsTree, TreeNode } from 'rstree-ui';
-import { ChevronDownIcon, Plus, VolumeOffIcon } from 'lucide-react';
+import { ChevronDown, ChevronDownIcon, ChevronLeft, ChevronRight, Plus, } from 'lucide-react';
 import { ButtonGroup } from '@/components/ui/button-group';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+
+// Add to imports
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { parseRequest, parseResponse } from '@/components/utils';
+
 
 // type TaskResult = {
 //     id: string;
@@ -167,6 +173,17 @@ function Replayer() {
 
     const [selectedIds, setSelectedIds] = React.useState<string[]>([]);
 
+    // Inside Replayer(), alongside handleSelectedHisotry:
+    const goNewer = () => {
+        if (selectedHistoryIndex === null || selectedHistoryIndex === 0) return;
+        dispatch(selectedHisotryIndex({ historyIndex: selectedHistoryIndex - 1 }));
+    };
+
+    const goOlder = () => {
+        if (selectedHistoryIndex === null || selectedHistoryIndex >= history.length - 1) return;
+        dispatch(selectedHisotryIndex({ historyIndex: selectedHistoryIndex + 1 }));
+    };
+
     const handleSelection = (value: string[]) => {
         if (value !== undefined && value.length === 1 && value[0].includes("-")) {
             const newValue = value[0]?.split("-") || [];
@@ -232,7 +249,7 @@ function Replayer() {
                         placeholder="Search..."
                     />
                     <RsTree
-                        className='!h-full'
+                        className='!h-full bg-transparent'
                         data={data}
                         selectedIds={selectedIds}
                         onSelect={handleSelection}
@@ -246,8 +263,8 @@ function Replayer() {
                 </div>
             </div>
             <div className='h-full flex flex-col gap-1'>
-                <div className=' flex  justify-around items-center h-16 bg-muted/50 aspect-video rounded-lg p-1 gap-5'>
-                    <Input placeholder='Enter URL to replay...' className='h-full bg-transparent border-0 focus:ring-0'
+                <div className=' flex  items-center h-10 bg-muted/50 aspect-video rounded-lg p-1 gap-5'>
+                    <Input placeholder='Enter URL to replay...' className='w-64 bg-transparent border-0 focus:ring-0'
                         value={url}
                         onChange={(event) => dispatch(setReaplayerURL({ url: event.target.value }))}
                     />
@@ -258,7 +275,7 @@ function Replayer() {
                     >
                         RUN
                     </Button>
-                    <Select
+                    {/* <Select
                         value={selectedHistoryIndex?.toString() || ""}
                         onValueChange={handleSelectedHisotry}
                         disabled={history.length === 0}>
@@ -274,7 +291,76 @@ function Replayer() {
                                 ))
                             }
                         </SelectContent>
-                    </Select>
+                    </Select> */}
+                    <ButtonGroup>
+                        <Button
+                            disabled={selectedHistoryIndex === null || history.length - 1 === selectedHistoryIndex}
+                            variant="outline"
+                            className="pl-2!"
+                            onClick={goOlder}
+                        >
+                            <ChevronLeft />
+                        </Button>
+
+                        <Popover>
+                            <PopoverTrigger asChild>
+                                <Button variant="outline">
+                                    History <ChevronDown />
+                                </Button>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-[520px] p-0" align="start">
+                                <div className="max-h-80 overflow-auto">
+                                    <Table>
+                                        <TableHeader className="sticky top-0 bg-muted">
+                                            <TableRow>
+                                                <TableHead>Method</TableHead>
+                                                <TableHead>Host</TableHead>
+                                                <TableHead>Path</TableHead>
+                                                <TableHead>Time</TableHead>
+                                            </TableRow>
+                                        </TableHeader>
+                                        <TableBody>
+                                            {history.length === 0 && (
+                                                <TableRow>
+                                                    <TableCell colSpan={4} className="text-center text-muted-foreground">
+                                                        No requests yet
+                                                    </TableCell>
+                                                </TableRow>
+                                            )}
+                                            {history.map((item, index) => {
+                                                const req = parseRequest(item.requestRaw)
+                                                return (
+                                                    <TableRow
+                                                        key={index}
+                                                        onClick={() => handleSelectedHisotry(index.toString())}
+                                                        className={`cursor-pointer ${selectedHistoryIndex === index ? 'bg-muted' : ''
+                                                            }`}
+                                                    >
+                                                        <TableCell className="font-mono">{req.method}</TableCell>
+                                                        <TableCell>{"item.host"}</TableCell>
+                                                        <TableCell className="truncate max-w-[160px]">{req.path}</TableCell>
+                                                        <TableCell className="whitespace-nowrap">
+                                                            {new Date(item.requestTime).toLocaleTimeString()}
+                                                        </TableCell>
+                                                    </TableRow>
+                                                )
+                                            })}
+                                        </TableBody>
+                                    </Table>
+                                </div>
+                            </PopoverContent>
+                        </Popover>
+
+                        <Button
+
+                            disabled={selectedHistoryIndex === null || selectedHistoryIndex === 0}
+                            variant="outline"
+                            className="pl-2!"
+                            onClick={goNewer}
+                        >
+                            <ChevronRight />
+                        </Button>
+                    </ButtonGroup>
                 </div>
                 <ReactSplit
                     gutterClassName="custom-gutter-horizontal"
@@ -290,7 +376,7 @@ function Replayer() {
                 </ReactSplit>
             </div>
 
-        </ReactSplit>
+        </ReactSplit >
     )
 }
 
