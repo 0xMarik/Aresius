@@ -73,10 +73,20 @@ const replayerSlice = createSlice({
         state.selectedCollectionIndex = collectionIndex;
         const collection = state.collections[collectionIndex];
         collection.selectedSessionIndex = sessionIndex;
+    },
+    addSessionToCollection: (state, action: PayloadAction<{ collectionIndex: number }>) => {
+        const { collectionIndex } = action.payload;
+        const collection = state.collections[collectionIndex];
+        collection.sessions.push({
+            history: [],
+            requestTmp: 'GET / HTTP/1.1\n\n',
+            url: 'https://',
+            selectedHistoryIndex: null,
+        });
     }
 
 }})
 
-export const {setReaplayerContent,setReaplayerURL,addReplayerHistory,selectedHisotryIndex,addCollection,selectColSess} = replayerSlice.actions;
+export const {setReaplayerContent,setReaplayerURL,addReplayerHistory,selectedHisotryIndex,addCollection,selectColSess, addSessionToCollection} = replayerSlice.actions;
 
 export default replayerSlice.reducer;

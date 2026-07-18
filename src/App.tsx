@@ -61,7 +61,7 @@ export default function App() {
 
     return (
         <Router>
-            <div className="flex flex-col h-svh [&_*]:text-[12px]">
+            <div className="flex flex-col h-svh [&_*]:text-[12px] w-full">
                 <div className="h-10 shrink-0 relative">
                     <MenubarDemo />
                 </div>

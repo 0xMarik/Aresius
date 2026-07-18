@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from 'react'
 import { http } from '@/components/http-parser.component';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { useAppDispatch, useAppSelector } from '@/hooks/redux';
-import { addCollection, addReplayerHistory, selectColSess, selectedHisotryIndex, setReaplayerContent, setReaplayerURL } from '@/store/slices/replayerSlice';
+import { addCollection, addReplayerHistory, addSessionToCollection, selectColSess, selectedHisotryIndex, setReaplayerContent, setReaplayerURL } from '@/store/slices/replayerSlice';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { invoke } from '@tauri-apps/api/core';
@@ -14,6 +14,9 @@ import { ReplayerHistoryItem } from '@/types/replayer.type';
 import React from 'react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { RsTree, TreeNode } from 'rstree-ui';
+import { ChevronDownIcon, Plus, VolumeOffIcon } from 'lucide-react';
+import { ButtonGroup } from '@/components/ui/button-group';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 
 // type TaskResult = {
 //     id: string;
@@ -196,6 +199,7 @@ function Replayer() {
     }))
 
 
+
     return (
         <ReactSplit
             direction={SplitDirection.Horizontal}
@@ -206,8 +210,23 @@ function Replayer() {
             classes={["py-1", "py-1"]}
         >
             <div className='h-full'>
-                <Button onClick={() => { dispatch(addCollection()) }} className='mb-2 w-full'>+ New Collection</Button>
-                <div className="bg-muted/50 aspect-video rounded-lg p-1 w-full h-full ">
+                <ButtonGroup>
+                    <Button className='mb-2 w-full' onClick={() => dispatch(addSessionToCollection({ collectionIndex: Number((selectedIds[0] ?? "0-0").split('-')[0]) }))}><Plus /> New Session</Button>
+                    <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                            <Button variant="default" className="pl-2!">
+                                <ChevronDownIcon />
+                            </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-44">
+                            <DropdownMenuItem onSelect={() => dispatch(addCollection())}>
+                                <Plus />
+                                New Collection
+                            </DropdownMenuItem>
+                        </DropdownMenuContent>
+                    </DropdownMenu>
+                </ButtonGroup>
+                <div className="bg-muted/50 rounded-lg p-1 w-full h-full ">
                     <Input value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
                         placeholder="Search..."
@@ -261,10 +280,10 @@ function Replayer() {
                     gutterClassName="custom-gutter-horizontal"
                     draggerClassName="custom-dragger-horizontal"
                     direction={SplitDirection.Horizontal}>
-                    <div className="bg-muted/50 aspect-video rounded-lg p-1 w-full h-full">
+                    <div className="bg-muted/50 min-w-0 rounded-lg p-1 w-full h-full">
                         <RequestCodeEditor />
                     </div>
-                    <div className="bg-muted/50 aspect-video rounded-lg p-1 w-full h-full">
+                    <div className="bg-muted/50 min-w-0 rounded-lg p-1 w-full h-full">
                         {responseLoading ? "Response is loading..." : <ResponseCodeEditor />}
 
                     </div>
