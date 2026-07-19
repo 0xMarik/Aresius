@@ -92,7 +92,7 @@ export function enrichFuzzerRow(
         payloadPreview:
             payloadValues.length <= 1
                 ? (payloadValues[0]?.value ?? '')
-                : payloadValues.map((p) => `${p.id}=${p.value}`).join('  '),
+                : payloadValues.map((p) => p.value).join(',  '),
     };
 }
 
@@ -333,7 +333,7 @@ function FuzzerHistoryBody({
                                         <span className="rounded bg-gray-800 px-1.5 py-0.5 font-mono text-[11px] text-gray-300">
                                             {focusedResult.payloadValues.length === 1
                                                 ? focusedResult.payloadValues[0].value
-                                                : focusedResult.payloadValues.map((p) => `${p.id}=${p.value}`).join(', ')}
+                                                : focusedResult.payloadValues.map((p) => p.value).join(', ')}
                                         </span>
                                     )}
                                 </div>
