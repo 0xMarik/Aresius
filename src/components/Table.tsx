@@ -4,7 +4,6 @@ import {
     getCoreRowModel,
     getSortedRowModel,
     flexRender,
-    createColumnHelper,
     SortingState,
     ColumnDef,
     VisibilityState,
@@ -23,8 +22,8 @@ import {
     FolderPlus,
     FolderMinus,
     Circle,
+    GripVertical,
 } from 'lucide-react';
-import { parseRequest, parseResponse } from './utils';
 import {
     ContextMenu,
     ContextMenuContent,
@@ -46,7 +45,49 @@ import {
     closestCenter,
     DragEndEvent,
 } from '@dnd-kit/core';
-import { GripVertical } from 'lucide-react';
+
+/* ================================================================== */
+/*  Generic row contract — the only thing DataTable requires of TData  */
+/* ================================================================== */
+
+export type BaseRow = {
+    id: number;
+    group?: string;
+};
+
+export type RequestGroup = {
+    id: string;
+    name: string;
+    color: string;
+};
+
+export type TableMeta<TData extends BaseRow> = { selectedIds: Set<number> };
+
+/** Exported so consumer column-def files can style the "selected" state without
+ *  knowing anything about DataTable's internals. */
+export function isRowSelected<TData extends BaseRow>(info: {
+    row: { original: TData };
+    table: { options: { meta?: unknown } };
+}) {
+    const meta = info.table.options.meta as TableMeta<TData> | undefined;
+    return meta?.selectedIds.has(info.row.original.id) ?? false;
+}
+
+const GROUP_PALETTE = ['#B23A2E', '#8F2E24', '#C08A3E', '#3C7A5A', '#5C6360', '#6E4A3E', '#A85D3B'];
+
+/* ================================================================== */
+/*  Facet filters — replaces the hardcoded Method/State dropdowns      */
+/* ================================================================== */
+
+export type FacetFilter<TData> = {
+    id: string;
+    label: string;
+    getValue: (row: TData) => string;
+};
+
+/* ================================================================== */
+/*  Column drag-to-reorder (unchanged, already generic)                */
+/* ================================================================== */
 
 function arrayMove<T>(array: T[], from: number, to: number): T[] {
     const next = array.slice();
@@ -92,190 +133,8 @@ function DraggableHeaderCell({
     );
 }
 
-
-
 /* ================================================================== */
-/*  Types                                                              */
-/* ================================================================== */
-
-export type RequestState =
-    | 'Pending'
-    | 'Info'
-    | 'Success'
-    | 'Redirect'
-    | 'Client Error'
-    | 'Server Error'
-    | 'Failed';
-
-export type HttpTransaction = {
-    id: number;
-    host: string;
-    url: string;
-    method: string;
-    code: number | null;
-    time: number; // epoch ms, when the request was fired
-    duration: number; // ms, round-trip latency
-    state: RequestState;
-    group?: string; // group id assigned via the "Group" context menu action
-};
-
-export type RequestGroup = {
-    id: string;
-    name: string;
-    color: string;
-};
-
-type RawReqRes = {
-    request: string;
-    response: string;
-    host: string;
-    timestamp: number;
-    duration: number;
-};
-
-interface HttpHistoryTableProps {
-    /** Already-normalized rows. Defaults to generated sample data so this component is testable standalone. */
-    data?: RawReqRes[];
-    /** Fires with the id of the single selected row, or null when zero/multiple rows are selected. */
-    setSelectedRequest?: (id: number | null) => void;
-
-    columns: ColumnDef<HttpTransaction, any>[]
-}
-
-/* ================================================================== */
-/*  Adapter — wire real proxy captures into the shape this table wants */
-/* ================================================================== */
-
-function stateFromCode(code: number | null): RequestState {
-    if (code === null || code === undefined) return 'Pending';
-    if (code >= 100 && code < 200) return 'Info';
-    if (code >= 200 && code < 300) return 'Success';
-    if (code >= 300 && code < 400) return 'Redirect';
-    if (code >= 400 && code < 500) return 'Client Error';
-    if (code >= 500 && code < 600) return 'Server Error';
-    return 'Failed';
-}
-
-/** Converts raw captured request/response pairs (parseRequest/parseResponse from ./utils) into table rows. */
-export function adaptFromReqRes(items: RawReqRes[]): HttpTransaction[] {
-    return items.map((item, idx) => {
-        const req = parseRequest(item.request);
-        const res = parseResponse(item.response);
-        let host = item.host;
-        let path = req.path ?? '/';
-        try {
-            const asUrl = req.path?.startsWith('http') ? req.path : `https://${item.host}${req.path ?? ''}`;
-            const parsed = new URL(asUrl);
-            host = parsed.host;
-            path = parsed.pathname + parsed.search;
-        } catch {
-            // keep raw fallbacks above if the url can't be parsed
-        }
-        return {
-            id: idx,
-            host,
-            url: path,
-            method: req.method,
-            code: res.statusCode ?? null,
-            time: item.timestamp,
-            duration: item.duration ?? 0,
-            state: stateFromCode(res.statusCode ?? null),
-        };
-    });
-}
-
-/* ================================================================== */
-/*  Sample data — for local testing / storybook-style usage            */
-/* ================================================================== */
-
-// const SAMPLE_HOSTS = [
-//     'api.stripe.com',
-//     'accounts.google.com',
-//     'github.com',
-//     'api.github.com',
-//     'graph.facebook.com',
-//     'analytics.google.com',
-//     'sentry.io',
-//     'cdn.jsdelivr.net',
-//     'api.segment.io',
-//     'ads.doubleclick.net',
-//     'login.microsoftonline.com',
-//     'api.internal-app.io',
-//     'admin.internal-app.io',
-//     'storage.googleapis.com',
-// ];
-
-// const SAMPLE_PATHS: Record<string, string[]> = {
-//     'api.stripe.com': ['/v1/charges', '/v1/customers', '/v1/tokens'],
-//     'accounts.google.com': ['/o/oauth2/auth', '/o/oauth2/token'],
-//     'github.com': ['/login', '/session'],
-//     'api.github.com': ['/user', '/repos/anthropics/claude', '/notifications'],
-//     'graph.facebook.com': ['/v18.0/me', '/v18.0/me/friends'],
-//     'analytics.google.com': ['/collect', '/j/collect'],
-//     'sentry.io': ['/api/0/envelope/'],
-//     'cdn.jsdelivr.net': ['/npm/react@18/umd/react.production.min.js'],
-//     'api.segment.io': ['/v1/track', '/v1/identify'],
-//     'ads.doubleclick.net': ['/pagead/viewthroughconversion'],
-//     'login.microsoftonline.com': ['/common/oauth2/v2.0/token'],
-//     'api.internal-app.io': ['/v2/users/42', '/v2/orders', '/v2/orders/1183'],
-//     'admin.internal-app.io': ['/panel/users', '/panel/settings'],
-//     'storage.googleapis.com': ['/bucket/avatar.png'],
-// };
-
-// const SAMPLE_METHODS = ['GET', 'GET', 'GET', 'POST', 'POST', 'PUT', 'DELETE', 'PATCH'];
-// const SAMPLE_CODES = [200, 200, 200, 201, 204, 301, 302, 400, 401, 403, 404, 429, 500, 502];
-
-// function pick<T>(arr: T[]): T {
-//     return arr[Math.floor(Math.random() * arr.length)];
-// }
-
-// export function generateDumpData(count = 45): HttpTransaction[] {
-//     const now = Date.now();
-//     return Array.from({ length: count }, (_, id) => {
-//         const host = pick(SAMPLE_HOSTS);
-//         const path = pick(SAMPLE_PATHS[host] ?? ['/']);
-//         const code = pick(SAMPLE_CODES);
-//         return {
-//             id,
-//             host,
-//             url: path,
-//             method: pick(SAMPLE_METHODS),
-//             code,
-//             time: now - (count - id) * 4000 - Math.floor(Math.random() * 2000),
-//             duration: Math.floor(Math.random() * 900) + 20,
-//             state: stateFromCode(code),
-//         };
-//     });
-// }
-
-/* ================================================================== */
-/*  Ares palette (light mode) — used instead of default blue/slate     */
-/* ================================================================== */
-/*
-   bg / surface : #FAF7F2 / #FFFFFF
-   border       : #E3DCCC
-   text primary : #1B211E
-   text muted   : #5C6360
-   accent       : #B23A2E   (selection, primary actions)
-   accent hover : #8F2E24
-   accent tint  : #F4E4DE   (badges, subtle bg)
-   success      : #3C7A5A
-   danger       : #C0392B
-   group colors : warm, non-neon set derived from the same family
-*/
-
-const GROUP_PALETTE = ['#B23A2E', '#8F2E24', '#C08A3E', '#3C7A5A', '#5C6360', '#6E4A3E', '#A85D3B'];
-
-
-
-
-type TableMeta = { selectedIds: Set<number> };
-
-
-
-
-/* ================================================================== */
-/*  Small reusable dropdown (filter menus, unrelated to context menu)  */
+/*  Small reusable dropdown (unchanged)                                */
 /* ================================================================== */
 
 function Dropdown({
@@ -337,31 +196,54 @@ function DropdownCheckboxItem({ label, checked, onToggle }: { label: string; che
 }
 
 /* ================================================================== */
-/*  Main component                                                     */
+/*  Main generic component                                             */
 /* ================================================================== */
 
-export default function HttpHistoryTable({ data: initialData, setSelectedRequest, columns: COLUMNS }: HttpHistoryTableProps) {
-    const [rows, setRows] = useState<HttpTransaction[]>(() => adaptFromReqRes(initialData ?? []));
+interface DataTableProps<TData extends BaseRow> {
+    /** Already-normalized rows. Any domain-specific parsing (like the old
+     *  adaptFromReqRes) belongs in the consumer, not here. */
+    data: TData[];
+    columns: ColumnDef<TData, any>[];
+    /** Fires with the id of the single selected row, or null when zero/multiple rows are selected. */
+    setSelectedRequest?: (id: number | null) => void;
+    /** Free-text search. Defaults to checking every primitive field on the row. */
+    searchFn?: (row: TData, query: string) => boolean;
+    /** Dropdown filters, e.g. Method / State for HTTP, or Severity for something else. */
+    facetFilters?: FacetFilter<TData>[];
+    searchPlaceholder?: string;
+    emptyLabel?: string;
+    emptyHint?: string;
+}
+
+export default function DataTable<TData extends BaseRow>({
+    data,
+    columns,
+    setSelectedRequest,
+    searchFn,
+    facetFilters = [],
+    searchPlaceholder = 'Search…',
+    emptyLabel = 'No rows',
+    emptyHint,
+}: DataTableProps<TData>) {
+    const [rows, setRows] = useState<TData[]>(data);
+    useEffect(() => setRows(data), [data]);
+
     const [sorting, setSorting] = useState<SortingState>([]);
     const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
+    const [columnOrder, setColumnOrder] = useState<string[]>(() => columns.map((c) => c.id as string));
 
     const [search, setSearch] = useState('');
-    const [methodFilter, setMethodFilter] = useState<Set<string>>(new Set());
-    const [stateFilter, setStateFilter] = useState<Set<RequestState>>(new Set());
+    const [facetState, setFacetState] = useState<Record<string, Set<string>>>({});
 
     const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
     const lastClickedId = useRef<number | null>(null);
 
-    /* -- group registry: named/colored groups, independent from row.group id references -- */
     const [groups, setGroups] = useState<RequestGroup[]>([]);
     const groupCounter = useRef(0);
     const colorCursor = useRef(0);
-    const [columnOrder, setColumnOrder] = useState<string[]>(() => COLUMNS.map((c) => c.id as string));
 
     const sensors = useSensors(
-        useSensor(PointerSensor, {
-            activationConstraint: { distance: 8 }, // lets plain clicks pass through to sort toggle
-        })
+        useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
     );
 
     function handleColumnDragEnd(event: DragEndEvent) {
@@ -375,49 +257,54 @@ export default function HttpHistoryTable({ data: initialData, setSelectedRequest
         });
     }
 
+    /* -- facet option lists derived from current rows -- */
+    const facetOptions = useMemo(() => {
+        const map: Record<string, string[]> = {};
+        facetFilters.forEach((f) => {
+            map[f.id] = Array.from(new Set(rows.map((r) => f.getValue(r)))).sort();
+        });
+        return map;
+    }, [rows, facetFilters]);
 
-    /* -- keep in sync if the parent swaps the data prop -- */
-    useEffect(() => {
-        if (initialData) setRows(adaptFromReqRes(initialData ?? []));
-    }, [initialData]);
+    function toggleFacetValue(facetId: string, value: string) {
+        setFacetState((prev) => {
+            const next = new Set(prev[facetId] ?? []);
+            next.has(value) ? next.delete(value) : next.add(value);
+            return { ...prev, [facetId]: next };
+        });
+    }
 
-    /* -- available facets, derived from current data -- */
-    const availableMethods = useMemo(() => Array.from(new Set(rows.map((r) => r.method))).sort(), [rows]);
-    const availableStates = useMemo(() => Array.from(new Set(rows.map((r) => r.state))), [rows]);
+    const defaultSearch = (row: TData, q: string) =>
+        Object.values(row as Record<string, unknown>).some(
+            (v) => v !== null && v !== undefined && String(v).toLowerCase().includes(q)
+        );
 
-    /* -- search + filter -- */
     const filteredData = useMemo(() => {
         const q = search.trim().toLowerCase();
         return rows.filter((r) => {
-            if (methodFilter.size && !methodFilter.has(r.method)) return false;
-            if (stateFilter.size && !stateFilter.has(r.state)) return false;
+            for (const f of facetFilters) {
+                const active = facetState[f.id];
+                if (active && active.size > 0 && !active.has(f.getValue(r))) return false;
+            }
             if (!q) return true;
-            return (
-                r.host.toLowerCase().includes(q) ||
-                r.url.toLowerCase().includes(q) ||
-                r.method.toLowerCase().includes(q) ||
-                String(r.code ?? '').includes(q) ||
-                r.state.toLowerCase().includes(q) ||
-                String(r.id).includes(q)
-            );
+            return (searchFn ?? defaultSearch)(r, q);
         });
-    }, [rows, search, methodFilter, stateFilter]);
+    }, [rows, search, facetFilters, facetState, searchFn]);
 
     const table = useReactTable({
         data: filteredData,
-        columns: COLUMNS,
+        columns,
         state: { sorting, columnVisibility, columnOrder },
         onSortingChange: setSorting,
         onColumnVisibilityChange: setColumnVisibility,
         onColumnOrderChange: setColumnOrder,
         getCoreRowModel: getCoreRowModel(),
         getSortedRowModel: getSortedRowModel(),
-        meta: { selectedIds } as TableMeta,
+        meta: { selectedIds } as TableMeta<TData>,
     });
 
     const visibleRows = table.getRowModel().rows;
 
-    /* -- report selection up to the parent, following the original single-row contract -- */
     useEffect(() => {
         if (!setSelectedRequest) return;
         if (selectedIds.size === 1) {
@@ -427,7 +314,6 @@ export default function HttpHistoryTable({ data: initialData, setSelectedRequest
         }
     }, [selectedIds, setSelectedRequest]);
 
-    /* -- drop selection ids that no longer exist after filtering/removal -- */
     useEffect(() => {
         setSelectedIds((prev) => {
             const validIds = new Set(rows.map((r) => r.id));
@@ -436,7 +322,6 @@ export default function HttpHistoryTable({ data: initialData, setSelectedRequest
         });
     }, [rows]);
 
-    /* -- drop groups that no longer have any member rows -- */
     useEffect(() => {
         setGroups((prev) => {
             const usedIds = new Set(rows.map((r) => r.group).filter(Boolean));
@@ -445,7 +330,6 @@ export default function HttpHistoryTable({ data: initialData, setSelectedRequest
         });
     }, [rows]);
 
-    /* -- row click: plain = select one, ctrl/meta = toggle, alt = range -- */
     function handleRowClick(e: React.MouseEvent, id: number) {
         if (e.ctrlKey || e.metaKey) {
             setSelectedIds((prev) => {
@@ -473,8 +357,6 @@ export default function HttpHistoryTable({ data: initialData, setSelectedRequest
         lastClickedId.current = id;
     }
 
-    /* -- right click: if the row is already part of the selection, act on the whole
-          selection; otherwise select just that row and act on it -- */
     function idsForContextMenu(rowId: number): number[] {
         if (selectedIds.has(rowId) && selectedIds.size > 1) return Array.from(selectedIds);
         return [rowId];
@@ -487,7 +369,6 @@ export default function HttpHistoryTable({ data: initialData, setSelectedRequest
         }
     }
 
-    /* -- keyboard navigation mirrors the original arrow-key behaviour -- */
     useEffect(() => {
         function onKeyDown(e: KeyboardEvent) {
             if (visibleRows.length === 0) return;
@@ -506,7 +387,6 @@ export default function HttpHistoryTable({ data: initialData, setSelectedRequest
         return () => window.removeEventListener('keydown', onKeyDown);
     }, [visibleRows]);
 
-    /* -- group actions, driven from the context menu -- */
     function createGroupAndAssign(ids: number[]) {
         groupCounter.current += 1;
         const color = GROUP_PALETTE[colorCursor.current % GROUP_PALETTE.length];
@@ -543,11 +423,10 @@ export default function HttpHistoryTable({ data: initialData, setSelectedRequest
 
     function clearFilters() {
         setSearch('');
-        setMethodFilter(new Set());
-        setStateFilter(new Set());
+        setFacetState({});
     }
 
-    const hasActiveFilters = !!search || methodFilter.size > 0 || stateFilter.size > 0;
+    const hasActiveFilters = !!search || Object.values(facetState).some((s) => s.size > 0);
 
     return (
         <div className="mx-auto max-w-7xl bg-[#FAF7F2] p-2">
@@ -558,7 +437,7 @@ export default function HttpHistoryTable({ data: initialData, setSelectedRequest
                     <input
                         value={search}
                         onChange={(e) => setSearch(e.target.value)}
-                        placeholder="Search host, url, method, code…"
+                        placeholder={searchPlaceholder}
                         className="w-56 border-none bg-transparent text-[12px] text-[#1B211E] outline-none placeholder:text-[#9A9A90]"
                     />
                     {search && (
@@ -568,39 +447,23 @@ export default function HttpHistoryTable({ data: initialData, setSelectedRequest
                     )}
                 </div>
 
-                <Dropdown label="Method" icon={<SlidersHorizontal className="h-3.5 w-3.5 text-[#9A9A90]" />} badge={methodFilter.size}>
-                    {availableMethods.map((m) => (
-                        <DropdownCheckboxItem
-                            key={m}
-                            label={m}
-                            checked={methodFilter.has(m)}
-                            onToggle={() =>
-                                setMethodFilter((prev) => {
-                                    const next = new Set(prev);
-                                    next.has(m) ? next.delete(m) : next.add(m);
-                                    return next;
-                                })
-                            }
-                        />
-                    ))}
-                </Dropdown>
-
-                <Dropdown label="State" icon={<SlidersHorizontal className="h-3.5 w-3.5 text-[#9A9A90]" />} badge={stateFilter.size}>
-                    {availableStates.map((s) => (
-                        <DropdownCheckboxItem
-                            key={s}
-                            label={s}
-                            checked={stateFilter.has(s)}
-                            onToggle={() =>
-                                setStateFilter((prev) => {
-                                    const next = new Set(prev);
-                                    next.has(s) ? next.delete(s) : next.add(s);
-                                    return next;
-                                })
-                            }
-                        />
-                    ))}
-                </Dropdown>
+                {facetFilters.map((f) => (
+                    <Dropdown
+                        key={f.id}
+                        label={f.label}
+                        icon={<SlidersHorizontal className="h-3.5 w-3.5 text-[#9A9A90]" />}
+                        badge={facetState[f.id]?.size}
+                    >
+                        {(facetOptions[f.id] ?? []).map((value) => (
+                            <DropdownCheckboxItem
+                                key={value}
+                                label={value}
+                                checked={facetState[f.id]?.has(value) ?? false}
+                                onToggle={() => toggleFacetValue(f.id, value)}
+                            />
+                        ))}
+                    </Dropdown>
+                ))}
 
                 <Dropdown label="Columns" icon={<SlidersHorizontal className="h-3.5 w-3.5 text-[#9A9A90]" />}>
                     {table.getAllLeafColumns().map((col) => (
@@ -624,11 +487,10 @@ export default function HttpHistoryTable({ data: initialData, setSelectedRequest
                 )}
 
                 <div className="ml-auto text-[12px] text-[#9A9A90]">
-                    {filteredData.length} of {rows.length} requests
+                    {filteredData.length} of {rows.length} rows
                 </div>
             </div>
 
-            {/* Contextual selection bar — informational only, actions now live in the right-click menu */}
             {selectedIds.size > 0 && (
                 <div className="mb-2 flex items-center gap-2 rounded-md border border-[#E3DCCC] bg-[#F4E4DE] px-2 py-1">
                     <span className="text-[12px] font-medium text-[#8F2E24]">{selectedIds.size} selected</span>
@@ -643,7 +505,6 @@ export default function HttpHistoryTable({ data: initialData, setSelectedRequest
                 </div>
             )}
 
-            {/* Table */}
             <div className="overflow-hidden rounded-md border border-[#E3DCCC] bg-white">
                 <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleColumnDragEnd}>
                     <div className="border-b border-[#E3DCCC] bg-[#FAF7F2]">
@@ -699,7 +560,7 @@ export default function HttpHistoryTable({ data: initialData, setSelectedRequest
                                 </ContextMenuTrigger>
                                 <ContextMenuContent className="w-56">
                                     <ContextMenuLabel className="text-[11px] text-[#9A9A90]">
-                                        {actionIds.length > 1 ? `${actionIds.length} requests` : `Request #${rowId}`}
+                                        {actionIds.length > 1 ? `${actionIds.length} rows` : `Row #${rowId}`}
                                     </ContextMenuLabel>
                                     <ContextMenuSeparator />
 
@@ -748,12 +609,8 @@ export default function HttpHistoryTable({ data: initialData, setSelectedRequest
 
                 {visibleRows.length === 0 && (
                     <div className="py-12 text-center text-[#9A9A90]">
-                        <p className="text-[13px]">
-                            {rows.length === 0 ? 'No requests captured yet' : 'No requests match the current filters'}
-                        </p>
-                        <p className="mt-1 text-[11px]">
-                            {rows.length === 0 ? 'Start your proxy to begin capturing HTTP traffic' : 'Try clearing search or filters'}
-                        </p>
+                        <p className="text-[13px]">{rows.length === 0 ? emptyLabel : 'No rows match the current filters'}</p>
+                        {emptyHint && <p className="mt-1 text-[11px]">{rows.length === 0 ? emptyHint : 'Try clearing search or filters'}</p>}
                     </div>
                 )}
             </div>
