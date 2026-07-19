@@ -8,7 +8,7 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@
 // import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useAppDispatch, useAppSelector } from "@/hooks/redux";
 import { Textarea } from "@/components/ui/textarea"
-import { loadValuesParam, setDelaisTime, setNumThreads, setSelectedParameter } from "@/store/slices/fuzzerSlice";
+import { loadValuesParam, setDelayMs, setNumThreads, setSelectedParameter } from "@/store/slices/fuzzerSlice";
 import { FuzzerParameter, FuzzingAttackType } from "@/types/fuzzer.type";
 import { IconUpload } from "@tabler/icons-react";
 
@@ -251,9 +251,9 @@ export default function PayloadConfigurator() {
                         id="numThreads"
                         type="number"
                         min={0}
-                        value={session.payload.delaisTime}
+                        value={session.payload.delayMs}
                         onChange={(event) => {
-                            dispatch(setDelaisTime({ delaisTime: parseInt(event.target.value) }))
+                            dispatch(setDelayMs({ delayMs: parseInt(event.target.value) }))
                         }}
                     />
                 </TabsContent>
