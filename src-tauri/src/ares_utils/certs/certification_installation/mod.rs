@@ -2,6 +2,9 @@ use crate::ares_utils::certs::CaCertPaths;
 use tokio::process::Command;
 
 #[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+#[cfg(target_os = "windows")]
 #[tauri::command]
 pub async fn install_cert(app: tauri::AppHandle) -> Result<(), String> {
     let paths = CaCertPaths::new(&app).map_err(|e| e.to_string())?;
@@ -13,6 +16,7 @@ pub async fn install_cert(app: tauri::AppHandle) -> Result<(), String> {
             "Root",
             &paths.cert_path.to_string_lossy(),
         ])
+        .creation_flags(CREATE_NO_WINDOW)
         .status()
         .await
         .map_err(|e| format!("failed to spawn certutil: {e}"))?;

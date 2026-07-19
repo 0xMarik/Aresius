@@ -2,9 +2,24 @@ use crate::ares_utils::certs::CaCertPaths;
 
 use tokio::process::Command;
 
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+#[cfg(target_os = "windows")]
+fn no_window_command(program: &str) -> Command {
+    let mut cmd = Command::new(program);
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    cmd
+}
+
+#[cfg(not(target_os = "windows"))]
+fn no_window_command(program: &str) -> Command {
+    Command::new(program)
+}
+
 // shared helper — requires openssl on PATH (or bundle/vendor it, see note below)
 async fn get_cert_fingerprint(cert_path: &std::path::Path) -> Result<String, String> {
-    let output = Command::new("openssl")
+    let output = no_window_command("openssl")
         .args(["x509", "-noout", "-fingerprint", "-sha1", "-in"])
         .arg(cert_path)
         .output()
@@ -36,6 +51,7 @@ pub async fn check_cert_installed(app: tauri::AppHandle) -> Result<bool, String>
 
     let output = Command::new("certutil")
         .args(["-user", "-store", "Root", &fingerprint_no_colons])
+        .creation_flags(CREATE_NO_WINDOW)
         .output()
         .await
         .map_err(|e| format!("failed to spawn certutil: {e}"))?;
