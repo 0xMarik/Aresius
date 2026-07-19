@@ -313,7 +313,8 @@ function FuzzerHistoryBody({
                 direction={SplitDirection.Vertical}
                 initialSizes={focusedResult ? [40, 45] : [100]}
                 minHeights={focusedResult ? [100, 100] : [100]}
-                gutterClassName="bg-gray-800 hover:bg-gray-700"
+                gutterClassName="custom-gutter-vertical"
+                draggerClassName="custom-dragger-vertical"
             >
                 <Table
                     data={enrichedRows}
@@ -331,7 +332,8 @@ function FuzzerHistoryBody({
                         direction={SplitDirection.Horizontal}
                         initialSizes={[50, 50]}
                         minWidths={[200, 200]}
-                        gutterClassName="bg-gray-800 hover:bg-gray-700"
+                        gutterClassName="custom-gutter-horizontal"
+                        draggerClassName="custom-dragger-horizontal"
                     >
                         {/* Request Panel */}
                         <div className="flex h-full flex-col overflow-hidden rounded-lg border border-gray-800 bg-gray-900">

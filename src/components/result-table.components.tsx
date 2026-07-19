@@ -326,7 +326,8 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ results, isLoading }) => {
                 direction={SplitDirection.Vertical}
                 initialSizes={[40, 45]}
                 minHeights={[100, 100]}
-                gutterClassName="bg-gray-800 hover:bg-gray-700"
+                gutterClassName="custom-gutter-vertical"
+                draggerClassName="custom-dragger-vertical"
             >
                 {/* Results List */}
                 <div className="bg-gray-900 rounded-lg border border-gray-800 flex flex-col overflow-hidden h-full">
@@ -447,7 +448,8 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ results, isLoading }) => {
                         direction={SplitDirection.Horizontal}
                         initialSizes={[50, 50]}
                         minWidths={[200, 200]}
-                        gutterClassName="bg-gray-800 hover:bg-gray-700"
+                        gutterClassName="custom-gutter-horizontal"
+                        draggerClassName="custom-dragger-horizontal"
                     >
                         {/* Request Panel */}
                         <div className="bg-gray-900 rounded-lg border border-gray-800 flex flex-col overflow-hidden h-full">

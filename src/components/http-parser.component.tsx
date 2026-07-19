@@ -1,30 +1,183 @@
 import { LanguageSupport, StreamLanguage } from '@codemirror/language';
 import { EditorView } from '@codemirror/view';
 
+// ---------------------------------------------------------------------------
+// Body tokenizers
+// ---------------------------------------------------------------------------
+
+/** Minimal JSON tokenizer. Assumes well-formed JSON (doesn't recover from
+ *  syntax errors gracefully, but that's fine for highlighting purposes). */
+function tokenizeJson(stream: any, state: any) {
+    if (stream.eatSpace()) return null;
+
+    // Continuing a string that started on a previous token call within the line.
+    if (state.json.inString) {
+        let escaped = false;
+        while (!stream.eol()) {
+            const ch = stream.next();
+            if (escaped) {
+                escaped = false;
+                continue;
+            }
+            if (ch === '\\') {
+                escaped = true;
+                continue;
+            }
+            if (ch === '"') {
+                state.json.inString = false;
+                break;
+            }
+        }
+        return state.json.stringIsKey ? 'property' : 'string';
+    }
+
+    // Full string on one token call: decide key vs value by lookahead for ':'.
+    if (stream.match(/^"(?:[^"\\]|\\.)*"(?=\s*:)/)) {
+        return 'property';
+    }
+    if (stream.match(/^"(?:[^"\\]|\\.)*"/)) {
+        return 'string';
+    }
+
+    // Unterminated string (rare mid-stream case, e.g. very long value) -- fall
+    // into the multi-call inString path above on subsequent token() calls.
+    if (stream.peek() === '"') {
+        const rest = stream.string.slice(stream.pos + 1);
+        const isKey = /^(?:[^"\\]|\\.)*"\s*:/.test(rest);
+        stream.next();
+        state.json.inString = true;
+        state.json.stringIsKey = isKey;
+        return isKey ? 'property' : 'string';
+    }
+
+    if (stream.match(/^-?\d+(\.\d+)?([eE][+-]?\d+)?/)) {
+        return 'number';
+    }
+    if (stream.match(/^(true|false|null)\b/)) {
+        return 'atom';
+    }
+    if (stream.match(/^[{}[\]]/)) {
+        return 'bracket';
+    }
+    if (stream.match(/^[:,]/)) {
+        return 'operator';
+    }
+
+    stream.next();
+    return null;
+}
+
+/** Shared tokenizer for HTML and XML bodies -- tags, attributes, comments. */
+function tokenizeMarkup(stream: any, state: any) {
+    if (stream.eatSpace()) return null;
+
+    if (state.html.inComment) {
+        if (stream.match(/^[\s\S]*?-->/)) {
+            state.html.inComment = false;
+        } else {
+            stream.skipToEnd();
+        }
+        return 'comment';
+    }
+
+    if (stream.match(/^<!--/)) {
+        // Comment might close on the same line.
+        if (!stream.match(/^[\s\S]*?-->/)) {
+            state.html.inComment = true;
+        }
+        return 'comment';
+    }
+
+    if (state.html.inTag) {
+        if (stream.match(/^\/?>/)) {
+            state.html.inTag = false;
+            return 'bracket';
+        }
+        if (stream.match(/^[a-zA-Z_:][a-zA-Z0-9_:.-]*(?=\s*=)/)) {
+            return 'attribute';
+        }
+        if (stream.match(/^=/)) {
+            return 'operator';
+        }
+        if (stream.match(/^"(?:[^"\\]|\\.)*"/) || stream.match(/^'(?:[^'\\]|\\.)*'/)) {
+            return 'string';
+        }
+        // Boolean attributes (e.g. `disabled`) with no value.
+        if (stream.match(/^[a-zA-Z_:][a-zA-Z0-9_:.-]*/)) {
+            return 'attribute';
+        }
+        stream.next();
+        return null;
+    }
+
+    if (stream.match(/^<\/[a-zA-Z_:][a-zA-Z0-9_:.-]*\s*>/)) {
+        return 'tag';
+    }
+
+    if (stream.match(/^<\?[a-zA-Z][a-zA-Z0-9_:.-]*/)) {
+        // XML declaration / processing instruction, e.g. <?xml version="1.0"?>
+        state.html.inTag = true;
+        return 'tag';
+    }
+
+    if (stream.match(/^<[a-zA-Z_:][a-zA-Z0-9_:.-]*/)) {
+        state.html.inTag = true;
+        return 'tag';
+    }
+
+    // Plain text node content -- consume up to the next '<' or '-->'.
+    if (stream.match(/^[^<]+/)) {
+        return null;
+    }
+
+    stream.next();
+    return null;
+}
+
+function tokenizeBody(stream: any, state: any) {
+    switch (state.contentType) {
+        case 'json':
+            return tokenizeJson(stream, state);
+        case 'html':
+        case 'xml':
+            return tokenizeMarkup(stream, state);
+        default:
+            stream.skipToEnd();
+            return null;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// HTTP mode
+// ---------------------------------------------------------------------------
+
 const httpMode = {
     token(stream: any, state: any) {
-        // Skip whitespace
+        // Body takes over completely once we've hit the blank line separator.
+        if (state.inBody) {
+            return tokenizeBody(stream, state);
+        }
+
+        // Defensive net for whitespace-only "blank" lines. Note: a truly
+        // EMPTY line never reaches this function at all -- CodeMirror calls
+        // blankLine() below instead of token() for those, which is why that
+        // transition is handled there, not here.
+        if (!state.inBody && /^\s*$/.test(stream.string)) {
+            state.inBody = true;
+            stream.skipToEnd();
+            return null;
+        }
+
+        // Skip whitespace (headers section only -- body handles its own).
         if (stream.eatSpace()) return null;
 
         if (stream.match(/^\{\{.*?\}\}/)) {
             return 'variable';
         }
 
-        // Start of line
-        if (stream.sol()) {
-            state.lineStart = true;
-            // Check if we've hit a blank line (entering body)
-            if (stream.eol()) {
-                state.inBody = true;
-                state.lineStart = false;
-                return null;
-            }
-        }
-
-        // HTTP Methods at start of first line
-        if (state.lineStart && !state.hasMethod && stream.match(/^(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|TRACE|CONNECT)\b/)) {
+        // HTTP method on the very first line.
+        if (stream.sol() && !state.hasMethod && stream.match(/^(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|TRACE|CONNECT)\b/)) {
             state.hasMethod = true;
-            state.lineStart = false;
             return 'keyword';
         }
 
@@ -38,14 +191,14 @@ const httpMode = {
             return 'number';
         }
 
-        // Header names (before colon) - check for Content-Type
-        if (!state.inBody && stream.match(/^Content-Type(?=:)/i)) {
+        // Header names (before colon) -- check for Content-Type
+        if (stream.match(/^Content-Type(?=:)/i)) {
             state.isContentTypeHeader = true;
             return 'property';
         }
 
         // Other header names
-        if (!state.inBody && stream.match(/^[A-Za-z-]+(?=:)/)) {
+        if (stream.match(/^[A-Za-z-]+(?=:)/)) {
             return 'property';
         }
 
@@ -54,29 +207,22 @@ const httpMode = {
             return 'operator';
         }
 
-        // Content-Type header value - detect JSON or HTML
-        if (state.isContentTypeHeader && !state.inBody) {
+        // Content-Type header value -- detect JSON/HTML/XML/text
+        if (state.isContentTypeHeader) {
             if (stream.match(/^[^\n\r]*/)) {
                 const headerValue = stream.current();
 
-                // Check for JSON content types
-                if (headerValue.includes('application/json') ||
+                if (
+                    headerValue.includes('application/json') ||
                     headerValue.includes('application/ld+json') ||
-                    headerValue.includes('text/json')) {
+                    headerValue.includes('text/json')
+                ) {
                     state.contentType = 'json';
-                }
-                // Check for HTML content types
-                else if (headerValue.includes('text/html') ||
-                    headerValue.includes('application/xhtml+xml')) {
+                } else if (headerValue.includes('text/html') || headerValue.includes('application/xhtml+xml')) {
                     state.contentType = 'html';
-                }
-                // Check for XML content types
-                else if (headerValue.includes('application/xml') ||
-                    headerValue.includes('text/xml')) {
+                } else if (headerValue.includes('application/xml') || headerValue.includes('text/xml')) {
                     state.contentType = 'xml';
-                }
-                // Default to plain text
-                else {
+                } else {
                     state.contentType = 'text';
                 }
 
@@ -86,15 +232,9 @@ const httpMode = {
         }
 
         // Regular header values
-        if (!state.inBody && stream.match(/^[^\n\r]*/)) {
+        if (stream.match(/^[^\n\r]*/)) {
             return 'string';
         }
-
-        // Body parsing based on content type
-        // if (state.inBody) {
-        //     return parseBody(stream, state);
-        // }
-
 
         // Everything else
         stream.next();
@@ -103,147 +243,82 @@ const httpMode = {
 
     startState() {
         return {
-            lineStart: true,
             hasMethod: false,
             inBody: false,
             isContentTypeHeader: false,
-            contentType: 'text' // default
+            contentType: 'text', // default
+            json: { inString: false, stringIsKey: false },
+            html: { inComment: false, inTag: false },
         };
-    }
+    },
+
+    // CodeMirror calls this instead of token() for genuinely empty lines --
+    // it never runs token() against a zero-length line. This is the actual
+    // header/body separator transition; the check inside token() is only a
+    // fallback for whitespace-only lines (which aren't truly "blank").
+    blankLine(state: any) {
+        state.inBody = true;
+    },
+
+    // CM6 clones state per line for incremental re-highlighting. The default
+    // clone is shallow, so without this, state.json/state.html would be
+    // shared BY REFERENCE across cloned states -- mutating one during
+    // tokenizing would silently corrupt highlighting elsewhere in the doc,
+    // especially noticeable while editing or scrolling.
+    copyState(state: any) {
+        return {
+            hasMethod: state.hasMethod,
+            inBody: state.inBody,
+            isContentTypeHeader: state.isContentTypeHeader,
+            contentType: state.contentType,
+            json: { ...state.json },
+            html: { ...state.html },
+        };
+    },
 };
-
-// function parseBody(stream: any, state: any) {
-//     switch (state.contentType) {
-//         case 'json':
-//             return parseJsonBody(stream, state);
-//         case 'html':
-//         case 'xml':
-//             return parseHtmlBody(stream, state);
-//         default:
-//             return parseTextBody(stream, state);
-//     }
-// }
-
-// function parseJsonBody(stream: any, state: any) {
-//     if (stream.match(/^\{\{[^}]*\}\}/)) {
-//         return 'variable';
-//     }
-//     // JSON brackets
-//     if (stream.match(/^[{}\[\]]/)) {
-//         return 'bracket';
-//     }
-
-//     // JSON strings
-//     if (stream.match(/^"([^"\\]|\\.)*"/)) {
-//         return 'string';
-//     }
-
-//     // JSON numbers
-//     if (stream.match(/^-?\d+(\.\d+)?([eE][+-]?\d+)?/)) {
-//         return 'number';
-//     }
-
-//     // JSON booleans/null
-//     if (stream.match(/^(true|false|null)\b/)) {
-//         return 'atom';
-//     }
-
-//     // JSON operators
-//     if (stream.match(/^[,:]/)) {
-//         return 'operator';
-//     }
-
-//     // JSON property names (keys)
-//     if (stream.match(/^[a-zA-Z_$][a-zA-Z0-9_$]*(?=\s*:)/)) {
-//         return 'property';
-//     }
-
-//     // Skip other characters
-//     stream.next();
-//     return null;
-// }
-
-// function parseHtmlBody(stream: any, state: any) {
-//     if (stream.match(/^\{\{[^}]*\}\}/)) {
-//         return 'variable';
-//     }
-//     // HTML comments
-//     if (stream.match(/^<!--[\s\S]*?-->/)) {
-//         return 'comment';
-//     }
-
-//     // HTML tags
-//     if (stream.match(/^<\/?[a-zA-Z][a-zA-Z0-9]*(?:\s[^>]*)?>/) ||
-//         stream.match(/^<[a-zA-Z][a-zA-Z0-9]*(?:\s[^>]*)?>/)) {
-//         return 'tag';
-//     }
-
-//     // HTML attributes
-//     if (stream.match(/^[a-zA-Z-]+(?==)/)) {
-//         return 'attribute';
-//     }
-
-//     // HTML attribute values
-//     if (stream.match(/^"[^"]*"/) || stream.match(/^'[^']*'/)) {
-//         return 'string';
-//     }
-
-//     // HTML entities
-//     if (stream.match(/^&[a-zA-Z0-9]+;/)) {
-//         return 'atom';
-//     }
-
-//     // Skip other characters
-//     stream.next();
-//     return null;
-// }
-
-// function parseTextBody(stream: any, state: any) {
-//     if (stream.match(/^\{\{[^}]*\}\}/)) {
-//         return 'variable';
-//     }
-//     // For plain text, just consume characters without special highlighting
-//     stream.next();
-//     return null;
-// }
 
 export const httpStreamLanguage = StreamLanguage.define(httpMode);
 
 // Custom theme for HTTP highlighting with body-specific styles
 export const httpTheme = EditorView.theme({
     '.cm-keyword': { color: '#ff6b6b', fontWeight: 'bold' }, // HTTP methods
-    '.cm-string': { color: '#4ecdc4' }, // URLs and strings
-    '.cm-number': { color: '#45b7d1' }, // HTTP version and numbers
+    '.cm-string': { color: '#4ecdc4' }, // URLs, header values, JSON/attribute strings
+    '.cm-number': { color: '#45b7d1' }, // HTTP version and JSON numbers
     '.cm-property': { color: '#96ceb4', fontWeight: 'bold' }, // Header names and JSON keys
-    '.cm-operator': { color: '#74b9ff' }, // Colons and JSON operators
-    '.cm-bracket': { color: '#fd79a8' }, // JSON brackets
-    '.cm-atom': { color: '#fdcb6e' }, // JSON booleans/null and HTML entities
-    '.cm-tag': { color: '#ff7675' }, // HTML tags
-    '.cm-attribute': { color: '#a29bfe' }, // HTML attributes
-    '.cm-comment': { color: '#636e72', fontStyle: 'italic' }, // HTML comments
-    '.cm-variable': { color: '#e17055', fontWeight: 'bold', backgroundColor: '#ffeaa7' } // Template variables
+    '.cm-operator': { color: '#74b9ff' }, // Colons and JSON/attribute operators
+    '.cm-bracket': { color: '#fd79a8' }, // JSON brackets and HTML tag delimiters
+    '.cm-atom': { color: '#fdcb6e' }, // JSON booleans/null
+    '.cm-tag': { color: '#ff7675' }, // HTML/XML tags
+    '.cm-attribute': { color: '#a29bfe' }, // HTML/XML attributes
+    '.cm-comment': { color: '#636e72', fontStyle: 'italic' }, // HTML/XML comments
+    '.cm-variable': { color: '#e17055', fontWeight: 'bold', backgroundColor: '#ffeaa7' }, // Template variables
 });
 
 // Complete language support
 export function http() {
-    return new LanguageSupport(httpStreamLanguage, [
-        // Add additional extensions here if needed
-        httpTheme
-    ]);
+    return new LanguageSupport(httpStreamLanguage, [httpTheme]);
 }
 
 // Example usage:
 /*
+POST /api/users HTTP/1.1
 Content-Type: application/json
+
 {
   "name": "John",
-  "age": 30
+  "age": 30,
+  "active": true,
+  "note": null
 }
 
+---
+
 Content-Type: text/html
+
 <html>
+  <!-- comment -->
   <body>
-    <h1>Hello World</h1>
+    <h1 class="title">Hello World</h1>
   </body>
 </html>
 */
