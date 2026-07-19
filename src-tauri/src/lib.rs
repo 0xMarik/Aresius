@@ -131,7 +131,7 @@ pub fn run() {
                 // print!("Closing splashscreen...");
                 let app_handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
-                    if let Err(e) = start_http_proxy(app_handle, "127.0.0.1:8080").await {
+                    if let Err(e) = start_http_proxy(app_handle, "0.0.0.0:8080").await {
                         tracing::error!("Proxy error: {}", e);
                     }
                 });
