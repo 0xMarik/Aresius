@@ -1,13 +1,20 @@
 import { useAppSelector } from '@/hooks/redux';
-import ResultsTable, { CodeMirrorEditor } from './result-table.components';
+import { CodeMirrorEditor } from './result-table.components';
 import ReactSplit, { SplitDirection } from '@devbookhq/splitter';
 
 import { createColumnHelper, ColumnDef } from '@tanstack/react-table';
 import Table, { isRowSelected, FacetFilter, BaseRow } from '@/components/Table';
-import { FuzzerRequest, FuzzerParameter } from '@/types/fuzzer.type';
+import { FuzzerRequest, FuzzerParameter, FuzzConfig } from '@/types/fuzzer.type';
 import { useMemo, useState } from 'react';
 import { parseRequest, parseResponse } from './utils';
 
+/**
+ * Each row corresponds to a single FuzzerRequest (one fuzzed HTTP call),
+ * not a whole FuzzingHistory entry. The template/parameters used to
+ * reconstruct payload values always come from the fuzzConfigSnapshot
+ * captured on the history entry at run time -- never from the live
+ * session.fuzzConfig, which may have since changed.
+ */
 export type FuzzerRow = FuzzerRequest & BaseRow;
 
 export type EnrichedFuzzerRow = FuzzerRow & {
@@ -15,6 +22,7 @@ export type EnrichedFuzzerRow = FuzzerRow & {
     parsedResponse: ReturnType<typeof parseResponse> | null;
     contentLength: number;
     statusCode: number | undefined;
+    targetUrl: string;
     // One entry per fuzzed parameter, in the order they appear in the request.
     payloadValues: { id: string; value: string }[];
     payloadPreview: string;
@@ -29,7 +37,7 @@ export function adaptFuzzerRequests(requests: FuzzerRequest[]): FuzzerRow[] {
  * diffing the literal (non-highlighted) segments of the raw template
  * against the sent request. This works regardless of fuzzing attack type
  * (rotator/echo/zipped/combinatorial) since it doesn't rely on replaying
- * the iteration logic — it just reads back what was actually sent.
+ * the iteration logic -- it just reads back what was actually sent.
  */
 function extractPayloadValues(
     rawRequest: string,
@@ -40,7 +48,7 @@ function extractPayloadValues(
 
     const sorted = [...parameters].sort((a, b) => a.highlightRange.from - b.highlightRange.from);
 
-    // Literal text between/around highlight ranges — guaranteed unchanged by fuzzing.
+    // Literal text between/around highlight ranges -- guaranteed unchanged by fuzzing.
     const segments: string[] = [];
     segments.push(rawRequest.slice(0, sorted[0].highlightRange.from));
     for (let i = 0; i < sorted.length - 1; i++) {
@@ -50,7 +58,7 @@ function extractPayloadValues(
 
     if (!actualRequest.startsWith(segments[0])) {
         // Template drifted from what was actually sent (e.g. request was hand-edited
-        // after the fuzz config was built) — can't safely diff, bail out.
+        // after the fuzz config was built) -- can't safely diff, bail out.
         return sorted.map((p) => ({ id: p.highlightRange.id, value: '(unavailable)' }));
     }
 
@@ -75,12 +83,16 @@ function extractPayloadValues(
 
 export function enrichFuzzerRow(
     row: FuzzerRow,
-    rawRequest: string,
-    parameters: FuzzerParameter[],
+    fuzzConfigSnapshot: FuzzConfig,
 ): EnrichedFuzzerRow {
     const parsedRequest = parseRequest(row.rawRequest);
     const parsedResponse = row.response ? parseResponse(row.response.rawResponse) : null;
-    const payloadValues = extractPayloadValues(rawRequest, row.rawRequest, parameters);
+
+    const payloadValues = extractPayloadValues(
+        fuzzConfigSnapshot.rawRequest,
+        row.rawRequest,
+        fuzzConfigSnapshot.parameters,
+    );
 
     return {
         ...row,
@@ -88,6 +100,7 @@ export function enrichFuzzerRow(
         parsedResponse,
         contentLength: row.response?.rawResponse?.length ?? 0,
         statusCode: parsedResponse?.statusCode,
+        targetUrl: fuzzConfigSnapshot.metadata.targetUrl,
         payloadValues,
         payloadPreview:
             payloadValues.length <= 1
@@ -259,8 +272,7 @@ const FuzzerHistoryCompo = ({ isLoading }: ParamsType) => {
     return (
         <FuzzerHistoryBody
             requests={historyEntry.requests}
-            rawRequest={session.fuzzConfig.rawRequest}
-            parameters={session.fuzzConfig.parameters}
+            fuzzConfigSnapshot={historyEntry.fuzzConfigSnapshot}
             isLoading={isLoading}
             focusedId={focusedId}
             setFocusedId={setFocusedId}
@@ -272,15 +284,13 @@ const FuzzerHistoryCompo = ({ isLoading }: ParamsType) => {
  *  relative to the early returns above. */
 function FuzzerHistoryBody({
     requests,
-    rawRequest,
-    parameters,
+    fuzzConfigSnapshot,
     isLoading,
     focusedId,
     setFocusedId,
 }: {
     requests: FuzzerRequest[];
-    rawRequest: string;
-    parameters: FuzzerParameter[];
+    fuzzConfigSnapshot: FuzzConfig;
     isLoading: boolean;
     focusedId: number | null;
     setFocusedId: (id: number | null) => void;
@@ -288,8 +298,8 @@ function FuzzerHistoryBody({
     const rows = useMemo(() => adaptFuzzerRequests(requests), [requests]);
 
     const enrichedRows = useMemo(
-        () => rows.map((r) => enrichFuzzerRow(r, rawRequest, parameters)),
-        [rows, rawRequest, parameters],
+        () => rows.map((r) => enrichFuzzerRow(r, fuzzConfigSnapshot)),
+        [rows, fuzzConfigSnapshot],
     );
 
     const focusedResult = useMemo(() => {

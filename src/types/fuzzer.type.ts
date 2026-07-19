@@ -4,7 +4,6 @@ interface FuzzerResponse {
 }
 
 export interface FuzzerRequest {
-    targetUrl: string;
     rawRequest: string;
     response: FuzzerResponse | null;
     requestDate: string;
@@ -47,7 +46,7 @@ export interface FuzzerParameter {
 }
 
 
-interface FuzzConfig {
+export interface FuzzConfig {
     rawRequest: string;
     parameters: FuzzerParameter[];
     fuzzingAttackType: FuzzingAttackType;
@@ -61,6 +60,7 @@ interface FuzzConfig {
 export interface FuzzingHistory {
     date: string;
     requests: FuzzerRequest[]; // Your existing request type
+    fuzzConfigSnapshot: FuzzConfig
 }
 
 export interface FuzzerSession {
