@@ -26,15 +26,15 @@ export default function PayloadConfigurator() {
 
     // In your selector or as a useMemo
     const isOnePayload = useMemo(() =>
-        session.payload.fuzzingAttackType === FuzzingAttackType.ROTATOR ||
-        session.payload.fuzzingAttackType === FuzzingAttackType.ECHO,
-        [session.payload.fuzzingAttackType]
+        session.fuzzConfig.fuzzingAttackType === FuzzingAttackType.ROTATOR ||
+        session.fuzzConfig.fuzzingAttackType === FuzzingAttackType.ECHO,
+        [session.fuzzConfig.fuzzingAttackType]
     );
     if (session === undefined) return <h1>session not found</h1>
 
-    const { parameters } = session.payload
+    const { parameters } = session.fuzzConfig
 
-    // const { parameters } = session.payload
+    // const { parameters } = session.fuzzConfig
 
     // if (parameters.length == 0) return;
 
@@ -50,7 +50,7 @@ export default function PayloadConfigurator() {
     useEffect(() => {
         setSelectedParam(IdToParameter(session.selectedHighlightId));
 
-    }, [session.selectedHighlightId, session.payload.fuzzingAttackType])
+    }, [session.selectedHighlightId, session.fuzzConfig.fuzzingAttackType])
 
 
     // const changeParam = (value: string) => {
@@ -199,9 +199,9 @@ export default function PayloadConfigurator() {
                     </div>
                     <div>
                         Number of requests : {
-                            isOnePayload ? session.payload.parameters[0].values.length : (session.payload.fuzzingAttackType === FuzzingAttackType.ZIPPED ? session.payload.parameters.reduce((acc, param) => param.values.length < acc ? param.values.length : acc, Infinity) :
-                                session.payload.fuzzingAttackType === FuzzingAttackType.COMBINATORIAL ? session.payload.parameters.reduce((acc, param) => acc * param.values.length, 1) :
-                                    session.payload.parameters[0].values.length)
+                            isOnePayload ? session.fuzzConfig.parameters[0].values.length : (session.fuzzConfig.fuzzingAttackType === FuzzingAttackType.ZIPPED ? session.fuzzConfig.parameters.reduce((acc, param) => param.values.length < acc ? param.values.length : acc, Infinity) :
+                                session.fuzzConfig.fuzzingAttackType === FuzzingAttackType.COMBINATORIAL ? session.fuzzConfig.parameters.reduce((acc, param) => acc * param.values.length, 1) :
+                                    session.fuzzConfig.parameters[0].values.length)
                         }
                     </div>
                     {/* <Select disabled={!selectedType.includes("file")} value={selectedFile} onValueChange={setSelectedFile}>
@@ -238,7 +238,7 @@ export default function PayloadConfigurator() {
                         type="number"
                         min={1}
                         max={20}
-                        value={session.payload.numThreads}
+                        value={session.fuzzConfig.numThreads}
                         onChange={(event) => {
                             dispatch(setNumThreads({ numThreads: parseInt(event.target.value) }))
                             // console.log()
@@ -251,7 +251,7 @@ export default function PayloadConfigurator() {
                         id="numThreads"
                         type="number"
                         min={0}
-                        value={session.payload.delayMs}
+                        value={session.fuzzConfig.delayMs}
                         onChange={(event) => {
                             dispatch(setDelayMs({ delayMs: parseInt(event.target.value) }))
                         }}

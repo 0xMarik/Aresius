@@ -1,11 +1,11 @@
 interface FuzzerResponse {
-    response: string;
+    rawResponse: string;
     responseTime: number;
 }
 
 export interface FuzzerRequest {
     targetUrl: string;
-    request: string;
+    rawRequest: string;
     response: FuzzerResponse | null;
     requestDate: string;
     status: 'pending' | 'completed' | 'error';
@@ -19,21 +19,6 @@ export enum FuzzingAttackType {
   COMBINATORIAL = 'combinatorial' // Multiple payload sets, all combinations
 }
 
-
-// ********************************************** //
-
-// const request : FuzzerRequest = {
-//     targetUrl: 'google.com',
-//     request: 'GET / HTTP/1.1',
-//     response: {
-//         response: 'HTTP 200 OK',
-//         responseTime: 0
-//     },
-//     requestDate: new Date().toISOString(),
-//     status: 'pending' // | 'completed' | 'error'
-// } 
-
-// ********************************************** //
 
 
 export type PayloadSource = 
@@ -62,7 +47,7 @@ export interface FuzzerParameter {
 }
 
 
-interface SessionPayload {
+interface FuzzConfig {
     rawRequest: string;
     parameters: FuzzerParameter[];
     fuzzingAttackType: FuzzingAttackType;
@@ -82,7 +67,7 @@ export interface FuzzerSession {
     name: string;
     fuzzingHistory: FuzzingHistory[];
     selectedHistoryIndex: number | null;
-    payload: SessionPayload;
+    fuzzConfig: FuzzConfig;
     selectedHighlightId: string | null;
 }
 
@@ -90,37 +75,3 @@ export interface FuzzerState {
     fuzzerSessions: FuzzerSession[];
     activeSessionIndex: number | null;
 }
-
-// *********************************************** //
-
-
-// const fuzzerState: FuzzerState = {
-//     fuzzerSessions: [{
-//         fuzzingHistory: [],
-//         name: 'Default Session',
-//         payload: {
-//             rawRequest: 'GET / HTTP/1.1\nHost: {{targetUrl}}\n\n',
-//             parameters: [{
-//                 highlightRange: {
-//                 id: 'range-1',
-//                 from: 0,
-//                 to: 0,
-//                 originalText: '',
-//                 isActive: false
-//             }, // Default highlight range ID
-//                 id: 'param-1',
-//                 name: 'FUZZ_1',
-//                 payloadSource: 'manual',
-//                 replacedValue: '',
-//                 values: ['/page', '/', '/home', '/about', '/contact', '/products', '/services', '/blog', '/faq', '/terms', '/privacy', '/help', '/support', '/login', '/register', '/dashboard', '/profile', ]
-//             }],
-//             metadata: {
-//                 targetUrl: 'http://example.com:80'
-//             }
-//         }
-//     }],
-//     activeSessionIndex: 0,
-//     selectedHighlightId: "range-1",
-// };
-
-// *********************************************** //

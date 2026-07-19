@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 pub struct FuzzerSession {
     pub name: String,
     // pub fuzzing_history: Vec<FuzzingHistory>,
-    pub payload: SessionPayload,
+    pub fuzz_config: SessionPayload,
     pub selected_highlight_id: Option<String>,
 }
 
@@ -42,7 +42,7 @@ pub struct SessionPayload {
     pub raw_request: String,
     pub parameters: Vec<FuzzerParameter>,
     pub metadata: PayloadMetadata,
-    pub delais_time: u64,
+    pub delay_ms: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

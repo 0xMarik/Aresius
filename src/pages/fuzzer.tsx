@@ -10,7 +10,7 @@ import { useAppDispatch, useAppSelector } from '@/hooks/redux';
 import { addFuzzingHistory, setFuzzingAttackType, setTargerUrl } from '@/store/slices/fuzzerSlice';
 import FuzzSession from '@/components/fuzz-session.component';
 import { FuzzingHistory, FuzzingAttackType } from '@/types/fuzzer.type';
-import { Link, Route, Routes } from 'react-router-dom';
+import { Link, } from 'react-router-dom';
 import FuzzerHistoryCompo from '@/components/history.component';
 import FuzzRequestPayload from '@/components/fuzz-request-payloads.component';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -77,16 +77,16 @@ const Fuzzer: React.FC = () => {
         //     rawRequest: "GET / HTTP/1.1\n\n",
         // }
 
-        const reqRes = await invoke<{ request: string, response: string, response_time: number }[]>("process_fuzzer_session", { session: fuzzSession, fuzzingAttackType: fuzzSession.payload.fuzzingAttackType, numThreads: fuzzSession.payload.numThreads });
+        const reqRes = await invoke<{ request: string, response: string, response_time: number }[]>("process_fuzzer_session", { session: fuzzSession, fuzzingAttackType: fuzzSession.fuzzConfig.fuzzingAttackType, numThreads: fuzzSession.fuzzConfig.numThreads });
         console.log({ reqRes })
 
         const historyTmp: FuzzingHistory = {
             date: (new Date()).toISOString(),
             requests: reqRes.map((rr) => ({
                 // request: rr.request,
-                request: rr.request,
+                rawRequest: rr.request,
                 response: {
-                    response: rr.response,
+                    rawResponse: rr.response,
                     responseTime: rr.response_time,
                 },
                 requestDate: "",
@@ -122,13 +122,13 @@ const Fuzzer: React.FC = () => {
                     <div className='bg-muted/50 gap-2 flex w-full items-center h-14 p-2'>
                         <Input
                             onChange={(e) => dispatch(setTargerUrl({ targetUrl: e.target.value }))}
-                            value={fuzzerSessions[activeSessionIndex || 0].payload.metadata.targetUrl}
+                            value={fuzzerSessions[activeSessionIndex || 0].fuzzConfig.metadata.targetUrl}
                             placeholder="http://example.com"
                         />
 
                         <Select
                             defaultValue={"1"}
-                            value={fuzzerSessions[activeSessionIndex || 0].payload.fuzzingAttackType}
+                            value={fuzzerSessions[activeSessionIndex || 0].fuzzConfig.fuzzingAttackType}
                             onValueChange={(value) => dispatch(setFuzzingAttackType({ fuzzingAttackingType: value as FuzzingAttackType }))}
                         >
                             <SelectTrigger className="w-[180px]">

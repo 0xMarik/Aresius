@@ -264,7 +264,7 @@ const RequestEditor: React.FC = () => {
         console.log('Session or parameters changed, updating global state');
 
         // Update global state immediately
-        globalRanges = [...currentFuzzerSession.payload.parameters]; // Create new array reference
+        globalRanges = [...currentFuzzerSession.fuzzConfig.parameters]; // Create new array reference
         selectedRangeId = currentFuzzerSession.selectedHighlightId;
 
         // Set up the callback to update React state when ranges change
@@ -285,7 +285,7 @@ const RequestEditor: React.FC = () => {
         // CRITICAL: Force editor to refresh its decorations
         forceEditorRefresh();
 
-    }, [activeSessionIndex, currentFuzzerSession.payload.parameters, currentFuzzerSession.selectedHighlightId, dispatch]);
+    }, [activeSessionIndex, currentFuzzerSession.fuzzConfig.parameters, currentFuzzerSession.selectedHighlightId, dispatch]);
 
     // Function to add a new highlight range
     const addHighlightRange = (from: number, to: number) => {
@@ -343,9 +343,9 @@ const RequestEditor: React.FC = () => {
 
     // IMPROVED: Update editor content when Redux state changes with better sync
     useEffect(() => {
-        if (viewRef.current && currentFuzzerSession.payload.rawRequest !== undefined) {
+        if (viewRef.current && currentFuzzerSession.fuzzConfig.rawRequest !== undefined) {
             const currentDoc = viewRef.current.state.doc.toString();
-            if (currentDoc !== currentFuzzerSession.payload.rawRequest) {
+            if (currentDoc !== currentFuzzerSession.fuzzConfig.rawRequest) {
                 console.log('Updating editor content');
 
                 // Update document content
@@ -353,7 +353,7 @@ const RequestEditor: React.FC = () => {
                     changes: {
                         from: 0,
                         to: currentDoc.length,
-                        insert: currentFuzzerSession.payload.rawRequest
+                        insert: currentFuzzerSession.fuzzConfig.rawRequest
                     }
                 });
 
@@ -361,7 +361,7 @@ const RequestEditor: React.FC = () => {
                 setTimeout(() => forceEditorRefresh(), 0);
             }
         }
-    }, [currentFuzzerSession.payload.rawRequest, activeSessionIndex]); // Added activeSessionIndex as dependency
+    }, [currentFuzzerSession.fuzzConfig.rawRequest, activeSessionIndex]); // Added activeSessionIndex as dependency
 
     useEffect(() => {
         console.log('Active session or sessions changed:', activeSessionIndex, fuzzerSessions)
@@ -395,7 +395,7 @@ const RequestEditor: React.FC = () => {
         });
 
         const state = EditorState.create({
-            doc: currentFuzzerSession.payload.rawRequest,
+            doc: currentFuzzerSession.fuzzConfig.rawRequest,
             extensions: [
                 basicSetup,
                 http(),
@@ -416,7 +416,7 @@ const RequestEditor: React.FC = () => {
         viewRef.current = view;
 
         // Initialize global state after editor creation
-        globalRanges = [...currentFuzzerSession.payload.parameters];
+        globalRanges = [...currentFuzzerSession.fuzzConfig.parameters];
         selectedRangeId = currentFuzzerSession.selectedHighlightId;
 
         return () => {
@@ -437,14 +437,14 @@ const RequestEditor: React.FC = () => {
                         HTTP
                     </Badge>
                     {/* <Badge variant="outline" className="text-xs">
-                        Total: {currentFuzzerSession.payload.parameters.length}
+                        Total: {currentFuzzerSession.fuzzConfig.parameters.length}
                     </Badge> */}
                     {/* <Badge variant="outline" className="text-xs">
-                        Active: {currentFuzzerSession.payload.parameters.filter(r => r.highlightRange.isActive).length}
+                        Active: {currentFuzzerSession.fuzzConfig.parameters.filter(r => r.highlightRange.isActive).length}
                     </Badge> */}
                     {/* {currentFuzzerSession.selectedHighlightId && (
                         <Badge variant="default" className="text-xs bg-yellow-500">
-                            Selected: {currentFuzzerSession.payload.parameters.find(r => r.highlightRange.id === currentFuzzerSession.selectedHighlightId)?.highlightRange.originalText || currentFuzzerSession.selectedHighlightId}
+                            Selected: {currentFuzzerSession.fuzzConfig.parameters.find(r => r.highlightRange.id === currentFuzzerSession.selectedHighlightId)?.highlightRange.originalText || currentFuzzerSession.selectedHighlightId}
                         </Badge>
                     )} */}
                     <Button

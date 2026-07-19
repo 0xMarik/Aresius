@@ -78,15 +78,15 @@ export function enrichFuzzerRow(
     rawRequest: string,
     parameters: FuzzerParameter[],
 ): EnrichedFuzzerRow {
-    const parsedRequest = parseRequest(row.request);
-    const parsedResponse = row.response ? parseResponse(row.response.response) : null;
-    const payloadValues = extractPayloadValues(rawRequest, row.request, parameters);
+    const parsedRequest = parseRequest(row.rawRequest);
+    const parsedResponse = row.response ? parseResponse(row.response.rawResponse) : null;
+    const payloadValues = extractPayloadValues(rawRequest, row.rawRequest, parameters);
 
     return {
         ...row,
         parsedRequest,
         parsedResponse,
-        contentLength: row.response?.response?.length ?? 0,
+        contentLength: row.response?.rawResponse?.length ?? 0,
         statusCode: parsedResponse?.statusCode,
         payloadValues,
         payloadPreview:
@@ -259,8 +259,8 @@ const FuzzerHistoryCompo = ({ isLoading }: ParamsType) => {
     return (
         <FuzzerHistoryBody
             requests={historyEntry.requests}
-            rawRequest={session.payload.rawRequest}
-            parameters={session.payload.parameters}
+            rawRequest={session.fuzzConfig.rawRequest}
+            parameters={session.fuzzConfig.parameters}
             isLoading={isLoading}
             focusedId={focusedId}
             setFocusedId={setFocusedId}
@@ -339,7 +339,7 @@ function FuzzerHistoryBody({
                                 </div>
                             </div>
                             <div className="flex-1 overflow-hidden">
-                                <CodeMirrorEditor value={focusedResult.request} />
+                                <CodeMirrorEditor value={focusedResult.rawRequest} />
                             </div>
                         </div>
 
@@ -362,7 +362,7 @@ function FuzzerHistoryBody({
                                 </div>
                             </div>
                             <div className="flex-1 overflow-hidden">
-                                <CodeMirrorEditor value={focusedResult.response?.response || 'No response available'} />
+                                <CodeMirrorEditor value={focusedResult.response?.rawResponse || 'No response available'} />
                             </div>
                         </div>
                     </ReactSplit>

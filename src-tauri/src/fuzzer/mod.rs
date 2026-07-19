@@ -33,11 +33,11 @@ pub async fn execute_rotator_fuzzing(session: &FuzzerSession, num_tasks: usize) 
     let mut requests = Vec::new();
 
     // ROTATOR: Use first parameter's values, fuzz one position at a time
-    if let Some(first_param) = session.payload.parameters.first() {
-        for param in &session.payload.parameters {
+    if let Some(first_param) = session.fuzz_config.parameters.first() {
+        for param in &session.fuzz_config.parameters {
             for value in &first_param.values {
                 let modified_request = building_raw_request(
-                    &session.payload.raw_request,
+                    &session.fuzz_config.raw_request,
                     value,
                     &param.highlight_range,
                 );
@@ -51,9 +51,9 @@ pub async fn execute_rotator_fuzzing(session: &FuzzerSession, num_tasks: usize) 
 
     for chunk in requests.chunks(chunk_size) {
         let chunk = chunk.to_vec();
-        let url = session.payload.metadata.target_url.clone();
+        let url = session.fuzz_config.metadata.target_url.clone();
         let results = Arc::clone(&results);
-        let delay = session.payload.delais_time.clone(); // Clone the delay for this task
+        let delay = session.fuzz_config.delay_ms.clone(); // Clone the delay for this task
 
         let handle = tokio::spawn(async move {
             let mut conn = match HttpConnection::new(&url).await {
@@ -98,14 +98,14 @@ pub async fn execute_echo_fuzzing(session: &FuzzerSession, num_tasks: usize) -> 
     let results = Arc::new(Mutex::new(Vec::new()));
     let mut handles = vec![];
     let mut requests = Vec::new();
-    let delay = session.payload.delais_time.clone(); // Clone the delay for this task
+    let delay = session.fuzz_config.delay_ms.clone(); // Clone the delay for this task
 
     // ECHO: Use first parameter's values, apply same value to ALL positions simultaneously
-    if let Some(first_param) = session.payload.parameters.first() {
+    if let Some(first_param) = session.fuzz_config.parameters.first() {
         for value in &first_param.values {
             // Replace all parameters with the same value (in REVERSE order)
-            let mut modified_request = session.payload.raw_request.clone();
-            let mut sorted_params: Vec<_> = session.payload.parameters.iter().collect();
+            let mut modified_request = session.fuzz_config.raw_request.clone();
+            let mut sorted_params: Vec<_> = session.fuzz_config.parameters.iter().collect();
 
             // Sort by position (descending) so we replace from end to start
             sorted_params.sort_by(|a, b| b.highlight_range.from.cmp(&a.highlight_range.from));
@@ -123,7 +123,7 @@ pub async fn execute_echo_fuzzing(session: &FuzzerSession, num_tasks: usize) -> 
 
     for chunk in requests.chunks(chunk_size) {
         let chunk = chunk.to_vec();
-        let url = session.payload.metadata.target_url.clone();
+        let url = session.fuzz_config.metadata.target_url.clone();
         let results = Arc::clone(&results);
 
         let handle = tokio::spawn(async move {
@@ -169,14 +169,14 @@ pub async fn execute_zipped_fuzzing(session: &FuzzerSession, num_tasks: usize) -
     let results = Arc::new(Mutex::new(Vec::new()));
     let mut handles = vec![];
     let mut requests = Vec::new();
-    let delay = session.payload.delais_time.clone(); // Clone the delay for this task
+    let delay = session.fuzz_config.delay_ms.clone(); // Clone the delay for this task
 
     // PITCHFORK: Iterate through all parameters simultaneously
     // Stop when the shortest parameter list is exhausted
-    if !session.payload.parameters.is_empty() {
+    if !session.fuzz_config.parameters.is_empty() {
         // Find the minimum length across all parameter value lists
         let min_length = session
-            .payload
+            .fuzz_config
             .parameters
             .iter()
             .map(|p| p.values.len())
@@ -185,10 +185,10 @@ pub async fn execute_zipped_fuzzing(session: &FuzzerSession, num_tasks: usize) -
 
         // Iterate up to the shortest list
         for i in 0..min_length {
-            let mut modified_request = session.payload.raw_request.clone();
+            let mut modified_request = session.fuzz_config.raw_request.clone();
 
             // Sort parameters by position (descending) to replace from end to start
-            let mut sorted_params: Vec<_> = session.payload.parameters.iter().collect();
+            let mut sorted_params: Vec<_> = session.fuzz_config.parameters.iter().collect();
             sorted_params.sort_by(|a, b| b.highlight_range.from.cmp(&a.highlight_range.from));
 
             // Replace each parameter with its corresponding value at index i
@@ -205,7 +205,7 @@ pub async fn execute_zipped_fuzzing(session: &FuzzerSession, num_tasks: usize) -
     let chunk_size = (requests.len() + num_tasks - 1) / num_tasks;
     for chunk in requests.chunks(chunk_size) {
         let chunk = chunk.to_vec();
-        let url = session.payload.metadata.target_url.clone();
+        let url = session.fuzz_config.metadata.target_url.clone();
         let results = Arc::clone(&results);
 
         let handle = tokio::spawn(async move {
@@ -254,19 +254,20 @@ pub async fn execute_combinatorial_fuzzing(
     let results = Arc::new(Mutex::new(Vec::new()));
     let mut handles = vec![];
     let mut requests = Vec::new();
-    let delay = session.payload.delais_time.clone(); // Clone the delay for this task
+    let delay = session.fuzz_config.delay_ms.clone(); // Clone the delay for this task
 
     // CLUSTER BOMB: Test every possible combination of all parameter values
     // This creates a cartesian product of all parameter value lists
-    if !session.payload.parameters.is_empty() {
+    if !session.fuzz_config.parameters.is_empty() {
         // Generate all combinations using cartesian product
-        let combinations = generate_combinations(&session.payload.parameters);
+        let combinations = generate_combinations(&session.fuzz_config.parameters);
 
         for combination in combinations {
-            let mut modified_request = session.payload.raw_request.clone();
+            let mut modified_request = session.fuzz_config.raw_request.clone();
 
             // Sort parameters by position (descending) to replace from end to start
-            let mut sorted_params: Vec<_> = session.payload.parameters.iter().enumerate().collect();
+            let mut sorted_params: Vec<_> =
+                session.fuzz_config.parameters.iter().enumerate().collect();
             sorted_params.sort_by(|a, b| b.1.highlight_range.from.cmp(&a.1.highlight_range.from));
 
             // Replace each parameter with its value from the combination
@@ -283,7 +284,7 @@ pub async fn execute_combinatorial_fuzzing(
     let chunk_size = (requests.len() + num_tasks - 1) / num_tasks;
     for chunk in requests.chunks(chunk_size) {
         let chunk = chunk.to_vec();
-        let url = session.payload.metadata.target_url.clone();
+        let url = session.fuzz_config.metadata.target_url.clone();
         let results = Arc::clone(&results);
 
         let handle = tokio::spawn(async move {

@@ -6,7 +6,7 @@ const initialState : FuzzerState = {
         fuzzingHistory: [],
         name: 'Default Session',
         selectedHistoryIndex: null,
-        payload: {
+        fuzzConfig: {
             numThreads: 1,
             delayMs: 0,
             fuzzingAttackType: FuzzingAttackType.ROTATOR,
@@ -36,7 +36,7 @@ const fuzzerSlice = createSlice({
         name: name + ` ${state.fuzzerSessions.length + 1}`,
         fuzzingHistory: [],
         selectedHistoryIndex: null,
-        payload: { // default payload
+        fuzzConfig: { // default payload
           numThreads: 1,
           delayMs: 0,
           fuzzingAttackType: FuzzingAttackType.ROTATOR,
@@ -83,7 +83,7 @@ const fuzzerSlice = createSlice({
 
     setContent: (state, action: PayloadAction<{ rawRequest: string }>) => {
   if (state.activeSessionIndex !== null) {
-    state.fuzzerSessions[state.activeSessionIndex].payload.rawRequest = action.payload.rawRequest;
+    state.fuzzerSessions[state.activeSessionIndex].fuzzConfig.rawRequest = action.payload.rawRequest;
   }
 },
 
@@ -92,7 +92,7 @@ const fuzzerSlice = createSlice({
       const {highlightRange} = action.payload;
       if(state.activeSessionIndex !== null) {
         const currentSession = state.fuzzerSessions[state.activeSessionIndex]
-        currentSession.payload.parameters.push({
+        currentSession.fuzzConfig.parameters.push({
           payloadSource: 'manual',
           values: [],
           highlightRange: {...highlightRange},
@@ -106,7 +106,7 @@ const fuzzerSlice = createSlice({
       const {parameters} = action.payload;
       if(state.activeSessionIndex !== null) {
         const currentSession = state.fuzzerSessions[state.activeSessionIndex]
-        currentSession.payload.parameters = parameters;
+        currentSession.fuzzConfig.parameters = parameters;
       } else {
         console.error("Their is no active session!!");
       }
@@ -115,7 +115,7 @@ const fuzzerSlice = createSlice({
       const {paramId} = action.payload;
       if(state.activeSessionIndex !== null) {
         const currentSession = state.fuzzerSessions[state.activeSessionIndex]
-        currentSession.payload.parameters = currentSession.payload.parameters.filter(param => param.highlightRange.id !== paramId);
+        currentSession.fuzzConfig.parameters = currentSession.fuzzConfig.parameters.filter(param => param.highlightRange.id !== paramId);
       } else {
         console.error("Their is no active session!!");
       }
@@ -125,7 +125,7 @@ const fuzzerSlice = createSlice({
       const {parameterId} = action.payload;
       if(state.activeSessionIndex !== null) {
         const currentSession = state.fuzzerSessions[state.activeSessionIndex];
-        const parameter = currentSession.payload.parameters.find(param => param.highlightRange.id === parameterId);
+        const parameter = currentSession.fuzzConfig.parameters.find(param => param.highlightRange.id === parameterId);
         if (parameter) {
           currentSession.selectedHighlightId = parameter.highlightRange.id;
         } 
@@ -169,7 +169,7 @@ setSelectedFuzz: (state, action: PayloadAction<{ sessionIndex: number | null, hi
     updatePayloadRawRequest : (state, action: PayloadAction<{content: string}>) => {
       const {content} = action.payload;
       if(state.activeSessionIndex !== null) {
-        state.fuzzerSessions[state.activeSessionIndex].payload.rawRequest = content;
+        state.fuzzerSessions[state.activeSessionIndex].fuzzConfig.rawRequest = content;
       }else{
          console.error("Their is no active session!!");
       }
@@ -182,9 +182,9 @@ setSelectedFuzz: (state, action: PayloadAction<{ sessionIndex: number | null, hi
       
       if(state.activeSessionIndex !== null && 
         state.fuzzerSessions[state.activeSessionIndex] &&
-        state.fuzzerSessions[state.activeSessionIndex].payload.parameters[paramIndex]
+        state.fuzzerSessions[state.activeSessionIndex].fuzzConfig.parameters[paramIndex]
       ) {
-        state.fuzzerSessions[state.activeSessionIndex].payload.parameters[paramIndex].values = values
+        state.fuzzerSessions[state.activeSessionIndex].fuzzConfig.parameters[paramIndex].values = values
       }else {
         console.error("Slice Error: session not activated or their is no session in the index passed or their is not parameter in the paramIndexer passed!!");
       }
@@ -194,7 +194,7 @@ setSelectedFuzz: (state, action: PayloadAction<{ sessionIndex: number | null, hi
     setNumThreads : (state, action: PayloadAction<{numThreads: number}>) => {
       if(state.activeSessionIndex !== null) {
         const currentSession = state.fuzzerSessions[state.activeSessionIndex]
-        currentSession.payload.numThreads = action.payload.numThreads;
+        currentSession.fuzzConfig.numThreads = action.payload.numThreads;
       }else{
          console.error("Their is no active session!!");
       }
@@ -203,7 +203,7 @@ setSelectedFuzz: (state, action: PayloadAction<{ sessionIndex: number | null, hi
       setDelayMs : (state, action: PayloadAction<{delayMs: number}>) => {
       if(state.activeSessionIndex !== null) {
         const currentSession = state.fuzzerSessions[state.activeSessionIndex]
-        currentSession.payload.delayMs = action.payload.delayMs;
+        currentSession.fuzzConfig.delayMs = action.payload.delayMs;
       }else{
          console.error("Their is no active session!!");
       }
@@ -213,7 +213,7 @@ setSelectedFuzz: (state, action: PayloadAction<{ sessionIndex: number | null, hi
     setTargerUrl :(state, action: PayloadAction<{targetUrl: string}>) => {
       if(state.activeSessionIndex !== null) {
         const currentSession = state.fuzzerSessions[state.activeSessionIndex]
-        currentSession.payload.metadata.targetUrl = action.payload.targetUrl;
+        currentSession.fuzzConfig.metadata.targetUrl = action.payload.targetUrl;
       }else{
          console.error("Their is no active session!!");
       }
@@ -222,7 +222,7 @@ setSelectedFuzz: (state, action: PayloadAction<{ sessionIndex: number | null, hi
     setFuzzingAttackType :(state, action: PayloadAction<{fuzzingAttackingType: FuzzingAttackType}>) => {
       if(state.activeSessionIndex !== null) {
         const currentSession = state.fuzzerSessions[state.activeSessionIndex]
-        currentSession.payload.fuzzingAttackType = action.payload.fuzzingAttackingType;
+        currentSession.fuzzConfig.fuzzingAttackType = action.payload.fuzzingAttackingType;
       }else{
          console.error("Their is no active session!!");
       }
