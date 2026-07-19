@@ -35,34 +35,12 @@ export enum FuzzingAttackType {
 
 // ********************************************** //
 
-// export interface FuzzerHistory {
-//     date: Date,
-//     requests: FuzzerRequest[];
-// }
-
-// export interface FuzzerSession{
-//     name: string;
-//     fuzzingHistory: FuzzerHistory[];
-//     payload: FuzzerPayload;
-//     // active: boolean
-// }
-
-
-// export interface FuzzerState {
-//   fuzzerSessions: FuzzerSession[];
-//   activeSessionIndex: number | null;
-// };
 
 export type PayloadSource = 
   | 'library' // Predefined payload library
   | 'file' 
   | 'generator'
   | 'manual';
-
-// interface FuzzerResult {
-//     rawResponse: string;
-//     ResponseTime: number; // miliseconds
-// }
 
 
 

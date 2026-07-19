@@ -491,19 +491,6 @@ export default function DataTable<TData extends BaseRow>({
                 </div>
             </div>
 
-            {selectedIds.size > 0 && (
-                <div className="mb-2 flex items-center gap-2 rounded-md border border-[#E3DCCC] bg-[#F4E4DE] px-2 py-1">
-                    <span className="text-[12px] font-medium text-[#8F2E24]">{selectedIds.size} selected</span>
-                    <span className="text-[11px] text-[#8F2E24]/70">Right-click a row for actions</span>
-                    <button
-                        onClick={() => setSelectedIds(new Set())}
-                        className="ml-auto flex items-center gap-1 rounded px-1.5 py-0.5 text-[12px] text-[#9A9A90] hover:bg-white"
-                    >
-                        <X className="h-3.5 w-3.5" />
-                        Clear
-                    </button>
-                </div>
-            )}
 
             <div className="overflow-hidden rounded-md border border-[#E3DCCC] bg-white">
                 <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleColumnDragEnd}>
