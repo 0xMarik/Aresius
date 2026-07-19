@@ -61,7 +61,7 @@ export type RequestGroup = {
     color: string;
 };
 
-export type TableMeta<TData extends BaseRow> = { selectedIds: Set<number> };
+export type TableMeta = { selectedIds: Set<number> };
 
 /** Exported so consumer column-def files can style the "selected" state without
  *  knowing anything about DataTable's internals. */
@@ -69,7 +69,7 @@ export function isRowSelected<TData extends BaseRow>(info: {
     row: { original: TData };
     table: { options: { meta?: unknown } };
 }) {
-    const meta = info.table.options.meta as TableMeta<TData> | undefined;
+    const meta = info.table.options.meta as TableMeta | undefined;
     return meta?.selectedIds.has(info.row.original.id) ?? false;
 }
 
@@ -300,7 +300,7 @@ export default function DataTable<TData extends BaseRow>({
         onColumnOrderChange: setColumnOrder,
         getCoreRowModel: getCoreRowModel(),
         getSortedRowModel: getSortedRowModel(),
-        meta: { selectedIds } as TableMeta<TData>,
+        meta: { selectedIds } as TableMeta,
     });
 
     const visibleRows = table.getRowModel().rows;

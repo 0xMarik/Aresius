@@ -8,9 +8,9 @@ pub struct ReplayerResponse {
     pub response_raw: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ReplayerRequest {
-    pub request_tmp: String,
-    pub url: String,
-}
+// #[derive(Debug, Clone, Serialize, Deserialize)]
+// #[serde(rename_all = "camelCase")]
+// pub struct ReplayerRequest {
+//     pub request_tmp: String,
+//     pub url: String,
+// }

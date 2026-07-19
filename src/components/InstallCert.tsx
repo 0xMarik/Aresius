@@ -30,6 +30,7 @@ const InstallCertificateDialog = ({
             .then((result) => {
                 const installed = result as boolean
                 setStatus(installed ? "installed" : "idle");
+                console.warn("Rendrered!!!!!")
             })
             .catch((err) => {
                 setStatus("error")

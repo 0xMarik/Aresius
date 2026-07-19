@@ -2,7 +2,7 @@ import React from 'react';
 import { useAppSelector } from '@/hooks/redux';
 
 import RequestEditor from './fuzzer/request-editor/request-editor.component';
-import PayloadConfigurator from './fuzzer/payloads-configurator.component';
+import FuzzConfig from './fuzzer/FuzzConfig';
 import ReactSplit, { SplitDirection } from '@devbookhq/splitter';
 
 
@@ -23,7 +23,7 @@ const FuzzRequestPayload: React.FC = () => {
         classes={["h-full"]}>
         <RequestEditor />
         {
-          <PayloadConfigurator key={fuzzerSessions[activeSessionIndex].name} />
+          <FuzzConfig key={fuzzerSessions[activeSessionIndex].name} />
 
         }
       </ReactSplit>

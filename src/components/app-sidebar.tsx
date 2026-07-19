@@ -19,14 +19,12 @@ import {
 
 // import { NavMain } from '@/components/nav-main'
 import { NavProjects } from '@/components/nav-projects'
-import { NavUser } from '@/components/nav-user'
 import { TeamSwitcher } from '@/components/team-switcher'
 import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
   SidebarHeader,
-  SidebarProvider,
   SidebarTrigger,
   // SidebarRail,
 } from '@/components/ui/sidebar'

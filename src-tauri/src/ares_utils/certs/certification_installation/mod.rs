@@ -1,9 +1,9 @@
 use crate::ares_utils::certs::CaCertPaths;
-use std::process::Command;
+use tokio::process::Command;
 
-#[tauri::command]
 #[cfg(target_os = "windows")]
-pub fn install_cert(app: tauri::AppHandle) -> Result<(), String> {
+#[tauri::command]
+pub async fn install_cert(app: tauri::AppHandle) -> Result<(), String> {
     let paths = CaCertPaths::new(&app).map_err(|e| e.to_string())?;
 
     let status = Command::new("certutil")
@@ -14,6 +14,7 @@ pub fn install_cert(app: tauri::AppHandle) -> Result<(), String> {
             &paths.cert_path.to_string_lossy(),
         ])
         .status()
+        .await
         .map_err(|e| format!("failed to spawn certutil: {e}"))?;
 
     if !status.success() {
@@ -29,9 +30,9 @@ pub fn install_cert(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
 #[cfg(target_os = "macos")]
-pub fn install_cert(app: tauri::AppHandle) -> Result<(), String> {
+#[tauri::command]
+pub async fn install_cert(app: tauri::AppHandle) -> Result<(), String> {
     let paths = CaCertPaths::new(&app).map_err(|e| e.to_string())?;
 
     let home = std::env::var("HOME").map_err(|e| format!("could not resolve HOME: {e}"))?;
@@ -47,6 +48,7 @@ pub fn install_cert(app: tauri::AppHandle) -> Result<(), String> {
             &paths.cert_path.to_string_lossy(),
         ])
         .output()
+        .await
         .map_err(|e| format!("failed to spawn security: {e}"))?;
 
     if !output.status.success() {
@@ -60,9 +62,9 @@ pub fn install_cert(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
 #[cfg(target_os = "linux")]
-pub fn install_cert(app: tauri::AppHandle) -> Result<(), String> {
+#[tauri::command]
+pub async fn install_cert(app: tauri::AppHandle) -> Result<(), String> {
     let paths = CaCertPaths::new(&app).map_err(|e| e.to_string())?;
     let dest = "/usr/local/share/ca-certificates/mycert.crt";
 
@@ -71,6 +73,7 @@ pub fn install_cert(app: tauri::AppHandle) -> Result<(), String> {
 
     let output = Command::new("update-ca-certificates")
         .output()
+        .await
         .map_err(|e| format!("failed to spawn update-ca-certificates: {e}"))?;
 
     if !output.status.success() {

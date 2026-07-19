@@ -28,13 +28,13 @@ pub struct FuzzerSession {
 //     pub status: RequestStatus,
 // }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum RequestStatus {
-    Pending,
-    Completed,
-    Error,
-}
+// #[derive(Debug, Clone, Serialize, Deserialize)]
+// #[serde(rename_all = "lowercase")]
+// pub enum RequestStatus {
+//     Pending,
+//     Completed,
+//     Error,
+// }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
