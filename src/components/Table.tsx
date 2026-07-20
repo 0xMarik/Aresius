@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     useReactTable,
     getCoreRowModel,
@@ -7,6 +7,7 @@ import {
     SortingState,
     ColumnDef,
     VisibilityState,
+    Row,
 } from '@tanstack/react-table';
 import {
     ChevronUp,
@@ -196,6 +197,129 @@ function DropdownCheckboxItem({ label, checked, onToggle }: { label: string; che
 }
 
 /* ================================================================== */
+/*  Row component — memoized so selecting one row doesn't force        */
+/*  React to reconcile every row in the table.                         */
+/* ================================================================== */
+
+interface TableRowProps<TData extends BaseRow> {
+    row: Row<TData>;
+    selected: boolean;
+    group?: RequestGroup;
+    groups: RequestGroup[];
+    onRowClick: (e: React.MouseEvent, id: number) => void;
+    onContextMenu: (id: number) => void;
+    onCreateGroup: (ids: number[]) => void;
+    onAssignToGroup: (ids: number[], groupId: string) => void;
+    onUngroup: (ids: number[]) => void;
+    onRemove: (ids: number[]) => void;
+    getActionIds: (rowId: number) => number[];
+}
+
+function TableRowInner<TData extends BaseRow>({
+    row,
+    selected,
+    group,
+    groups,
+    onRowClick,
+    onContextMenu,
+    onCreateGroup,
+    onAssignToGroup,
+    onUngroup,
+    onRemove,
+    getActionIds,
+}: TableRowProps<TData>) {
+    const rowId = row.original.id;
+    const groupId = row.original.group;
+
+    // Computed lazily inside the row, only when the context menu is actually
+    // opened / needed for the click handlers below — cheap either way, but
+    // keeping it here means the parent doesn't need to recompute per-row
+    // arrays on every render just to hand them down as props.
+    const otherGroups = useMemo(() => groups.filter((g) => g.id !== groupId), [groups, groupId]);
+    const actionIds = useMemo(() => getActionIds(rowId), [getActionIds, rowId, selected]);
+
+    return (
+        <ContextMenu>
+            <ContextMenuTrigger asChild>
+                <div
+                    onClick={(e) => onRowClick(e, rowId)}
+                    onContextMenu={() => onContextMenu(rowId)}
+                    className={`flex cursor-pointer items-center border-l-[3px]  ${selected ? 'bg-[#B23A2E]' : 'hover:bg-[#FAF7F2]'
+                        }`}
+                    style={{ borderLeftColor: group?.color ?? 'transparent' }}
+                >
+                    {row.getVisibleCells().map((cell) => (
+                        <div key={cell.id} className="truncate px-2 py-1" style={{ width: cell.column.getSize() }}>
+                            {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                        </div>
+                    ))}
+                </div>
+            </ContextMenuTrigger>
+            <ContextMenuContent className="w-56">
+                <ContextMenuLabel className="text-[11px] text-[#9A9A90]">
+                    {actionIds.length > 1 ? `${actionIds.length} rows` : `Row #${rowId}`}
+                </ContextMenuLabel>
+                <ContextMenuSeparator />
+
+                <ContextMenuItem onSelect={() => onCreateGroup(actionIds)}>
+                    <FolderPlus className="mr-2 h-3.5 w-3.5" />
+                    New group
+                </ContextMenuItem>
+
+                <ContextMenuSub>
+                    <ContextMenuSubTrigger disabled={otherGroups.length === 0}>
+                        <Layers className="mr-2 h-3.5 w-3.5" />
+                        Add to group
+                    </ContextMenuSubTrigger>
+                    <ContextMenuSubContent>
+                        {otherGroups.length === 0 && (
+                            <ContextMenuItem disabled>No other groups yet</ContextMenuItem>
+                        )}
+                        {otherGroups.map((g) => (
+                            <ContextMenuItem key={g.id} onSelect={() => onAssignToGroup(actionIds, g.id)}>
+                                <Circle className="mr-2 h-3 w-3" style={{ color: g.color, fill: g.color }} />
+                                {g.name}
+                            </ContextMenuItem>
+                        ))}
+                    </ContextMenuSubContent>
+                </ContextMenuSub>
+
+                <ContextMenuItem onSelect={() => onUngroup(actionIds)} disabled={!groupId}>
+                    <FolderMinus className="mr-2 h-3.5 w-3.5" />
+                    Ungroup
+                </ContextMenuItem>
+
+                <ContextMenuSeparator />
+
+                <ContextMenuItem
+                    onSelect={() => onRemove(actionIds)}
+                    className="text-[#C0392B] focus:text-[#C0392B]"
+                >
+                    <Trash2 className="mr-2 h-3.5 w-3.5" />
+                    Remove
+                </ContextMenuItem>
+            </ContextMenuContent>
+        </ContextMenu>
+    );
+}
+
+const TableRow = React.memo(TableRowInner, (prev, next) => {
+    return (
+        prev.row === next.row &&
+        prev.selected === next.selected &&
+        prev.group?.id === next.group?.id &&
+        prev.groups === next.groups &&
+        prev.onRowClick === next.onRowClick &&
+        prev.onContextMenu === next.onContextMenu &&
+        prev.onCreateGroup === next.onCreateGroup &&
+        prev.onAssignToGroup === next.onAssignToGroup &&
+        prev.onUngroup === next.onUngroup &&
+        prev.onRemove === next.onRemove &&
+        prev.getActionIds === next.getActionIds
+    );
+}) as typeof TableRowInner;
+
+/* ================================================================== */
 /*  Main generic component                                             */
 /* ================================================================== */
 
@@ -305,6 +429,18 @@ export default function DataTable<TData extends BaseRow>({
 
     const visibleRows = table.getRowModel().rows;
 
+    // Kept in refs (not deps) so the callbacks below never change identity
+    // just because selection, grouping, or the row list changed shape.
+    const visibleRowsRef = useRef<typeof visibleRows>(visibleRows);
+    useEffect(() => {
+        visibleRowsRef.current = visibleRows;
+    }, [visibleRows]);
+
+    const selectedIdsRef = useRef(selectedIds);
+    useEffect(() => {
+        selectedIdsRef.current = selectedIds;
+    }, [selectedIds]);
+
     useEffect(() => {
         if (!setSelectedRequest) return;
         if (selectedIds.size === 1) {
@@ -330,7 +466,11 @@ export default function DataTable<TData extends BaseRow>({
         });
     }, [rows]);
 
-    function handleRowClick(e: React.MouseEvent, id: number) {
+    /* -- stable callbacks: read live data via refs instead of closing over
+     *    state, so identity never changes and TableRow's memo comparator
+     *    can actually short-circuit. -- */
+
+    const handleRowClick = useCallback((e: React.MouseEvent, id: number) => {
         if (e.ctrlKey || e.metaKey) {
             setSelectedIds((prev) => {
                 const next = new Set(prev);
@@ -343,7 +483,7 @@ export default function DataTable<TData extends BaseRow>({
         }
 
         if (e.shiftKey && lastClickedId.current !== null) {
-            const ids = visibleRows.map((r) => r.original.id);
+            const ids = visibleRowsRef.current.map((r) => r.original.id);
             const from = ids.indexOf(lastClickedId.current);
             const to = ids.indexOf(id);
             if (from !== -1 && to !== -1) {
@@ -355,27 +495,30 @@ export default function DataTable<TData extends BaseRow>({
 
         setSelectedIds(new Set([id]));
         lastClickedId.current = id;
-    }
+    }, []);
 
-    function idsForContextMenu(rowId: number): number[] {
-        if (selectedIds.has(rowId) && selectedIds.size > 1) return Array.from(selectedIds);
+    const handleRowContextMenu = useCallback((rowId: number) => {
+        setSelectedIds((prev) => {
+            if (prev.has(rowId) && prev.size > 1) return prev;
+            return new Set([rowId]);
+        });
+        lastClickedId.current = rowId;
+    }, []);
+
+    const getActionIds = useCallback((rowId: number) => {
+        const sel = selectedIdsRef.current;
+        if (sel.has(rowId) && sel.size > 1) return Array.from(sel);
         return [rowId];
-    }
-
-    function handleRowContextMenu(rowId: number) {
-        if (!(selectedIds.has(rowId) && selectedIds.size > 1)) {
-            setSelectedIds(new Set([rowId]));
-            lastClickedId.current = rowId;
-        }
-    }
+    }, []);
 
     useEffect(() => {
         function onKeyDown(e: KeyboardEvent) {
-            if (visibleRows.length === 0) return;
+            const currentRows = visibleRowsRef.current;
+            if (currentRows.length === 0) return;
             if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
             e.preventDefault();
 
-            const ids = visibleRows.map((r) => r.original.id);
+            const ids = currentRows.map((r) => r.original.id);
             const current = lastClickedId.current !== null ? ids.indexOf(lastClickedId.current) : -1;
             const nextIndex =
                 e.key === 'ArrowDown' ? Math.min(current + 1, ids.length - 1) : Math.max(current - 1, 0);
@@ -385,9 +528,9 @@ export default function DataTable<TData extends BaseRow>({
         }
         window.addEventListener('keydown', onKeyDown);
         return () => window.removeEventListener('keydown', onKeyDown);
-    }, [visibleRows]);
+    }, []);
 
-    function createGroupAndAssign(ids: number[]) {
+    const createGroupAndAssign = useCallback((ids: number[]) => {
         groupCounter.current += 1;
         const color = GROUP_PALETTE[colorCursor.current % GROUP_PALETTE.length];
         colorCursor.current += 1;
@@ -399,19 +542,19 @@ export default function DataTable<TData extends BaseRow>({
         setGroups((prev) => [...prev, newGroup]);
         const idSet = new Set(ids);
         setRows((prev) => prev.map((r) => (idSet.has(r.id) ? { ...r, group: newGroup.id } : r)));
-    }
+    }, []);
 
-    function assignToGroup(ids: number[], groupId: string) {
+    const assignToGroup = useCallback((ids: number[], groupId: string) => {
         const idSet = new Set(ids);
         setRows((prev) => prev.map((r) => (idSet.has(r.id) ? { ...r, group: groupId } : r)));
-    }
+    }, []);
 
-    function ungroupIds(ids: number[]) {
+    const ungroupIds = useCallback((ids: number[]) => {
         const idSet = new Set(ids);
         setRows((prev) => prev.map((r) => (idSet.has(r.id) ? { ...r, group: undefined } : r)));
-    }
+    }, []);
 
-    function removeIds(ids: number[]) {
+    const removeIds = useCallback((ids: number[]) => {
         const idSet = new Set(ids);
         setRows((prev) => prev.filter((r) => !idSet.has(r.id)));
         setSelectedIds((prev) => {
@@ -419,7 +562,7 @@ export default function DataTable<TData extends BaseRow>({
             ids.forEach((id) => next.delete(id));
             return next;
         });
-    }
+    }, []);
 
     function clearFilters() {
         setSearch('');
@@ -522,74 +665,24 @@ export default function DataTable<TData extends BaseRow>({
                 <div className="divide-y divide-[#F0EDE6]">
                     {visibleRows.map((row) => {
                         const rowId = row.original.id;
-                        const selected = selectedIds.has(rowId);
                         const groupId = row.original.group;
                         const group = groups.find((g) => g.id === groupId);
-                        const actionIds = idsForContextMenu(rowId);
-                        const otherGroups = groups.filter((g) => g.id !== groupId);
 
                         return (
-                            <ContextMenu key={row.id}>
-                                <ContextMenuTrigger asChild>
-                                    <div
-                                        onClick={(e) => handleRowClick(e, rowId)}
-                                        onContextMenu={() => handleRowContextMenu(rowId)}
-                                        className={`flex cursor-pointer items-center border-l-[3px]  ${selected ? 'bg-[#B23A2E]' : 'hover:bg-[#FAF7F2]'
-                                            }`}
-                                        style={{ borderLeftColor: group?.color ?? 'transparent' }}
-                                    >
-                                        {row.getVisibleCells().map((cell) => (
-                                            <div key={cell.id} className="truncate px-2 py-1" style={{ width: cell.column.getSize() }}>
-                                                {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                                            </div>
-                                        ))}
-                                    </div>
-                                </ContextMenuTrigger>
-                                <ContextMenuContent className="w-56">
-                                    <ContextMenuLabel className="text-[11px] text-[#9A9A90]">
-                                        {actionIds.length > 1 ? `${actionIds.length} rows` : `Row #${rowId}`}
-                                    </ContextMenuLabel>
-                                    <ContextMenuSeparator />
-
-                                    <ContextMenuItem onSelect={() => createGroupAndAssign(actionIds)}>
-                                        <FolderPlus className="mr-2 h-3.5 w-3.5" />
-                                        New group
-                                    </ContextMenuItem>
-
-                                    <ContextMenuSub>
-                                        <ContextMenuSubTrigger disabled={otherGroups.length === 0}>
-                                            <Layers className="mr-2 h-3.5 w-3.5" />
-                                            Add to group
-                                        </ContextMenuSubTrigger>
-                                        <ContextMenuSubContent>
-                                            {otherGroups.length === 0 && (
-                                                <ContextMenuItem disabled>No other groups yet</ContextMenuItem>
-                                            )}
-                                            {otherGroups.map((g) => (
-                                                <ContextMenuItem key={g.id} onSelect={() => assignToGroup(actionIds, g.id)}>
-                                                    <Circle className="mr-2 h-3 w-3" style={{ color: g.color, fill: g.color }} />
-                                                    {g.name}
-                                                </ContextMenuItem>
-                                            ))}
-                                        </ContextMenuSubContent>
-                                    </ContextMenuSub>
-
-                                    <ContextMenuItem onSelect={() => ungroupIds(actionIds)} disabled={!groupId}>
-                                        <FolderMinus className="mr-2 h-3.5 w-3.5" />
-                                        Ungroup
-                                    </ContextMenuItem>
-
-                                    <ContextMenuSeparator />
-
-                                    <ContextMenuItem
-                                        onSelect={() => removeIds(actionIds)}
-                                        className="text-[#C0392B] focus:text-[#C0392B]"
-                                    >
-                                        <Trash2 className="mr-2 h-3.5 w-3.5" />
-                                        Remove
-                                    </ContextMenuItem>
-                                </ContextMenuContent>
-                            </ContextMenu>
+                            <TableRow
+                                key={row.id}
+                                row={row}
+                                selected={selectedIds.has(rowId)}
+                                group={group}
+                                groups={groups}
+                                onRowClick={handleRowClick}
+                                onContextMenu={handleRowContextMenu}
+                                onCreateGroup={createGroupAndAssign}
+                                onAssignToGroup={assignToGroup}
+                                onUngroup={ungroupIds}
+                                onRemove={removeIds}
+                                getActionIds={getActionIds}
+                            />
                         );
                     })}
                 </div>
