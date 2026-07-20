@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import {
     useReactTable,
     getCoreRowModel,
@@ -8,7 +9,9 @@ import {
     ColumnDef,
     VisibilityState,
     Row,
+    Table,
 } from '@tanstack/react-table';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import {
     ChevronUp,
     ChevronDown,
@@ -75,6 +78,12 @@ export function isRowSelected<TData extends BaseRow>(info: {
 }
 
 const GROUP_PALETTE = ['#B23A2E', '#8F2E24', '#C08A3E', '#3C7A5A', '#5C6360', '#6E4A3E', '#A85D3B'];
+
+/** Fixed row height in px. Must match the actual rendered row height
+ *  (padding + line-height below) since the virtualizer uses this to
+ *  compute scroll offsets without measuring the DOM. If you change the
+ *  row's vertical padding/font-size, update this. */
+const ROW_HEIGHT = 30;
 
 /* ================================================================== */
 /*  Facet filters — replaces the hardcoded Method/State dropdowns      */
@@ -231,12 +240,10 @@ function TableRowInner<TData extends BaseRow>({
     const rowId = row.original.id;
     const groupId = row.original.group;
 
-    // Computed lazily inside the row, only when the context menu is actually
-    // opened / needed for the click handlers below — cheap either way, but
-    // keeping it here means the parent doesn't need to recompute per-row
-    // arrays on every render just to hand them down as props.
     const otherGroups = useMemo(() => groups.filter((g) => g.id !== groupId), [groups, groupId]);
-    const actionIds = useMemo(() => getActionIds(rowId), [getActionIds, rowId, selected]);
+    // getActionIds is a stable (useCallback([])) function that reads a ref
+    // internally, so rowId alone is a sufficient dep.
+    const actionIds = useMemo(() => getActionIds(rowId), [getActionIds, rowId]);
 
     return (
         <ContextMenu>
@@ -244,7 +251,7 @@ function TableRowInner<TData extends BaseRow>({
                 <div
                     onClick={(e) => onRowClick(e, rowId)}
                     onContextMenu={() => onContextMenu(rowId)}
-                    className={`flex cursor-pointer items-center border-l-[3px]  ${selected ? 'bg-[#B23A2E]' : 'hover:bg-[#FAF7F2]'
+                    className={`flex h-full cursor-pointer items-center border-b border-[#F0EDE6] border-l-[3px]  ${selected ? 'bg-[#B23A2E]' : 'hover:bg-[#FAF7F2]'
                         }`}
                     style={{ borderLeftColor: group?.color ?? 'transparent' }}
                 >
@@ -320,23 +327,432 @@ const TableRow = React.memo(TableRowInner, (prev, next) => {
 }) as typeof TableRowInner;
 
 /* ================================================================== */
+/*  Toolbar — search / facets / column visibility / reset / count.     */
+/*  Extracted so that selection changes (arrow-key nav) never touch    */
+/*  this subtree: none of its props change on selection, so            */
+/*  React.memo bails out and it is skipped entirely during             */
+/*  reconciliation, not just "cheaply re-rendered".                    */
+/* ================================================================== */
+
+interface TableToolbarProps<TData extends BaseRow> {
+    search: string;
+    onSearchChange: (value: string) => void;
+    onClearSearch: () => void;
+    searchPlaceholder: string;
+    facetFilters: FacetFilter<TData>[];
+    facetOptions: Record<string, string[]>;
+    facetState: Record<string, Set<string>>;
+    onToggleFacet: (facetId: string, value: string) => void;
+    table: Table<TData>;
+    columnVisibility: VisibilityState;
+    hasActiveFilters: boolean;
+    onClearFilters: () => void;
+    filteredCount: number;
+    totalCount: number;
+}
+
+function TableToolbarInner<TData extends BaseRow>({
+    search,
+    onSearchChange,
+    onClearSearch,
+    searchPlaceholder,
+    facetFilters,
+    facetOptions,
+    facetState,
+    onToggleFacet,
+    table,
+    columnVisibility,
+    hasActiveFilters,
+    onClearFilters,
+    filteredCount,
+    totalCount,
+}: TableToolbarProps<TData>) {
+    // `table` is a stable instance (tanstack mutates it in place rather than
+    // returning a new object), so it alone can't tell React.memo that a
+    // column was hidden/shown. `columnVisibility` is threaded through as an
+    // explicit prop for that reason, and doubles as a genuinely useful
+    // "N hidden" badge on the Columns dropdown.
+    const hiddenCount = Object.values(columnVisibility).filter((v) => v === false).length;
+
+    return (
+        <div className="mb-2 flex flex-wrap items-center gap-1.5">
+            <div className="flex items-center gap-1.5 rounded-md border border-[#E3DCCC] bg-white px-2 py-1">
+                <Search className="h-3.5 w-3.5 text-[#9A9A90]" />
+                <input
+                    value={search}
+                    onChange={(e) => onSearchChange(e.target.value)}
+                    placeholder={searchPlaceholder}
+                    className="w-56 border-none bg-transparent text-[12px] text-[#1B211E] outline-none placeholder:text-[#9A9A90]"
+                />
+                {search && (
+                    <button onClick={onClearSearch} className="text-[#C9C2B2] hover:text-[#5C6360]">
+                        <X className="h-3.5 w-3.5" />
+                    </button>
+                )}
+            </div>
+
+            {facetFilters.map((f) => (
+                <Dropdown
+                    key={f.id}
+                    label={f.label}
+                    icon={<SlidersHorizontal className="h-3.5 w-3.5 text-[#9A9A90]" />}
+                    badge={facetState[f.id]?.size}
+                >
+                    {(facetOptions[f.id] ?? []).map((value) => (
+                        <DropdownCheckboxItem
+                            key={value}
+                            label={value}
+                            checked={facetState[f.id]?.has(value) ?? false}
+                            onToggle={() => onToggleFacet(f.id, value)}
+                        />
+                    ))}
+                </Dropdown>
+            ))}
+
+            <Dropdown
+                label="Columns"
+                icon={<SlidersHorizontal className="h-3.5 w-3.5 text-[#9A9A90]" />}
+                badge={hiddenCount || undefined}
+            >
+                {table.getAllLeafColumns().map((col) => (
+                    <DropdownCheckboxItem
+                        key={col.id}
+                        label={String(col.columnDef.header)}
+                        checked={col.getIsVisible()}
+                        onToggle={col.getToggleVisibilityHandler() as unknown as () => void}
+                    />
+                ))}
+            </Dropdown>
+
+            {hasActiveFilters && (
+                <button
+                    onClick={onClearFilters}
+                    className="flex items-center gap-1 rounded-md px-2 py-1 text-[12px] text-[#9A9A90] hover:text-[#5C6360]"
+                >
+                    <RotateCcw className="h-3.5 w-3.5" />
+                    Reset
+                </button>
+            )}
+
+            <div className="ml-auto text-[12px] text-[#9A9A90]">
+                {filteredCount} of {totalCount} rows
+            </div>
+        </div>
+    );
+}
+
+const TableToolbar = React.memo(TableToolbarInner) as typeof TableToolbarInner;
+
+/* ================================================================== */
+/*  Header row (sort + drag-to-reorder). Same isolation rationale as   */
+/*  the toolbar above — this should never re-render on selection.      */
+/* ================================================================== */
+
+interface TableHeaderRowProps<TData extends BaseRow> {
+    table: Table<TData>;
+    columnOrder: string[];
+    sorting: SortingState;
+    sensors: ReturnType<typeof useSensors>;
+    onColumnDragEnd: (event: DragEndEvent) => void;
+}
+
+function TableHeaderRowInner<TData extends BaseRow>({
+    table,
+    columnOrder,
+    sorting,
+    sensors,
+    onColumnDragEnd,
+}: TableHeaderRowProps<TData>) {
+    // Not read directly below — table.getHeaderGroups() already reflects
+    // them — but declared as explicit props so React.memo actually detects
+    // a sort/reorder and re-renders, instead of bailing out because the
+    // `table` instance reference never changes.
+    void columnOrder;
+    void sorting;
+
+    return (
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onColumnDragEnd}>
+            <div className="border-b border-[#E3DCCC] bg-[#FAF7F2]">
+                {table.getHeaderGroups().map((hg) => (
+                    <div key={hg.id} className="flex items-center">
+                        {hg.headers.map((header) => (
+                            <DraggableHeaderCell key={header.id} id={header.column.id} width={header.getSize()}>
+                                <span
+                                    onClick={header.column.getToggleSortingHandler()}
+                                    className="flex flex-1 cursor-pointer select-none items-center justify-between gap-1"
+                                >
+                                    <span className="text-[10.5px] font-semibold uppercase tracking-wide text-[#5C6360]">
+                                        {flexRender(header.column.columnDef.header, header.getContext())}
+                                    </span>
+                                    <span className="text-[#C9C2B2]">
+                                        {header.column.getIsSorted() === 'asc' && <ChevronUp className="h-3 w-3" />}
+                                        {header.column.getIsSorted() === 'desc' && <ChevronDown className="h-3 w-3" />}
+                                        {!header.column.getIsSorted() && <ChevronsUpDown className="h-3 w-3" />}
+                                    </span>
+                                </span>
+                            </DraggableHeaderCell>
+                        ))}
+                    </div>
+                ))}
+            </div>
+        </DndContext>
+    );
+}
+
+const TableHeaderRow = React.memo(TableHeaderRowInner) as typeof TableHeaderRowInner;
+
+/* ================================================================== */
+/*  RowsViewport — owns the virtualizer + keyboard navigation.         */
+/*                                                                      */
+/*  This is the ONLY subtree that re-renders when selection changes.   */
+/*  Isolating it here means an arrow-key press no longer re-runs the   */
+/*  toolbar, the header, or any of the filtering/derivation logic in   */
+/*  the parent — it only ever touches this component, and inside it    */
+/*  only the two rows whose `selected` prop actually flipped re-render */
+/*  (enforced by TableRow's memo comparator above).                    */
+/* ================================================================== */
+
+interface RowsViewportProps<TData extends BaseRow> {
+    visibleRows: Row<TData>[];
+    groups: RequestGroup[];
+    groupMap: Map<string, RequestGroup>;
+    selectedIds: Set<number>;
+    setSelectedIds: React.Dispatch<React.SetStateAction<Set<number>>>;
+    maxHeight: number;
+    totalRowsCount: number;
+    emptyLabel: string;
+    emptyHint?: string;
+    onCreateGroup: (ids: number[]) => void;
+    onAssignToGroup: (ids: number[], groupId: string) => void;
+    onUngroup: (ids: number[]) => void;
+    onRemove: (ids: number[]) => void;
+}
+
+function RowsViewportInner<TData extends BaseRow>({
+    visibleRows,
+    groups,
+    groupMap,
+    selectedIds,
+    setSelectedIds,
+    maxHeight,
+    totalRowsCount,
+    emptyLabel,
+    emptyHint,
+    onCreateGroup,
+    onAssignToGroup,
+    onUngroup,
+    onRemove,
+}: RowsViewportProps<TData>) {
+    const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+    // Stable references so useVirtualizer's own internal option-diffing
+    // never sees "new" functions on every render.
+    const getScrollElement = useCallback(() => scrollContainerRef.current, []);
+    const estimateSize = useCallback(() => ROW_HEIGHT, []);
+
+    const rowVirtualizer = useVirtualizer({
+        count: visibleRows.length,
+        getScrollElement,
+        estimateSize,
+        overscan: 12,
+    });
+    const virtualItems = rowVirtualizer.getVirtualItems();
+
+    // Kept in refs so the keyboard-nav effect below never needs to be
+    // re-subscribed, and so it always reads live data.
+    const lastClickedId = useRef<number | null>(null);
+    const visibleIdsRef = useRef<number[]>([]);
+    const idIndexRef = useRef<Map<number, number>>(new Map());
+    const rowVirtualizerRef = useRef(rowVirtualizer);
+    const selectedIdsRef = useRef(selectedIds);
+
+    useEffect(() => {
+        const ids = visibleRows.map((r) => r.original.id);
+        visibleIdsRef.current = ids;
+        const map = new Map<number, number>();
+        for (let i = 0; i < ids.length; i++) map.set(ids[i], i);
+        idIndexRef.current = map;
+    }, [visibleRows]);
+
+    useEffect(() => {
+        rowVirtualizerRef.current = rowVirtualizer;
+    });
+
+    useEffect(() => {
+        selectedIdsRef.current = selectedIds;
+    }, [selectedIds]);
+
+    const handleRowClick = useCallback((e: React.MouseEvent, id: number) => {
+        if (e.ctrlKey || e.metaKey) {
+            setSelectedIds((prev) => {
+                const next = new Set(prev);
+                if (next.has(id)) next.delete(id);
+                else next.add(id);
+                return next;
+            });
+            lastClickedId.current = id;
+            return;
+        }
+
+        if (e.shiftKey && lastClickedId.current !== null) {
+            const ids = visibleIdsRef.current;
+            const from = ids.indexOf(lastClickedId.current);
+            const to = ids.indexOf(id);
+            if (from !== -1 && to !== -1) {
+                const [start, end] = from < to ? [from, to] : [to, from];
+                setSelectedIds(new Set(ids.slice(start, end + 1)));
+                return;
+            }
+        }
+
+        setSelectedIds(new Set([id]));
+        lastClickedId.current = id;
+    }, [setSelectedIds]);
+
+    const handleRowContextMenu = useCallback((rowId: number) => {
+        setSelectedIds((prev) => {
+            if (prev.has(rowId) && prev.size > 1) return prev;
+            return new Set([rowId]);
+        });
+        lastClickedId.current = rowId;
+    }, [setSelectedIds]);
+
+    const getActionIds = useCallback((rowId: number) => {
+        const sel = selectedIdsRef.current;
+        if (sel.has(rowId) && sel.size > 1) return Array.from(sel);
+        return [rowId];
+    }, []);
+
+    // Arrow-key navigation.
+    //
+    // Multiple keydowns in the same frame are coalesced into a single
+    // commit via rAF (holding the key down shouldn't queue more renders
+    // than the browser can paint). The commit itself is wrapped in
+    // flushSync together with scrollToIndex: without that, `setSelectedIds`
+    // (a normal, batched update) and the scroll-triggered mount of newly
+    // visible rows can land a frame apart. That one-frame gap is exactly
+    // the "hold" where the highlight jumps but the row hasn't appeared
+    // yet (or vice versa). flushSync forces both into the same paint.
+    useEffect(() => {
+        let pendingIndex: number | null = null;
+        let rafId: number | null = null;
+
+        function flush() {
+            rafId = null;
+            const idx = pendingIndex;
+            pendingIndex = null;
+            if (idx === null) return;
+            const nextId = visibleIdsRef.current[idx];
+            if (nextId === undefined) return;
+            lastClickedId.current = nextId;
+            flushSync(() => {
+                setSelectedIds(new Set([nextId]));
+                rowVirtualizerRef.current?.scrollToIndex(idx, { align: 'auto' });
+            });
+        }
+
+        function onKeyDown(e: KeyboardEvent) {
+            if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+            const ids = visibleIdsRef.current;
+            if (ids.length === 0) return;
+            e.preventDefault();
+
+            const baseIndex =
+                pendingIndex !== null
+                    ? pendingIndex
+                    : lastClickedId.current !== null
+                        ? idIndexRef.current.get(lastClickedId.current) ?? -1
+                        : -1;
+
+            const nextIndex =
+                e.key === 'ArrowDown'
+                    ? Math.min(baseIndex + 1, ids.length - 1)
+                    : Math.max(baseIndex - 1, 0);
+
+            pendingIndex = Math.max(nextIndex, 0);
+            if (rafId === null) {
+                rafId = requestAnimationFrame(flush);
+            }
+        }
+
+        window.addEventListener('keydown', onKeyDown);
+        return () => {
+            window.removeEventListener('keydown', onKeyDown);
+            if (rafId !== null) cancelAnimationFrame(rafId);
+        };
+    }, [setSelectedIds]);
+
+    if (visibleRows.length === 0) {
+        return (
+            <div className="py-12 text-center text-[#9A9A90]">
+                <p className="text-[13px]">{totalRowsCount === 0 ? emptyLabel : 'No rows match the current filters'}</p>
+                {emptyHint && (
+                    <p className="mt-1 text-[11px]">{totalRowsCount === 0 ? emptyHint : 'Try clearing search or filters'}</p>
+                )}
+            </div>
+        );
+    }
+
+    return (
+        <div ref={scrollContainerRef} style={{ maxHeight, overflowY: 'auto', position: 'relative' }}>
+            <div style={{ height: rowVirtualizer.getTotalSize(), position: 'relative', width: '100%' }}>
+                {virtualItems.map((virtualItem) => {
+                    const row = visibleRows[virtualItem.index];
+                    const rowId = row.original.id;
+                    const groupId = row.original.group;
+                    const group = groupId ? groupMap.get(groupId) : undefined;
+
+                    return (
+                        <div
+                            key={row.id}
+                            style={{
+                                position: 'absolute',
+                                top: 0,
+                                left: 0,
+                                width: '100%',
+                                height: virtualItem.size,
+                                transform: `translateY(${virtualItem.start}px)`,
+                            }}
+                        >
+                            <TableRow
+                                row={row}
+                                selected={selectedIds.has(rowId)}
+                                group={group}
+                                groups={groups}
+                                onRowClick={handleRowClick}
+                                onContextMenu={handleRowContextMenu}
+                                onCreateGroup={onCreateGroup}
+                                onAssignToGroup={onAssignToGroup}
+                                onUngroup={onUngroup}
+                                onRemove={onRemove}
+                                getActionIds={getActionIds}
+                            />
+                        </div>
+                    );
+                })}
+            </div>
+        </div>
+    );
+}
+
+const RowsViewport = React.memo(RowsViewportInner) as typeof RowsViewportInner;
+
+/* ================================================================== */
 /*  Main generic component                                             */
 /* ================================================================== */
 
 interface DataTableProps<TData extends BaseRow> {
-    /** Already-normalized rows. Any domain-specific parsing (like the old
-     *  adaptFromReqRes) belongs in the consumer, not here. */
     data: TData[];
     columns: ColumnDef<TData, any>[];
-    /** Fires with the id of the single selected row, or null when zero/multiple rows are selected. */
     setSelectedRequest?: (id: number | null) => void;
-    /** Free-text search. Defaults to checking every primitive field on the row. */
     searchFn?: (row: TData, query: string) => boolean;
-    /** Dropdown filters, e.g. Method / State for HTTP, or Severity for something else. */
     facetFilters?: FacetFilter<TData>[];
     searchPlaceholder?: string;
     emptyLabel?: string;
     emptyHint?: string;
+    /** Max height of the scrollable row viewport. Rows outside this
+     *  viewport (plus overscan) are not mounted in the DOM. */
+    maxHeight?: number;
 }
 
 export default function DataTable<TData extends BaseRow>({
@@ -348,6 +764,7 @@ export default function DataTable<TData extends BaseRow>({
     searchPlaceholder = 'Search…',
     emptyLabel = 'No rows',
     emptyHint,
+    maxHeight = 600,
 }: DataTableProps<TData>) {
     const [rows, setRows] = useState<TData[]>(data);
     useEffect(() => setRows(data), [data]);
@@ -359,18 +776,32 @@ export default function DataTable<TData extends BaseRow>({
     const [search, setSearch] = useState('');
     const [facetState, setFacetState] = useState<Record<string, Set<string>>>({});
 
+    // Selection lives here (not pushed down into RowsViewport) because it
+    // also has to feed `meta.selectedIds` on the `table` instance below, for
+    // consumer column-defs that use the exported `isRowSelected` helper.
+    // Everything that doesn't need it — the toolbar and header below — is
+    // isolated in its own memoized component so this state changing does
+    // not force them to reconcile.
     const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
-    const lastClickedId = useRef<number | null>(null);
 
     const [groups, setGroups] = useState<RequestGroup[]>([]);
     const groupCounter = useRef(0);
     const colorCursor = useRef(0);
 
-    const sensors = useSensors(
-        useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
-    );
+    // O(1) group lookup instead of groups.find(...) per row per render.
+    const groupMap = useMemo(() => {
+        const map = new Map<string, RequestGroup>();
+        groups.forEach((g) => map.set(g.id, g));
+        return map;
+    }, [groups]);
 
-    function handleColumnDragEnd(event: DragEndEvent) {
+    // Hoisted so dnd-kit's internal useMemo (keyed on this options object)
+    // doesn't see a "new" value every render, which would otherwise make
+    // `sensors` a fresh array every render and defeat TableHeaderRow's memo.
+    const pointerSensorOptions = useMemo(() => ({ activationConstraint: { distance: 8 } }), []);
+    const sensors = useSensors(useSensor(PointerSensor, pointerSensorOptions));
+
+    const handleColumnDragEnd = useCallback((event: DragEndEvent) => {
         const { active, over } = event;
         if (!over || active.id === over.id) return;
         setColumnOrder((prev) => {
@@ -379,9 +810,8 @@ export default function DataTable<TData extends BaseRow>({
             if (oldIndex === -1 || newIndex === -1) return prev;
             return arrayMove(prev, oldIndex, newIndex);
         });
-    }
+    }, []);
 
-    /* -- facet option lists derived from current rows -- */
     const facetOptions = useMemo(() => {
         const map: Record<string, string[]> = {};
         facetFilters.forEach((f) => {
@@ -390,18 +820,21 @@ export default function DataTable<TData extends BaseRow>({
         return map;
     }, [rows, facetFilters]);
 
-    function toggleFacetValue(facetId: string, value: string) {
+    const toggleFacetValue = useCallback((facetId: string, value: string) => {
         setFacetState((prev) => {
             const next = new Set(prev[facetId] ?? []);
             next.has(value) ? next.delete(value) : next.add(value);
             return { ...prev, [facetId]: next };
         });
-    }
+    }, []);
 
-    const defaultSearch = (row: TData, q: string) =>
-        Object.values(row as Record<string, unknown>).some(
-            (v) => v !== null && v !== undefined && String(v).toLowerCase().includes(q)
-        );
+    const defaultSearch = useCallback(
+        (row: TData, q: string) =>
+            Object.values(row as Record<string, unknown>).some(
+                (v) => v !== null && v !== undefined && String(v).toLowerCase().includes(q)
+            ),
+        []
+    );
 
     const filteredData = useMemo(() => {
         const q = search.trim().toLowerCase();
@@ -413,7 +846,7 @@ export default function DataTable<TData extends BaseRow>({
             if (!q) return true;
             return (searchFn ?? defaultSearch)(r, q);
         });
-    }, [rows, search, facetFilters, facetState, searchFn]);
+    }, [rows, search, facetFilters, facetState, searchFn, defaultSearch]);
 
     const table = useReactTable({
         data: filteredData,
@@ -427,19 +860,11 @@ export default function DataTable<TData extends BaseRow>({
         meta: { selectedIds } as TableMeta,
     });
 
+    // Stable across selection-only re-renders: tanstack-table memoizes the
+    // row model on [data, sorting, columnOrder, ...] — none of which change
+    // when `selectedIds` changes — so this reference doesn't churn on
+    // arrow-key nav.
     const visibleRows = table.getRowModel().rows;
-
-    // Kept in refs (not deps) so the callbacks below never change identity
-    // just because selection, grouping, or the row list changed shape.
-    const visibleRowsRef = useRef<typeof visibleRows>(visibleRows);
-    useEffect(() => {
-        visibleRowsRef.current = visibleRows;
-    }, [visibleRows]);
-
-    const selectedIdsRef = useRef(selectedIds);
-    useEffect(() => {
-        selectedIdsRef.current = selectedIds;
-    }, [selectedIds]);
 
     useEffect(() => {
         if (!setSelectedRequest) return;
@@ -465,70 +890,6 @@ export default function DataTable<TData extends BaseRow>({
             return next.length === prev.length ? prev : next;
         });
     }, [rows]);
-
-    /* -- stable callbacks: read live data via refs instead of closing over
-     *    state, so identity never changes and TableRow's memo comparator
-     *    can actually short-circuit. -- */
-
-    const handleRowClick = useCallback((e: React.MouseEvent, id: number) => {
-        if (e.ctrlKey || e.metaKey) {
-            setSelectedIds((prev) => {
-                const next = new Set(prev);
-                if (next.has(id)) next.delete(id);
-                else next.add(id);
-                return next;
-            });
-            lastClickedId.current = id;
-            return;
-        }
-
-        if (e.shiftKey && lastClickedId.current !== null) {
-            const ids = visibleRowsRef.current.map((r) => r.original.id);
-            const from = ids.indexOf(lastClickedId.current);
-            const to = ids.indexOf(id);
-            if (from !== -1 && to !== -1) {
-                const [start, end] = from < to ? [from, to] : [to, from];
-                setSelectedIds(new Set(ids.slice(start, end + 1)));
-                return;
-            }
-        }
-
-        setSelectedIds(new Set([id]));
-        lastClickedId.current = id;
-    }, []);
-
-    const handleRowContextMenu = useCallback((rowId: number) => {
-        setSelectedIds((prev) => {
-            if (prev.has(rowId) && prev.size > 1) return prev;
-            return new Set([rowId]);
-        });
-        lastClickedId.current = rowId;
-    }, []);
-
-    const getActionIds = useCallback((rowId: number) => {
-        const sel = selectedIdsRef.current;
-        if (sel.has(rowId) && sel.size > 1) return Array.from(sel);
-        return [rowId];
-    }, []);
-
-    useEffect(() => {
-        function onKeyDown(e: KeyboardEvent) {
-            const currentRows = visibleRowsRef.current;
-            if (currentRows.length === 0) return;
-            if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
-            e.preventDefault();
-
-            const ids = currentRows.map((r) => r.original.id);
-            const current = lastClickedId.current !== null ? ids.indexOf(lastClickedId.current) : -1;
-            const nextIndex =
-                e.key === 'ArrowDown' ? Math.min(current + 1, ids.length - 1) : Math.max(current - 1, 0);
-            const nextId = ids[Math.max(nextIndex, 0)];
-            lastClickedId.current = nextId;
-            setSelectedIds(new Set([nextId]));
-        }
-        window.addEventListener('keydown', onKeyDown);
-        return () => window.removeEventListener('keydown', onKeyDown);
-    }, []);
 
     const createGroupAndAssign = useCallback((ids: number[]) => {
         groupCounter.current += 1;
@@ -564,135 +925,58 @@ export default function DataTable<TData extends BaseRow>({
         });
     }, []);
 
-    function clearFilters() {
+    const clearFilters = useCallback(() => {
         setSearch('');
         setFacetState({});
-    }
+    }, []);
+
+    const clearSearch = useCallback(() => setSearch(''), []);
 
     const hasActiveFilters = !!search || Object.values(facetState).some((s) => s.size > 0);
 
     return (
         <div className="mx-auto max-w-7xl bg-[#FAF7F2] p-2">
-            {/* Toolbar */}
-            <div className="mb-2 flex flex-wrap items-center gap-1.5">
-                <div className="flex items-center gap-1.5 rounded-md border border-[#E3DCCC] bg-white px-2 py-1">
-                    <Search className="h-3.5 w-3.5 text-[#9A9A90]" />
-                    <input
-                        value={search}
-                        onChange={(e) => setSearch(e.target.value)}
-                        placeholder={searchPlaceholder}
-                        className="w-56 border-none bg-transparent text-[12px] text-[#1B211E] outline-none placeholder:text-[#9A9A90]"
-                    />
-                    {search && (
-                        <button onClick={() => setSearch('')} className="text-[#C9C2B2] hover:text-[#5C6360]">
-                            <X className="h-3.5 w-3.5" />
-                        </button>
-                    )}
-                </div>
-
-                {facetFilters.map((f) => (
-                    <Dropdown
-                        key={f.id}
-                        label={f.label}
-                        icon={<SlidersHorizontal className="h-3.5 w-3.5 text-[#9A9A90]" />}
-                        badge={facetState[f.id]?.size}
-                    >
-                        {(facetOptions[f.id] ?? []).map((value) => (
-                            <DropdownCheckboxItem
-                                key={value}
-                                label={value}
-                                checked={facetState[f.id]?.has(value) ?? false}
-                                onToggle={() => toggleFacetValue(f.id, value)}
-                            />
-                        ))}
-                    </Dropdown>
-                ))}
-
-                <Dropdown label="Columns" icon={<SlidersHorizontal className="h-3.5 w-3.5 text-[#9A9A90]" />}>
-                    {table.getAllLeafColumns().map((col) => (
-                        <DropdownCheckboxItem
-                            key={col.id}
-                            label={String(col.columnDef.header)}
-                            checked={col.getIsVisible()}
-                            onToggle={col.getToggleVisibilityHandler() as unknown as () => void}
-                        />
-                    ))}
-                </Dropdown>
-
-                {hasActiveFilters && (
-                    <button
-                        onClick={clearFilters}
-                        className="flex items-center gap-1 rounded-md px-2 py-1 text-[12px] text-[#9A9A90] hover:text-[#5C6360]"
-                    >
-                        <RotateCcw className="h-3.5 w-3.5" />
-                        Reset
-                    </button>
-                )}
-
-                <div className="ml-auto text-[12px] text-[#9A9A90]">
-                    {filteredData.length} of {rows.length} rows
-                </div>
-            </div>
-
+            <TableToolbar
+                search={search}
+                onSearchChange={setSearch}
+                onClearSearch={clearSearch}
+                searchPlaceholder={searchPlaceholder}
+                facetFilters={facetFilters}
+                facetOptions={facetOptions}
+                facetState={facetState}
+                onToggleFacet={toggleFacetValue}
+                table={table}
+                columnVisibility={columnVisibility}
+                hasActiveFilters={hasActiveFilters}
+                onClearFilters={clearFilters}
+                filteredCount={filteredData.length}
+                totalCount={rows.length}
+            />
 
             <div className="overflow-hidden rounded-md border border-[#E3DCCC] bg-white">
-                <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleColumnDragEnd}>
-                    <div className="border-b border-[#E3DCCC] bg-[#FAF7F2]">
-                        {table.getHeaderGroups().map((hg) => (
-                            <div key={hg.id} className="flex items-center">
-                                {hg.headers.map((header) => (
-                                    <DraggableHeaderCell key={header.id} id={header.column.id} width={header.getSize()}>
-                                        <span
-                                            onClick={header.column.getToggleSortingHandler()}
-                                            className="flex flex-1 cursor-pointer select-none items-center justify-between gap-1"
-                                        >
-                                            <span className="text-[10.5px] font-semibold uppercase tracking-wide text-[#5C6360]">
-                                                {flexRender(header.column.columnDef.header, header.getContext())}
-                                            </span>
-                                            <span className="text-[#C9C2B2]">
-                                                {header.column.getIsSorted() === 'asc' && <ChevronUp className="h-3 w-3" />}
-                                                {header.column.getIsSorted() === 'desc' && <ChevronDown className="h-3 w-3" />}
-                                                {!header.column.getIsSorted() && <ChevronsUpDown className="h-3 w-3" />}
-                                            </span>
-                                        </span>
-                                    </DraggableHeaderCell>
-                                ))}
-                            </div>
-                        ))}
-                    </div>
-                </DndContext>
+                <TableHeaderRow
+                    table={table}
+                    columnOrder={columnOrder}
+                    sorting={sorting}
+                    sensors={sensors}
+                    onColumnDragEnd={handleColumnDragEnd}
+                />
 
-                <div className="divide-y divide-[#F0EDE6]">
-                    {visibleRows.map((row) => {
-                        const rowId = row.original.id;
-                        const groupId = row.original.group;
-                        const group = groups.find((g) => g.id === groupId);
-
-                        return (
-                            <TableRow
-                                key={row.id}
-                                row={row}
-                                selected={selectedIds.has(rowId)}
-                                group={group}
-                                groups={groups}
-                                onRowClick={handleRowClick}
-                                onContextMenu={handleRowContextMenu}
-                                onCreateGroup={createGroupAndAssign}
-                                onAssignToGroup={assignToGroup}
-                                onUngroup={ungroupIds}
-                                onRemove={removeIds}
-                                getActionIds={getActionIds}
-                            />
-                        );
-                    })}
-                </div>
-
-                {visibleRows.length === 0 && (
-                    <div className="py-12 text-center text-[#9A9A90]">
-                        <p className="text-[13px]">{rows.length === 0 ? emptyLabel : 'No rows match the current filters'}</p>
-                        {emptyHint && <p className="mt-1 text-[11px]">{rows.length === 0 ? emptyHint : 'Try clearing search or filters'}</p>}
-                    </div>
-                )}
+                <RowsViewport
+                    visibleRows={visibleRows}
+                    groups={groups}
+                    groupMap={groupMap}
+                    selectedIds={selectedIds}
+                    setSelectedIds={setSelectedIds}
+                    maxHeight={maxHeight}
+                    totalRowsCount={rows.length}
+                    emptyLabel={emptyLabel}
+                    emptyHint={emptyHint}
+                    onCreateGroup={createGroupAndAssign}
+                    onAssignToGroup={assignToGroup}
+                    onUngroup={ungroupIds}
+                    onRemove={removeIds}
+                />
             </div>
         </div>
     );
