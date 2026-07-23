@@ -12,6 +12,10 @@ use types::*;
 
 use types::replayer::*;
 
+use crate::fuzzer::combinatorial::execute_combinatorial_fuzzing;
+use crate::fuzzer::echo::execute_echo_fuzzing;
+use crate::fuzzer::rotator::*;
+use crate::fuzzer::zipped::execute_zipped_fuzzing;
 use crate::fuzzer::*;
 
 mod proxy;
@@ -25,24 +29,24 @@ use ares_utils::certs::check_cert_installed::check_cert_installed;
 
 // use std::collections::HashMap;
 
-#[tauri::command]
-async fn process_fuzzer_session(
-    session: FuzzerSession,
-    fuzzing_attack_type: FuzzingAttackType,
-    num_threads: usize,
-) -> Result<Vec<ReqRes>, String> {
-    let results = match fuzzing_attack_type {
-        FuzzingAttackType::Rotator => execute_rotator_fuzzing(&session, num_threads).await,
-        FuzzingAttackType::Echo => execute_echo_fuzzing(&session, num_threads).await,
-        FuzzingAttackType::Zipped => execute_zipped_fuzzing(&session, num_threads).await,
-        FuzzingAttackType::Combinatorial => {
-            execute_combinatorial_fuzzing(&session, num_threads).await
-        }
-    };
+// #[tauri::command]
+// async fn process_fuzzer_session(
+//     session: FuzzerSession,
+//     fuzzing_attack_type: FuzzingAttackType,
+//     num_threads: usize,
+// ) -> Result<Vec<ReqRes>, String> {
+//     let results = match fuzzing_attack_type {
+//         FuzzingAttackType::Rotator => execute_rotator_fuzzing(&session, num_threads).await,
+//         FuzzingAttackType::Echo => execute_echo_fuzzing(&session, num_threads).await,
+//         FuzzingAttackType::Zipped => execute_zipped_fuzzing(&session, num_threads).await,
+//         FuzzingAttackType::Combinatorial => {
+//             execute_combinatorial_fuzzing(&session, num_threads).await
+//         }
+//     };
 
-    // Return success
-    Ok(results)
-}
+//     // Return success
+//     Ok(results)
+// }
 
 #[tauri::command]
 async fn replay_request(url: String, request_tmp: String) -> Result<ReplayerResponse, String> {
@@ -146,7 +150,11 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            process_fuzzer_session,
+            // process_fuzzer_session,
+            execute_rotator_fuzzing,
+            execute_zipped_fuzzing,
+            execute_echo_fuzzing,
+            execute_combinatorial_fuzzing,
             replay_request,
             resolve_intercept,
             install_cert,

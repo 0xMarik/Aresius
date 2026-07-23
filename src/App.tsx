@@ -8,7 +8,7 @@ import {
 } from "@/components/ui/sidebar"
 
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
-import Fuzzer from "./pages/fuzzer";
+import Fuzzer from "./pages/fuzzer/fuzzer";
 import Tweaker from "./pages/replayer/replayer";
 import Projects from "./pages/projects.page";
 import HTTPHisotry from "./pages/http-history.page";
@@ -19,6 +19,19 @@ import { addToHttpHistory } from "./store/slices/http-historySlice";
 import Interceptor from "./pages/interceptor/Interceptor.page";
 import { addInterceptedRequest } from "./store/slices/interceptorSlice";
 import MenubarDemo from "./components/MenuBar";
+import { applyFuzzUpdates } from "./store/slices/fuzzerSlice";
+
+interface ReqRes {
+    request: string;
+    response: string;
+    responseTime: number;
+}
+
+// Externally-tagged: variant name is the object's single key
+export type FuzzUpdate =
+    | { Completed: { id: string; selectedSession: number, fuzzHistory: number, reqRes: ReqRes } }
+    | { Error: { id: string; selectedSession: number, fuzzHistory: number, message: string } };
+
 
 
 
@@ -57,7 +70,19 @@ export default function App() {
         return () => {
             unlistenPromise.then(unlisten => unlisten());
         };
-    }, [])
+    }, [dispatch])
+
+    useEffect(() => {
+        const unlisten = listen<FuzzUpdate[]>("fuzz-update-batch", (event) => {
+            const resultArr = event.payload;
+            console.warn("HERE FUZZ UPDATE !! : ", resultArr);
+            dispatch(applyFuzzUpdates({ updates: resultArr }))
+        });
+
+        return () => {
+            unlisten.then((f) => f());
+        };
+    }, []);
 
     return (
         <Router>
@@ -78,7 +103,7 @@ export default function App() {
                                 <Route path="/interceptor" element={<Interceptor />} />
                                 <Route path="/replayer" element={<Tweaker />} />
                                 <Route path="/http-history" element={<HTTPHisotry />} />
-                                <Route path="/fuzzer/*" element={<Fuzzer />} />
+                                <Route path="/fuzzer" element={<Fuzzer />} />
                                 <Route path="/projects" element={<Projects />} />
                             </Routes>
 

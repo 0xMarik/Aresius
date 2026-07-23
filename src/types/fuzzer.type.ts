@@ -4,6 +4,7 @@ interface FuzzerResponse {
 }
 
 export interface FuzzerRequest {
+    fuzzRequestId: string;
     rawRequest: string;
     response: FuzzerResponse | null;
     requestDate: string;

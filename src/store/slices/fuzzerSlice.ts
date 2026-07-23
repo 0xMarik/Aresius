@@ -1,4 +1,5 @@
-import { FuzzingHistory, FuzzerParameter, FuzzerSession, FuzzerState, HighlightRange, FuzzingAttackType } from '@/types/fuzzer.type';
+import { FuzzUpdate } from '@/App';
+import { FuzzingHistory, FuzzerParameter, FuzzerSession, FuzzerState, HighlightRange, FuzzingAttackType, FuzzerRequest } from '@/types/fuzzer.type';
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 
 const initialState : FuzzerState = {
@@ -76,10 +77,89 @@ const fuzzerSlice = createSlice({
       const session = state.fuzzerSessions[sessionIndex];
       if (session) {
         session.fuzzingHistory.push(history);
+        state.activeSessionIndex = sessionIndex;
+        state.fuzzerSessions[sessionIndex].selectedHistoryIndex = session.fuzzingHistory.length - 1; // selected the added history page
       }else {
         console.warn(`Session with ID ${sessionIndex} not found.`);
       }
     },
+
+applyFuzzUpdates: (
+  state,
+  action: PayloadAction<{ updates: FuzzUpdate[] }>
+) => {
+  const { updates } = action.payload;
+
+  // Cache requestById maps per (sessionIndex, historyIndex) so we don't
+  // rebuild them for every update in the batch.
+  const mapCache = new Map<string, Map<string, FuzzerRequest>>();
+
+  const getRequestMap = (sessionIndex: number, historyIndex: number) => {
+    const key = `${sessionIndex}:${historyIndex}`;
+    let cached = mapCache.get(key);
+    if (cached) return cached;
+
+    const session = state.fuzzerSessions[sessionIndex];
+    const history = session?.fuzzingHistory[historyIndex];
+    if (!history) {
+      console.error(`History entry not found at session ${sessionIndex}, index ${historyIndex}.`);
+      return null;
+    }
+
+    cached = new Map(history.requests.map((r) => [r.fuzzRequestId, r]));
+    mapCache.set(key, cached);
+    return cached;
+  };
+
+  const getHistory = (sessionIndex: number, historyIndex: number) =>
+    state.fuzzerSessions[sessionIndex]?.fuzzingHistory[historyIndex];
+
+  for (const update of updates) {
+    if ('Completed' in update) {
+      const { id, selectedSession, fuzzHistory, reqRes } = update.Completed;
+      const requestById = getRequestMap(selectedSession, fuzzHistory);
+      if (!requestById) continue;
+      const history = getHistory(selectedSession, fuzzHistory)!;
+
+      const existing = requestById.get(id);
+      if (existing) {
+        existing.status = 'completed';
+        existing.rawRequest = reqRes.request;
+        existing.response = { rawResponse: reqRes.response, responseTime: reqRes.responseTime };
+      } else {
+        const row: FuzzerRequest = {
+          fuzzRequestId: id,
+          rawRequest: reqRes.request,
+          response: { rawResponse: reqRes.response, responseTime: reqRes.responseTime },
+          requestDate: new Date().toISOString(),
+          status: 'completed',
+        };
+        history.requests.push(row);
+        requestById.set(id, row);
+      }
+    } else if ('Error' in update) {
+      const { id, selectedSession, fuzzHistory } = update.Error;
+      const requestById = getRequestMap(selectedSession, fuzzHistory);
+      if (!requestById) continue;
+      const history = getHistory(selectedSession, fuzzHistory)!;
+
+      const existing = requestById.get(id);
+      if (existing) {
+        existing.status = 'error';
+      } else {
+        const row: FuzzerRequest = {
+          fuzzRequestId: id,
+          rawRequest: '',
+          response: null,
+          requestDate: new Date().toISOString(),
+          status: 'error',
+        };
+        history.requests.push(row);
+        requestById.set(id, row);
+      }
+    }
+  }
+},
 
     setContent: (state, action: PayloadAction<{ rawRequest: string }>) => {
   if (state.activeSessionIndex !== null) {
@@ -234,6 +314,7 @@ setSelectedFuzz: (state, action: PayloadAction<{ sessionIndex: number | null, hi
 export const { 
   setActiveSession,
   // removeSession,
+  applyFuzzUpdates,
    addFuzzSession,
   addFuzzingHistory,
   activeFuzzSession,

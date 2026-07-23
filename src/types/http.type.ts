@@ -26,5 +26,5 @@ export interface HttpHistory {
     response: string;
     host: string;
     timestamp: number;
-    duration: number
+    duration: number;
 }

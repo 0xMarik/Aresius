@@ -309,25 +309,25 @@ function FuzzerHistoryBody({
 
     return (
         <div className="flex h-full flex-1 flex-col overflow-hidden">
-            <ReactSplit
+            {/* <ReactSplit
                 direction={SplitDirection.Vertical}
                 initialSizes={focusedResult ? [40, 45] : [100]}
                 minHeights={focusedResult ? [100, 100] : [100]}
                 gutterClassName="custom-gutter-vertical"
                 draggerClassName="custom-dragger-vertical"
-            >
-                <Table
-                    data={enrichedRows}
-                    columns={fuzzerColumns}
-                    facetFilters={fuzzerFacetFilters}
-                    searchFn={fuzzerSearchFn}
-                    searchPlaceholder="Search target URL, payload, status, code…"
-                    emptyLabel={isLoading ? 'Running fuzzer…' : 'No fuzzing results yet'}
-                    emptyHint={isLoading ? undefined : 'Run the fuzzer to see results here'}
-                    setSelectedRequest={setFocusedId}
-                />
+            > */}
+            <Table
+                data={enrichedRows}
+                columns={fuzzerColumns}
+                facetFilters={fuzzerFacetFilters}
+                searchFn={fuzzerSearchFn}
+                searchPlaceholder="Search target URL, payload, status, code…"
+                emptyLabel={isLoading ? 'Running fuzzer…' : 'No fuzzing results yet'}
+                emptyHint={isLoading ? undefined : 'Run the fuzzer to see results here'}
+                setSelectedRequest={setFocusedId}
+            />
 
-                {focusedResult && (
+            {/* {focusedResult && (
                     <ReactSplit
                         direction={SplitDirection.Horizontal}
                         initialSizes={[50, 50]}
@@ -335,7 +335,6 @@ function FuzzerHistoryBody({
                         gutterClassName="custom-gutter-horizontal"
                         draggerClassName="custom-dragger-horizontal"
                     >
-                        {/* Request Panel */}
                         <div className="flex h-full flex-col overflow-hidden rounded-lg border border-gray-800 bg-gray-900">
                             <div className="flex flex-shrink-0 items-center justify-between border-b border-gray-800 p-2">
                                 <h3 className="text-xs font-semibold text-white">Request</h3>
@@ -355,32 +354,32 @@ function FuzzerHistoryBody({
                             </div>
                         </div>
 
-                        {/* Response Panel */}
-                        <div className="flex h-full flex-col overflow-hidden rounded-lg border border-gray-800 bg-gray-900">
-                            <div className="flex flex-shrink-0 items-center justify-between border-b border-gray-800 p-2">
-                                <h3 className="text-xs font-semibold text-white">Response</h3>
-                                <div className="flex items-center gap-2">
-                                    {focusedResult.statusCode !== undefined && (
-                                        <span className={`font-mono text-xs font-semibold ${getStatusCodeColor(focusedResult.statusCode)}`}>
-                                            {focusedResult.statusCode}
-                                        </span>
-                                    )}
-                                    {focusedResult.response?.responseTime !== undefined && (
-                                        <span className="text-xs text-gray-500">{focusedResult.response.responseTime}ms</span>
-                                    )}
-                                    {focusedResult.contentLength > 0 && (
-                                        <span className="text-xs text-gray-500">{focusedResult.contentLength} bytes</span>
-                                    )}
-                                </div>
-                            </div>
-                            <div className="flex-1 overflow-hidden">
-                                <CodeMirrorEditor value={focusedResult.response?.rawResponse || 'No response available'} />
-                            </div>
-                        </div>
-                    </ReactSplit>
-                )}
-            </ReactSplit>
-        </div>
+            <div className="flex h-full flex-col overflow-hidden rounded-lg border border-gray-800 bg-gray-900">
+                <div className="flex flex-shrink-0 items-center justify-between border-b border-gray-800 p-2">
+                    <h3 className="text-xs font-semibold text-white">Response</h3>
+                    <div className="flex items-center gap-2">
+                        {focusedResult.statusCode !== undefined && (
+                            <span className={`font-mono text-xs font-semibold ${getStatusCodeColor(focusedResult.statusCode)}`}>
+                                {focusedResult.statusCode}
+                            </span>
+                        )}
+                        {focusedResult.response?.responseTime !== undefined && (
+                            <span className="text-xs text-gray-500">{focusedResult.response.responseTime}ms</span>
+                        )}
+                        {focusedResult.contentLength > 0 && (
+                            <span className="text-xs text-gray-500">{focusedResult.contentLength} bytes</span>
+                        )}
+                    </div>
+                </div>
+                <div className="flex-1 overflow-hidden">
+                    <CodeMirrorEditor value={focusedResult.response?.rawResponse || 'No response available'} />
+                </div>
+            </div>
+        </ReactSplit>
+    )
+}
+            </ReactSplit > */}
+        </div >
     );
 }
 

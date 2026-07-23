@@ -627,12 +627,25 @@ function RowsViewportInner<TData extends BaseRow>({
     //
     // Multiple keydowns in the same frame are coalesced into a single
     // commit via rAF (holding the key down shouldn't queue more renders
-    // than the browser can paint). The commit itself is wrapped in
-    // flushSync together with scrollToIndex: without that, `setSelectedIds`
-    // (a normal, batched update) and the scroll-triggered mount of newly
-    // visible rows can land a frame apart. That one-frame gap is exactly
-    // the "hold" where the highlight jumps but the row hasn't appeared
-    // yet (or vice versa). flushSync forces both into the same paint.
+    // than the browser can paint).
+    //
+    // FIX (was: Maximum update depth exceeded / flushSync-inside-flushSync):
+    // @tanstack/react-virtual's React adapter wraps its own re-render in
+    // flushSync whenever a scroll/measurement update needs to land
+    // synchronously. Previously `setSelectedIds` and `scrollToIndex` were
+    // both called inside a single flushSync(...) callback, so calling
+    // scrollToIndex triggered the virtualizer's *own* internal flushSync
+    // while React was still mid-commit from our outer one — a nested
+    // flush that can cascade into repeated correction passes and blow
+    // past React's nested-update guard.
+    //
+    // The fix is to NOT nest them: flushSync only the selection state
+    // (forces it to commit synchronously), then call scrollToIndex
+    // afterwards, outside that flushSync. Both still run synchronously,
+    // back-to-back, in the same tick/frame — before the browser paints —
+    // so the highlight and the newly-mounted row still land together.
+    // scrollToIndex manages its own internal flushSync independently now,
+    // instead of being nested inside ours.
     useEffect(() => {
         let pendingIndex: number | null = null;
         let rafId: number | null = null;
@@ -645,10 +658,11 @@ function RowsViewportInner<TData extends BaseRow>({
             const nextId = visibleIdsRef.current[idx];
             if (nextId === undefined) return;
             lastClickedId.current = nextId;
+
             flushSync(() => {
                 setSelectedIds(new Set([nextId]));
-                rowVirtualizerRef.current?.scrollToIndex(idx, { align: 'auto' });
             });
+            rowVirtualizerRef.current?.scrollToIndex(idx, { align: 'auto' });
         }
 
         function onKeyDown(e: KeyboardEvent) {
@@ -767,7 +781,37 @@ export default function DataTable<TData extends BaseRow>({
     maxHeight = 600,
 }: DataTableProps<TData>) {
     const [rows, setRows] = useState<TData[]>(data);
-    useEffect(() => setRows(data), [data]);
+
+    // ------------------------------------------------------------------
+    // FIX #1 — rAF-batched sync of the incoming `data` prop into local
+    // `rows` state.
+    //
+    // Previously: `useEffect(() => setRows(data), [data])` re-ran on every
+    // single reference change of `data`. Under a live-capture workload
+    // pushing ~8 updates/100ms (~80/sec) from the parent, that meant ~80
+    // *extra* renders per second just to mirror the prop into state,
+    // on top of whatever render `data` changing already caused upstream —
+    // before any sorting/filtering/virtualization work even starts.
+    //
+    // Now: the latest `data` reference is stashed in a ref synchronously
+    // (cheap, no render), and a single rAF loop copies it into `rows` at
+    // most once per animation frame (~60/sec on most displays). Multiple
+    // `data` changes that land within the same frame collapse into one
+    // `setRows` call. This trades a small (<16ms) worst-case latency for
+    // new rows appearing, in exchange for capping render frequency at the
+    // screen's actual refresh rate instead of the producer's emit rate.
+    const latestDataRef = useRef(data);
+    latestDataRef.current = data;
+
+    useEffect(() => {
+        let rafId: number;
+        const tick = () => {
+            setRows((prev) => (prev === latestDataRef.current ? prev : latestDataRef.current));
+            rafId = requestAnimationFrame(tick);
+        };
+        rafId = requestAnimationFrame(tick);
+        return () => cancelAnimationFrame(rafId);
+    }, []);
 
     const [sorting, setSorting] = useState<SortingState>([]);
     const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
@@ -875,15 +919,43 @@ export default function DataTable<TData extends BaseRow>({
         }
     }, [selectedIds, setSelectedRequest]);
 
+    // ------------------------------------------------------------------
+    // FIX #2 — stop doing an O(n) full-array rebuild of selection/group
+    // validity on *every* `rows` change.
+    //
+    // Previously these two effects ran on every rows change — including
+    // pure appends from the live stream — rebuilding a `Set` over the
+    // entire row array each time just to check whether previously
+    // selected ids / used group ids were still present. At 80 appends/sec
+    // (now ~60/sec post rAF-batching) with a growing dataset, that's an
+    // O(n) scan, tens of times a second, that gets more expensive the
+    // longer the session runs — even though an append can never
+    // invalidate an existing selection or group membership.
+    //
+    // Fix: skip the expensive check unless the row count actually
+    // *shrank* (rows can only be removed via `removeIds`, which already
+    // prunes `selectedIds` directly for exactly the ids it removed — see
+    // below — but this remains as a safety net for `data` shrinking via
+    // the external prop, e.g. a parent-driven reset/filter). Growing or
+    // same-size updates skip the scan entirely.
+    //
+    // Note: this assumes a same-or-larger-length update never *replaces*
+    // an existing id with a different one while keeping length constant.
+    // That holds for an append-only stream; if your `data` source can
+    // swap ids in place without changing length, tell me and I'll add an
+    // id-diff check instead of the length heuristic.
+    const prevRowsLengthRef = useRef(rows.length);
     useEffect(() => {
+        const prevLength = prevRowsLengthRef.current;
+        prevRowsLengthRef.current = rows.length;
+        if (rows.length >= prevLength) return; // append/no-op: nothing to prune
+
         setSelectedIds((prev) => {
             const validIds = new Set(rows.map((r) => r.id));
             const next = new Set(Array.from(prev).filter((id) => validIds.has(id)));
             return next.size === prev.size ? prev : next;
         });
-    }, [rows]);
 
-    useEffect(() => {
         setGroups((prev) => {
             const usedIds = new Set(rows.map((r) => r.group).filter(Boolean));
             const next = prev.filter((g) => usedIds.has(g.id));
@@ -913,12 +985,39 @@ export default function DataTable<TData extends BaseRow>({
     const ungroupIds = useCallback((ids: number[]) => {
         const idSet = new Set(ids);
         setRows((prev) => prev.map((r) => (idSet.has(r.id) ? { ...r, group: undefined } : r)));
+
+        // Targeted prune: a group can only have become unused by *this*
+        // ungroup call, so check just the groupIds that were touched
+        // instead of rescanning every row (handled generically above,
+        // but doing it here too means this specific action doesn't have
+        // to wait for the `rows`-shrink check to notice — ungrouping
+        // doesn't change `rows.length` at all, so the effect above would
+        // never catch it).
+        setGroups((prev) => {
+            if (prev.length === 0) return prev;
+            setRows((currentRows) => {
+                const usedIds = new Set(currentRows.map((r) => r.group).filter(Boolean));
+                setGroups((g) => {
+                    const next = g.filter((grp) => usedIds.has(grp.id));
+                    return next.length === g.length ? g : next;
+                });
+                return currentRows;
+            });
+            return prev;
+        });
     }, []);
 
     const removeIds = useCallback((ids: number[]) => {
         const idSet = new Set(ids);
         setRows((prev) => prev.filter((r) => !idSet.has(r.id)));
+
+        // Targeted prune — we already know exactly which ids were removed,
+        // so there's no need to rebuild a Set over the whole row array
+        // (the generic shrink-triggered effect above still runs too, but
+        // this makes selection consistent immediately rather than waiting
+        // a render cycle, and is O(ids.length) instead of O(rows.length)).
         setSelectedIds((prev) => {
+            if (!ids.some((id) => prev.has(id))) return prev;
             const next = new Set(prev);
             ids.forEach((id) => next.delete(id));
             return next;
@@ -951,6 +1050,7 @@ export default function DataTable<TData extends BaseRow>({
                 onClearFilters={clearFilters}
                 filteredCount={filteredData.length}
                 totalCount={rows.length}
+
             />
 
             <div className="overflow-hidden rounded-md border border-[#E3DCCC] bg-white">

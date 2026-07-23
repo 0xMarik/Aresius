@@ -21,6 +21,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { parseRequest } from '@/components/utils';
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 
 
 // type TaskResult = {
@@ -217,165 +218,150 @@ function Replayer() {
 
 
     return (
-        <ReactSplit
-            direction={SplitDirection.Horizontal}
-            initialSizes={[20, 80]} // 👈 Initial widths: 40% left, 60% right
-            // minSizes={[20, 20]} // 👈 Optional: Prevent collapsing below 20%
-            gutterClassName="custom-gutter-horizontal"
-            draggerClassName="custom-dragger-horizontal"
-            classes={["py-1", "py-1"]}
-        >
-            <div className='h-full'>
-                <ButtonGroup>
-                    <Button className='mb-2 w-full' onClick={() => dispatch(addSessionToCollection({ collectionIndex: Number((selectedIds[0] ?? "0-0").split('-')[0]) }))}><Plus /> New Session</Button>
-                    <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                            <Button variant="default" className="pl-2!">
-                                <ChevronDownIcon />
-                            </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="w-44">
-                            <DropdownMenuItem onSelect={() => dispatch(addCollection())}>
-                                <Plus />
-                                New Collection
-                            </DropdownMenuItem>
-                        </DropdownMenuContent>
-                    </DropdownMenu>
-                </ButtonGroup>
-                <div className="bg-muted/50 rounded-lg p-1 w-full h-full ">
-                    <Input value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                        placeholder="Search..."
-                    />
-                    <RsTree
-                        className='!h-full bg-transparent'
-                        data={data}
-                        selectedIds={selectedIds}
-                        onSelect={handleSelection}
-                        searchTerm={searchTerm}
-                        showIcons={true}
-                        virtualizeEnabled={true}
-
-                    // multiSelect={true}
-                    // checkable={true}
-                    />
-                </div>
-            </div>
-            <div className='h-full flex flex-col gap-1'>
-                <div className=' flex  items-center h-10 bg-muted/50 aspect-video rounded-lg p-1 gap-5'>
-                    <Input placeholder='Enter URL to replay...' className='w-64 bg-transparent border-0 focus:ring-0'
-                        value={url}
-                        onChange={(event) => dispatch(setReaplayerURL({ url: event.target.value }))}
-                    />
-                    <Button
-                        onClick={triggerRequest}
-                        // disabled={isLoading}
-                        className="p-4  text-white rounded disabled:bg-gray-400"
-                    >
-                        RUN
-                    </Button>
-                    {/* <Select
-                        value={selectedHistoryIndex?.toString() || ""}
-                        onValueChange={handleSelectedHisotry}
-                        disabled={history.length === 0}>
-                        <SelectTrigger className="w-[280px]">
-                            <SelectValue placeholder="Select Session" />
-                        </SelectTrigger>
-                        <SelectContent >
-                            {
-                                history.map((item, index) => (
-                                    <SelectItem key={index} value={index.toString()}>
-                                        {item.requestRaw.slice(0, 30).replace(/\r?\n|\r/g, ' ')}...
-                                    </SelectItem>
-                                ))
-                            }
-                        </SelectContent>
-                    </Select> */}
+        <ResizablePanelGroup direction='horizontal' autoSaveId="aresius-repeater-layout" >
+            <ResizablePanel defaultSize={30} minSize={15}>
+                <div className='h-full'>
                     <ButtonGroup>
+                        <Button className='mb-2 w-full' onClick={() => dispatch(addSessionToCollection({ collectionIndex: Number((selectedIds[0] ?? "0-0").split('-')[0]) }))}><Plus /> New Session</Button>
+                        <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                                <Button variant="default" className="pl-2!">
+                                    <ChevronDownIcon />
+                                </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" className="w-44">
+                                <DropdownMenuItem onSelect={() => dispatch(addCollection())}>
+                                    <Plus />
+                                    New Collection
+                                </DropdownMenuItem>
+                            </DropdownMenuContent>
+                        </DropdownMenu>
+                    </ButtonGroup>
+                    <div className="bg-muted/50 rounded-lg p-1 w-full h-full ">
+                        <Input value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                            placeholder="Search..."
+                        />
+                        <RsTree
+                            className='!h-full bg-transparent'
+                            data={data}
+                            selectedIds={selectedIds}
+                            onSelect={handleSelection}
+                            searchTerm={searchTerm}
+                            showIcons={true}
+                            virtualizeEnabled={true}
+
+                        // multiSelect={true}
+                        // checkable={true}
+                        />
+                    </div>
+                </div>
+            </ResizablePanel>
+            <ResizableHandle />
+            <ResizablePanel defaultSize={70} minSize={20}>
+                <div className='h-full flex flex-col gap-1'>
+                    <div className=' flex  items-center h-10 bg-muted/50 aspect-video rounded-lg p-1 gap-5'>
+                        <Input placeholder='Enter URL to replay...' className='w-64 bg-transparent border-0 focus:ring-0'
+                            value={url}
+                            onChange={(event) => dispatch(setReaplayerURL({ url: event.target.value }))}
+                        />
                         <Button
-                            disabled={selectedHistoryIndex === null || history.length - 1 === selectedHistoryIndex}
-                            variant="outline"
-                            className="pl-2!"
-                            onClick={goOlder}
+                            onClick={triggerRequest}
+                            // disabled={isLoading}
+                            className="p-4  text-white rounded disabled:bg-gray-400"
                         >
-                            <ChevronLeft />
+                            RUN
                         </Button>
 
-                        <Popover>
-                            <PopoverTrigger asChild>
-                                <Button variant="outline">
-                                    History <ChevronDown />
-                                </Button>
-                            </PopoverTrigger>
-                            <PopoverContent className="w-[520px] p-0" align="start">
-                                <div className="max-h-80 overflow-auto">
-                                    <Table>
-                                        <TableHeader className="sticky top-0 bg-muted">
-                                            <TableRow>
-                                                <TableHead>Method</TableHead>
-                                                <TableHead>Host</TableHead>
-                                                <TableHead>Path</TableHead>
-                                                <TableHead>Time</TableHead>
-                                            </TableRow>
-                                        </TableHeader>
-                                        <TableBody>
-                                            {history.length === 0 && (
+                        <ButtonGroup>
+                            <Button
+                                disabled={selectedHistoryIndex === null || history.length - 1 === selectedHistoryIndex}
+                                variant="outline"
+                                className="pl-2!"
+                                onClick={goOlder}
+                            >
+                                <ChevronLeft />
+                            </Button>
+
+                            <Popover>
+                                <PopoverTrigger asChild>
+                                    <Button variant="outline">
+                                        History <ChevronDown />
+                                    </Button>
+                                </PopoverTrigger>
+                                <PopoverContent className="w-[520px] p-0" align="start">
+                                    <div className="max-h-80 overflow-auto">
+                                        <Table>
+                                            <TableHeader className="sticky top-0 bg-muted">
                                                 <TableRow>
-                                                    <TableCell colSpan={4} className="text-center text-muted-foreground">
-                                                        No requests yet
-                                                    </TableCell>
+                                                    <TableHead>Method</TableHead>
+                                                    <TableHead>Host</TableHead>
+                                                    <TableHead>Path</TableHead>
+                                                    <TableHead>Time</TableHead>
                                                 </TableRow>
-                                            )}
-                                            {history.map((item, index) => {
-                                                const req = parseRequest(item.requestRaw)
-                                                return (
-                                                    <TableRow
-                                                        key={index}
-                                                        onClick={() => handleSelectedHisotry(index.toString())}
-                                                        className={`cursor-pointer ${selectedHistoryIndex === index ? 'bg-muted' : ''
-                                                            }`}
-                                                    >
-                                                        <TableCell className="font-mono">{req.method}</TableCell>
-                                                        <TableCell>{"item.host"}</TableCell>
-                                                        <TableCell className="truncate max-w-[160px]">{req.path}</TableCell>
-                                                        <TableCell className="whitespace-nowrap">
-                                                            {new Date(item.requestTime).toLocaleTimeString()}
+                                            </TableHeader>
+                                            <TableBody>
+                                                {history.length === 0 && (
+                                                    <TableRow>
+                                                        <TableCell colSpan={4} className="text-center text-muted-foreground">
+                                                            No requests yet
                                                         </TableCell>
                                                     </TableRow>
-                                                )
-                                            })}
-                                        </TableBody>
-                                    </Table>
-                                </div>
-                            </PopoverContent>
-                        </Popover>
+                                                )}
+                                                {history.map((item, index) => {
+                                                    const req = parseRequest(item.requestRaw)
+                                                    return (
+                                                        <TableRow
+                                                            key={index}
+                                                            onClick={() => handleSelectedHisotry(index.toString())}
+                                                            className={`cursor-pointer ${selectedHistoryIndex === index ? 'bg-muted' : ''
+                                                                }`}
+                                                        >
+                                                            <TableCell className="font-mono">{req.method}</TableCell>
+                                                            <TableCell>{"item.host"}</TableCell>
+                                                            <TableCell className="truncate max-w-[160px]">{req.path}</TableCell>
+                                                            <TableCell className="whitespace-nowrap">
+                                                                {new Date(item.requestTime).toLocaleTimeString()}
+                                                            </TableCell>
+                                                        </TableRow>
+                                                    )
+                                                })}
+                                            </TableBody>
+                                        </Table>
+                                    </div>
+                                </PopoverContent>
+                            </Popover>
 
-                        <Button
+                            <Button
 
-                            disabled={selectedHistoryIndex === null || selectedHistoryIndex === 0}
-                            variant="outline"
-                            className="pl-2!"
-                            onClick={goNewer}
-                        >
-                            <ChevronRight />
-                        </Button>
-                    </ButtonGroup>
+                                disabled={selectedHistoryIndex === null || selectedHistoryIndex === 0}
+                                variant="outline"
+                                className="pl-2!"
+                                onClick={goNewer}
+                            >
+                                <ChevronRight />
+                            </Button>
+                        </ButtonGroup>
+                    </div>
+                    <ResizablePanelGroup direction='horizontal' autoSaveId="repeater-req-res">
+                        <ResizablePanel >
+                            <div className="bg-muted/50 min-w-0 rounded-lg p-1 w-full h-full">
+                                <RequestCodeEditor />
+                            </div>
+                        </ResizablePanel>
+                        <ResizableHandle />
+                        <ResizablePanel>
+                            <div className="bg-muted/50 min-w-0 rounded-lg p-1 w-full h-full">
+                                {responseLoading ? "Response is loading..." : <ResponseCodeEditor />}
+                            </div>
+                        </ResizablePanel>
+                    </ResizablePanelGroup>
                 </div>
-                <ReactSplit
-                    gutterClassName="custom-gutter-horizontal"
-                    draggerClassName="custom-dragger-horizontal"
-                    direction={SplitDirection.Horizontal}>
-                    <div className="bg-muted/50 min-w-0 rounded-lg p-1 w-full h-full">
-                        <RequestCodeEditor />
-                    </div>
-                    <div className="bg-muted/50 min-w-0 rounded-lg p-1 w-full h-full">
-                        {responseLoading ? "Response is loading..." : <ResponseCodeEditor />}
+            </ResizablePanel>
+        </ResizablePanelGroup>
 
-                    </div>
-                </ReactSplit>
-            </div>
 
-        </ReactSplit >
+
     )
 }
 
