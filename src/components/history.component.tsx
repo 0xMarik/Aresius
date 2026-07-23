@@ -7,6 +7,7 @@ import Table, { isRowSelected, FacetFilter, BaseRow } from '@/components/Table';
 import { FuzzerRequest, FuzzerParameter, FuzzConfig } from '@/types/fuzzer.type';
 import { useMemo, useState } from 'react';
 import { parseRequest, parseResponse } from './utils';
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from './ui/resizable';
 
 /**
  * Each row corresponds to a single FuzzerRequest (one fuzzed HTTP call),
@@ -316,69 +317,76 @@ function FuzzerHistoryBody({
                 gutterClassName="custom-gutter-vertical"
                 draggerClassName="custom-dragger-vertical"
             > */}
-            <Table
-                data={enrichedRows}
-                columns={fuzzerColumns}
-                facetFilters={fuzzerFacetFilters}
-                searchFn={fuzzerSearchFn}
-                searchPlaceholder="Search target URL, payload, status, code…"
-                emptyLabel={isLoading ? 'Running fuzzer…' : 'No fuzzing results yet'}
-                emptyHint={isLoading ? undefined : 'Run the fuzzer to see results here'}
-                setSelectedRequest={setFocusedId}
-            />
+            <ResizablePanelGroup direction='vertical' autoSaveId="fuzzing-history-table" >
+                <ResizablePanel defaultSize={30} minSize={15}>
+                    <Table
+                        data={enrichedRows}
+                        columns={fuzzerColumns}
+                        facetFilters={fuzzerFacetFilters}
+                        searchFn={fuzzerSearchFn}
+                        searchPlaceholder="Search target URL, payload, status, code…"
+                        emptyLabel={isLoading ? 'Running fuzzer…' : 'No fuzzing results yet'}
+                        emptyHint={isLoading ? undefined : 'Run the fuzzer to see results here'}
+                        setSelectedRequest={setFocusedId}
+                    />
+                </ResizablePanel>
+                <ResizableHandle />
+                <ResizablePanel defaultSize={70} minSize={15}>
+                    <div className='h-full'>
 
-            {/* {focusedResult && (
-                    <ReactSplit
-                        direction={SplitDirection.Horizontal}
-                        initialSizes={[50, 50]}
-                        minWidths={[200, 200]}
-                        gutterClassName="custom-gutter-horizontal"
-                        draggerClassName="custom-dragger-horizontal"
-                    >
-                        <div className="flex h-full flex-col overflow-hidden rounded-lg border border-gray-800 bg-gray-900">
-                            <div className="flex flex-shrink-0 items-center justify-between border-b border-gray-800 p-2">
-                                <h3 className="text-xs font-semibold text-white">Request</h3>
-                                <div className="flex items-center gap-2">
-                                    <span className="font-mono text-xs text-gray-500">{focusedResult.parsedRequest.method}</span>
-                                    {focusedResult.payloadValues.length > 0 && (
-                                        <span className="rounded bg-gray-800 px-1.5 py-0.5 font-mono text-[11px] text-gray-300">
-                                            {focusedResult.payloadValues.length === 1
-                                                ? focusedResult.payloadValues[0].value
-                                                : focusedResult.payloadValues.map((p) => p.value).join(', ')}
-                                        </span>
-                                    )}
-                                </div>
-                            </div>
-                            <div className="flex-1 overflow-hidden">
-                                <CodeMirrorEditor value={focusedResult.rawRequest} />
-                            </div>
-                        </div>
+                        {focusedResult && (
+                            <ResizablePanelGroup direction='horizontal' autoSaveId="fuzzing-history-req-res" >
+                                <ResizablePanel defaultSize={50} minSize={15}>
+                                    <div className="flex h-full flex-col overflow-hidden rounded-lg border border-gray-800 bg-gray-900">
+                                        <div className="flex flex-shrink-0 items-center justify-between border-b border-gray-800 p-2">
+                                            <h3 className="text-xs font-semibold text-white">Request</h3>
+                                            <div className="flex items-center gap-2">
+                                                <span className="font-mono text-xs text-gray-500">{focusedResult.parsedRequest.method}</span>
+                                                {focusedResult.payloadValues.length > 0 && (
+                                                    <span className="rounded bg-gray-800 px-1.5 py-0.5 font-mono text-[11px] text-gray-300">
+                                                        {focusedResult.payloadValues.length === 1
+                                                            ? focusedResult.payloadValues[0].value
+                                                            : focusedResult.payloadValues.map((p) => p.value).join(', ')}
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </div>
+                                        <div className="flex-1 overflow-hidden">
+                                            <CodeMirrorEditor value={focusedResult.rawRequest} />
+                                        </div>
+                                    </div>
+                                </ResizablePanel>
+                                <ResizableHandle />
+                                <ResizablePanel defaultSize={50} minSize={15}>
+                                    <div className="flex h-full flex-col overflow-hidden rounded-lg border border-gray-800 bg-gray-900">
+                                        <div className="flex flex-shrink-0 items-center justify-between border-b border-gray-800 p-2">
+                                            <h3 className="text-xs font-semibold text-white">Response</h3>
+                                            <div className="flex items-center gap-2">
+                                                {focusedResult.statusCode !== undefined && (
+                                                    <span className={`font-mono text-xs font-semibold ${getStatusCodeColor(focusedResult.statusCode)}`}>
+                                                        {focusedResult.statusCode}
+                                                    </span>
+                                                )}
+                                                {focusedResult.response?.responseTime !== undefined && (
+                                                    <span className="text-xs text-gray-500">{focusedResult.response.responseTime}ms</span>
+                                                )}
+                                                {focusedResult.contentLength > 0 && (
+                                                    <span className="text-xs text-gray-500">{focusedResult.contentLength} bytes</span>
+                                                )}
+                                            </div>
+                                        </div>
+                                        <div className="flex-1 overflow-hidden">
+                                            <CodeMirrorEditor value={focusedResult.response?.rawResponse || 'No response available'} />
+                                        </div>
+                                    </div>
+                                </ResizablePanel>
+                            </ResizablePanelGroup>
+                        )
+                        }
 
-            <div className="flex h-full flex-col overflow-hidden rounded-lg border border-gray-800 bg-gray-900">
-                <div className="flex flex-shrink-0 items-center justify-between border-b border-gray-800 p-2">
-                    <h3 className="text-xs font-semibold text-white">Response</h3>
-                    <div className="flex items-center gap-2">
-                        {focusedResult.statusCode !== undefined && (
-                            <span className={`font-mono text-xs font-semibold ${getStatusCodeColor(focusedResult.statusCode)}`}>
-                                {focusedResult.statusCode}
-                            </span>
-                        )}
-                        {focusedResult.response?.responseTime !== undefined && (
-                            <span className="text-xs text-gray-500">{focusedResult.response.responseTime}ms</span>
-                        )}
-                        {focusedResult.contentLength > 0 && (
-                            <span className="text-xs text-gray-500">{focusedResult.contentLength} bytes</span>
-                        )}
                     </div>
-                </div>
-                <div className="flex-1 overflow-hidden">
-                    <CodeMirrorEditor value={focusedResult.response?.rawResponse || 'No response available'} />
-                </div>
-            </div>
-        </ReactSplit>
-    )
-}
-            </ReactSplit > */}
+                </ResizablePanel>
+            </ResizablePanelGroup>
         </div >
     );
 }

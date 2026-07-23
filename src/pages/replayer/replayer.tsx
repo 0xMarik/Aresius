@@ -1,4 +1,3 @@
-import ReactSplit, { SplitDirection } from '@devbookhq/splitter'
 import { basicSetup, EditorView } from "codemirror";
 import './replayer.style.css'
 import { EditorState, } from '@codemirror/state';

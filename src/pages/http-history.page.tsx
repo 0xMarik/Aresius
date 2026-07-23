@@ -1,7 +1,6 @@
 import { CodeMirrorEditor } from '@/components/result-table.components';
 import Table from '@/components/Table';
 import { useAppSelector } from '@/hooks/redux';
-import ReactSplit, { SplitDirection } from '@devbookhq/splitter';
 import { ColumnDef, createColumnHelper } from '@tanstack/react-table';
 import { useState } from 'react';
 
