@@ -124,11 +124,11 @@ async fn process_fuzzer_session(
 
             for target in chunk {
                 match conn.send_request(&target.request).await {
-                    Ok((response, response_time)) => {
+                    Ok(response) => {
                         let req_res = ReqRes {
                             request: target.request.clone(),
-                            response: response.clone(),
-                            response_time: response_time.as_millis(),
+                            response: response.as_text_lossy(),
+                            response_time: response.elapsed.as_millis(),
                         };
                         let _ = tx.send(FuzzUpdate::Completed(FuzzUpdateCompleted {
                             id: target.id.clone(),
@@ -147,7 +147,6 @@ async fn process_fuzzer_session(
                         }));
                     }
                 }
-
                 if delay > 0 {
                     sleep(Duration::from_millis(delay)).await;
                 }

@@ -157,17 +157,17 @@ async fn process_combinatorial_fuzzer_session(
 
             for target in chunk {
                 match conn.send_request(&target.request).await {
-                    Ok((response, response_time)) => {
+                    Ok(response) => {
                         let req_res = ReqRes {
                             request: target.request.clone(),
-                            response: response.clone(),
-                            response_time: response_time.as_millis(),
+                            response: response.as_text_lossy(),
+                            response_time: response.elapsed.as_millis(),
                         };
                         let _ = tx.send(FuzzUpdate::Completed(FuzzUpdateCompleted {
                             id: target.id.clone(),
                             req_res: req_res.clone(),
-                            selected_session,
-                            fuzz_history,
+                            selected_session: selected_session,
+                            fuzz_history: fuzz_history,
                         }));
                         results.lock().await.push(req_res);
                     }
@@ -175,12 +175,11 @@ async fn process_combinatorial_fuzzer_session(
                         let _ = tx.send(FuzzUpdate::Error(FuzzUpdateError {
                             id: target.id.clone(),
                             message: e.to_string(),
-                            selected_session,
-                            fuzz_history,
+                            selected_session: selected_session,
+                            fuzz_history: fuzz_history,
                         }));
                     }
                 }
-
                 if delay > 0 {
                     sleep(Duration::from_millis(delay)).await;
                 }

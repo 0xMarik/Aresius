@@ -1,14 +1,15 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 mod ares_utils;
 mod http_request;
-
+use tokio::time::timeout;
 mod fuzzer;
 // src-tauri/src/main.rs
 mod types;
 
+use std::time::Duration;
+
 use tauri::Manager;
 // use tauri::http::response;
-use types::*;
 
 use types::replayer::*;
 
@@ -16,7 +17,6 @@ use crate::fuzzer::combinatorial::execute_combinatorial_fuzzing;
 use crate::fuzzer::echo::execute_echo_fuzzing;
 use crate::fuzzer::rotator::*;
 use crate::fuzzer::zipped::execute_zipped_fuzzing;
-use crate::fuzzer::*;
 
 mod proxy;
 use crate::http_request::HttpConnection;
@@ -27,81 +27,34 @@ use tracing;
 use ares_utils::certs::certification_installation::install_cert;
 use ares_utils::certs::check_cert_installed::check_cert_installed;
 
-// use std::collections::HashMap;
-
-// #[tauri::command]
-// async fn process_fuzzer_session(
-//     session: FuzzerSession,
-//     fuzzing_attack_type: FuzzingAttackType,
-//     num_threads: usize,
-// ) -> Result<Vec<ReqRes>, String> {
-//     let results = match fuzzing_attack_type {
-//         FuzzingAttackType::Rotator => execute_rotator_fuzzing(&session, num_threads).await,
-//         FuzzingAttackType::Echo => execute_echo_fuzzing(&session, num_threads).await,
-//         FuzzingAttackType::Zipped => execute_zipped_fuzzing(&session, num_threads).await,
-//         FuzzingAttackType::Combinatorial => {
-//             execute_combinatorial_fuzzing(&session, num_threads).await
-//         }
-//     };
-
-//     // Return success
-//     Ok(results)
-// }
-
 #[tauri::command]
 async fn replay_request(url: String, request_tmp: String) -> Result<ReplayerResponse, String> {
-    let url = url.clone();
-    let req = request_tmp.clone();
+    let req = request_tmp;
 
     let mut conn = HttpConnection::new(&url)
         .await
         .map_err(|e| format!("Connection failed: {e}"))?;
 
-    let (response, response_time) = conn
-        .send_request(&req)
-        .await
-        .map_err(|e| format!("Request failed: {e}"))?;
+    let result = conn.send_request(&req).await;
 
-    conn.close()
-        .await
-        .map_err(|e| format!("Request failed to close: {e}"))?;
+    // Always attempt a clean shutdown, whether or not the request
+    // succeeded. A target that's slow or hostile shouldn't be able to make
+    // this hang forever, so bound it with a short timeout; either way we
+    // don't let a close failure override a response we already have.
+    match timeout(Duration::from_secs(5), conn.close()).await {
+        Ok(Err(e)) => eprintln!("warning: failed to cleanly close connection to {url}: {e}"),
+        Err(_) => eprintln!("warning: close on {url} timed out after 5s"),
+        Ok(Ok(())) => {}
+    }
+
+    let response = result.map_err(|e| format!("Request failed: {e}"))?;
 
     Ok(ReplayerResponse {
-        response_raw: response,
-        response_time: response_time.as_millis(),
+        response_raw: response.as_text_lossy(),
+        response_time: response.elapsed.as_millis(),
         request_raw: req,
     })
 }
-
-// async fn replay_request(request: ReaplayerRequest) -> ReplayerResponse {
-//     let url = request.url.clone();
-//     let request = request.request_tmp.clone();
-//     let mut replayer_response;
-
-//     let handler = tokio::spawn(async move {
-//         let mut conn = match HttpConnection::new(&url).await {
-//             Ok(conn) => conn,
-//             Err(e) => {
-//                 eprintln!("Connection failed: {}", e);
-//                 return;
-//             }
-//         };
-
-//         match conn.send_request(&request).await {
-//             Ok((response, response_time)) => {
-//                 replayer_response = ReplayerResponse {
-//                     response_raw: response.clone(),
-//                     response_time: response_time.as_millis(),
-//                     request_raw: request.clone(),
-//                 };
-//                 // response = req_res;
-//             }
-//             Err(e) => eprintln!("Request failed: {}", e),
-//         }
-//     });
-
-//     return replayer_response;
-// }
 
 async fn close_splashscreen(app: tauri::AppHandle) {
     if let Some(splash) = app.get_webview_window("splashscreen") {

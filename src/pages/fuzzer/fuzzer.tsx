@@ -12,15 +12,7 @@ const Fuzzer: React.FC = () => {
 
     return (
         <div className="py-1 pr-1 h-screen">
-
-            {/* <ReactSplit
-                direction={SplitDirection.Horizontal}
-                gutterClassName="custom-gutter-horizontal"
-                draggerClassName="custom-dragger-horizontal"
-                initialSizes={[20, 80]}
-            > */}
             <ResizablePanelGroup direction='horizontal' autoSaveId="fuzzing-layout" >
-
                 <ResizablePanel defaultSize={20} minSize={15}>
                     <FuzzSession />
                 </ResizablePanel>
