@@ -84,16 +84,3 @@ pub struct ReqRes {
     pub response: String,
     pub response_time: u128,
 }
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum FuzzingAttackType {
-    /// Single payload set, iterates through one position at a time
-    Rotator,
-    /// Single payload set, same value in all positions
-    Echo,
-    /// Multiple payload sets, parallel iteration
-    Zipped,
-    /// Multiple payload sets, all combinations
-    Combinatorial,
-}

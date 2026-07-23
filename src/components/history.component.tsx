@@ -1,7 +1,5 @@
 import { useAppSelector } from '@/hooks/redux';
 import { CodeMirrorEditor } from './result-table.components';
-import ReactSplit, { SplitDirection } from '@devbookhq/splitter';
-
 import { createColumnHelper, ColumnDef } from '@tanstack/react-table';
 import Table, { isRowSelected, FacetFilter, BaseRow } from '@/components/Table';
 import { FuzzerRequest, FuzzerParameter, FuzzConfig } from '@/types/fuzzer.type';
