@@ -77,6 +77,36 @@ export function isRowSelected<TData extends BaseRow>(info: {
     return meta?.selectedIds.has(info.row.original.id) ?? false;
 }
 
+/* ------------------------------------------------------------------ */
+/*  Context menu is now a parameter, not something DataTable hardcodes. */
+/*  A row's ContextMenuContent is produced by calling                  */
+/*  `renderRowContextMenu(ctx)` (or DataTable's own default, below, if  */
+/*  the consumer doesn't pass one). Everything the renderer could      */
+/*  plausibly need — including DataTable's built-in group/remove       */
+/*  actions — is bundled into `ctx`, so a fully custom menu can still   */
+/*  call into the built-in grouping behavior, or ignore it completely   */
+/*  and render its own domain-specific items instead.                  */
+/* ------------------------------------------------------------------ */
+
+export type RowContextMenuContext<TData extends BaseRow> = {
+    /** id of the row that was right-clicked / opened the menu. */
+    rowId: number;
+    /** the full row data for that row. */
+    row: TData;
+    /** ids the action should apply to — either just [rowId], or the full
+     *  current multi-selection if rowId is part of it. */
+    actionIds: number[];
+    isMultiple: boolean;
+    /** the group this row currently belongs to, if any. */
+    group?: RequestGroup;
+    /** all groups that currently exist in the table. */
+    groups: RequestGroup[];
+    onCreateGroup: (ids: number[]) => void;
+    onAssignToGroup: (ids: number[], groupId: string) => void;
+    onUngroup: (ids: number[]) => void;
+    onRemove: (ids: number[]) => void;
+};
+
 const GROUP_PALETTE = ['#B23A2E', '#8F2E24', '#C08A3E', '#3C7A5A', '#5C6360', '#6E4A3E', '#A85D3B'];
 
 /** Fixed row height in px. Must match the actual rendered row height
@@ -217,11 +247,14 @@ interface TableRowProps<TData extends BaseRow> {
     groups: RequestGroup[];
     onRowClick: (e: React.MouseEvent, id: number) => void;
     onContextMenu: (id: number) => void;
+    getActionIds: (rowId: number) => number[];
+    /** If omitted, the row renders with no context menu at all (no Radix
+     *  wrapper, no popover) — cheaper than rendering an empty menu. */
+    renderContextMenu?: (ctx: RowContextMenuContext<TData>) => React.ReactNode;
     onCreateGroup: (ids: number[]) => void;
     onAssignToGroup: (ids: number[], groupId: string) => void;
     onUngroup: (ids: number[]) => void;
     onRemove: (ids: number[]) => void;
-    getActionIds: (rowId: number) => number[];
 }
 
 function TableRowInner<TData extends BaseRow>({
@@ -231,81 +264,57 @@ function TableRowInner<TData extends BaseRow>({
     groups,
     onRowClick,
     onContextMenu,
+    getActionIds,
+    renderContextMenu,
     onCreateGroup,
     onAssignToGroup,
     onUngroup,
     onRemove,
-    getActionIds,
 }: TableRowProps<TData>) {
     const rowId = row.original.id;
-    const groupId = row.original.group;
-
-    const otherGroups = useMemo(() => groups.filter((g) => g.id !== groupId), [groups, groupId]);
     // getActionIds is a stable (useCallback([])) function that reads a ref
     // internally, so rowId alone is a sufficient dep.
     const actionIds = useMemo(() => getActionIds(rowId), [getActionIds, rowId]);
 
+    const rowContent = (
+        <div
+            onClick={(e) => onRowClick(e, rowId)}
+            onContextMenu={() => onContextMenu(rowId)}
+            className={`flex h-full cursor-pointer items-center border-b border-[#F0EDE6] border-l-[3px]  ${selected ? 'bg-[#B23A2E]' : 'hover:bg-[#FAF7F2]'
+                }`}
+            style={{ borderLeftColor: group?.color ?? 'transparent' }}
+        >
+            {row.getVisibleCells().map((cell) => (
+                <div key={cell.id} className="truncate px-2 py-1" style={{ width: cell.column.getSize() }}>
+                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                </div>
+            ))}
+        </div>
+    );
+
+    // No renderer supplied → skip the Radix ContextMenu wrapper entirely
+    // instead of mounting one with an empty/undefined content.
+    if (!renderContextMenu) {
+        return rowContent;
+    }
+
+    const ctx: RowContextMenuContext<TData> = {
+        rowId,
+        row: row.original,
+        actionIds,
+        isMultiple: actionIds.length > 1,
+        group,
+        groups,
+        onCreateGroup,
+        onAssignToGroup,
+        onUngroup,
+        onRemove,
+    };
+
     return (
         <ContextMenu>
-            <ContextMenuTrigger asChild>
-                <div
-                    onClick={(e) => onRowClick(e, rowId)}
-                    onContextMenu={() => onContextMenu(rowId)}
-                    className={`flex h-full cursor-pointer items-center border-b border-[#F0EDE6] border-l-[3px]  ${selected ? 'bg-[#B23A2E]' : 'hover:bg-[#FAF7F2]'
-                        }`}
-                    style={{ borderLeftColor: group?.color ?? 'transparent' }}
-                >
-                    {row.getVisibleCells().map((cell) => (
-                        <div key={cell.id} className="truncate px-2 py-1" style={{ width: cell.column.getSize() }}>
-                            {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                        </div>
-                    ))}
-                </div>
-            </ContextMenuTrigger>
-            <ContextMenuContent className="w-56">
-                <ContextMenuLabel className="text-[11px] text-[#9A9A90]">
-                    {actionIds.length > 1 ? `${actionIds.length} rows` : `Row #${rowId}`}
-                </ContextMenuLabel>
-                <ContextMenuSeparator />
-
-                <ContextMenuItem onSelect={() => onCreateGroup(actionIds)}>
-                    <FolderPlus className="mr-2 h-3.5 w-3.5" />
-                    New group
-                </ContextMenuItem>
-
-                <ContextMenuSub>
-                    <ContextMenuSubTrigger disabled={otherGroups.length === 0}>
-                        <Layers className="mr-2 h-3.5 w-3.5" />
-                        Add to group
-                    </ContextMenuSubTrigger>
-                    <ContextMenuSubContent>
-                        {otherGroups.length === 0 && (
-                            <ContextMenuItem disabled>No other groups yet</ContextMenuItem>
-                        )}
-                        {otherGroups.map((g) => (
-                            <ContextMenuItem key={g.id} onSelect={() => onAssignToGroup(actionIds, g.id)}>
-                                <Circle className="mr-2 h-3 w-3" style={{ color: g.color, fill: g.color }} />
-                                {g.name}
-                            </ContextMenuItem>
-                        ))}
-                    </ContextMenuSubContent>
-                </ContextMenuSub>
-
-                <ContextMenuItem onSelect={() => onUngroup(actionIds)} disabled={!groupId}>
-                    <FolderMinus className="mr-2 h-3.5 w-3.5" />
-                    Ungroup
-                </ContextMenuItem>
-
-                <ContextMenuSeparator />
-
-                <ContextMenuItem
-                    onSelect={() => onRemove(actionIds)}
-                    className="text-[#C0392B] focus:text-[#C0392B]"
-                >
-                    <Trash2 className="mr-2 h-3.5 w-3.5" />
-                    Remove
-                </ContextMenuItem>
-            </ContextMenuContent>
+            <ContextMenuTrigger asChild>{rowContent}</ContextMenuTrigger>
+            <ContextMenuContent className="w-56">{renderContextMenu(ctx)}</ContextMenuContent>
         </ContextMenu>
     );
 }
@@ -318,11 +327,12 @@ const TableRow = React.memo(TableRowInner, (prev, next) => {
         prev.groups === next.groups &&
         prev.onRowClick === next.onRowClick &&
         prev.onContextMenu === next.onContextMenu &&
+        prev.getActionIds === next.getActionIds &&
+        prev.renderContextMenu === next.renderContextMenu &&
         prev.onCreateGroup === next.onCreateGroup &&
         prev.onAssignToGroup === next.onAssignToGroup &&
         prev.onUngroup === next.onUngroup &&
-        prev.onRemove === next.onRemove &&
-        prev.getActionIds === next.getActionIds
+        prev.onRemove === next.onRemove
     );
 }) as typeof TableRowInner;
 
@@ -522,6 +532,7 @@ interface RowsViewportProps<TData extends BaseRow> {
     totalRowsCount: number;
     emptyLabel: string;
     emptyHint?: string;
+    renderContextMenu?: (ctx: RowContextMenuContext<TData>) => React.ReactNode;
     onCreateGroup: (ids: number[]) => void;
     onAssignToGroup: (ids: number[], groupId: string) => void;
     onUngroup: (ids: number[]) => void;
@@ -538,6 +549,7 @@ function RowsViewportInner<TData extends BaseRow>({
     totalRowsCount,
     emptyLabel,
     emptyHint,
+    renderContextMenu,
     onCreateGroup,
     onAssignToGroup,
     onUngroup,
@@ -735,11 +747,12 @@ function RowsViewportInner<TData extends BaseRow>({
                                 groups={groups}
                                 onRowClick={handleRowClick}
                                 onContextMenu={handleRowContextMenu}
+                                getActionIds={getActionIds}
+                                renderContextMenu={renderContextMenu}
                                 onCreateGroup={onCreateGroup}
                                 onAssignToGroup={onAssignToGroup}
                                 onUngroup={onUngroup}
                                 onRemove={onRemove}
-                                getActionIds={getActionIds}
                             />
                         </div>
                     );
@@ -767,6 +780,16 @@ interface DataTableProps<TData extends BaseRow> {
     /** Max height of the scrollable row viewport. Rows outside this
      *  viewport (plus overscan) are not mounted in the DOM. */
     maxHeight?: number;
+    /** Customize (or fully replace) the row context menu. Receives a
+     *  RowContextMenuContext with the clicked row, the current
+     *  multi-selection, and DataTable's built-in group/remove actions
+     *  ready to call. Return the contents of a ContextMenuContent (labels,
+     *  items, separators, subs — whatever you need); DataTable supplies
+     *  the ContextMenu/ContextMenuTrigger/ContextMenuContent wrapper.
+     *  If omitted, falls back to the built-in New group / Add to group /
+     *  Ungroup / Remove menu. Pass an empty fragment-returning function
+     *  to suppress the menu without losing the built-in group state. */
+    renderRowContextMenu?: (ctx: RowContextMenuContext<TData>) => React.ReactNode;
 }
 
 export default function DataTable<TData extends BaseRow>({
@@ -779,6 +802,7 @@ export default function DataTable<TData extends BaseRow>({
     emptyLabel = 'No rows',
     emptyHint,
     maxHeight = 600,
+    renderRowContextMenu,
 }: DataTableProps<TData>) {
     const [rows, setRows] = useState<TData[]>(data);
 
@@ -1033,6 +1057,69 @@ export default function DataTable<TData extends BaseRow>({
 
     const hasActiveFilters = !!search || Object.values(facetState).some((s) => s.size > 0);
 
+    // Default context menu — reproduces the original hardcoded behavior
+    // (New group / Add to group / Ungroup / Remove) so DataTable still
+    // works out of the box if `renderRowContextMenu` isn't supplied.
+    // Consumers that want something else entirely (different actions,
+    // domain-specific items, or no menu at all) just pass their own
+    // `renderRowContextMenu` and this is never called.
+    const defaultRenderContextMenu = useCallback(
+        (ctx: RowContextMenuContext<TData>) => {
+            const { actionIds, isMultiple, group, groups: allGroups, onCreateGroup, onAssignToGroup, onUngroup, onRemove } = ctx;
+            const otherGroups = allGroups.filter((g) => g.id !== group?.id);
+
+            return (
+                <>
+                    <ContextMenuLabel className="text-[11px] text-[#9A9A90]">
+                        {isMultiple ? `${actionIds.length} rows` : `Row #${actionIds[0]}`}
+                    </ContextMenuLabel>
+                    <ContextMenuSeparator />
+
+                    <ContextMenuItem onSelect={() => onCreateGroup(actionIds)}>
+                        <FolderPlus className="mr-2 h-3.5 w-3.5" />
+                        New group
+                    </ContextMenuItem>
+
+                    <ContextMenuSub>
+                        <ContextMenuSubTrigger disabled={otherGroups.length === 0}>
+                            <Layers className="mr-2 h-3.5 w-3.5" />
+                            Add to group
+                        </ContextMenuSubTrigger>
+                        <ContextMenuSubContent>
+                            {otherGroups.length === 0 && (
+                                <ContextMenuItem disabled>No other groups yet</ContextMenuItem>
+                            )}
+                            {otherGroups.map((g) => (
+                                <ContextMenuItem key={g.id} onSelect={() => onAssignToGroup(actionIds, g.id)}>
+                                    <Circle className="mr-2 h-3 w-3" style={{ color: g.color, fill: g.color }} />
+                                    {g.name}
+                                </ContextMenuItem>
+                            ))}
+                        </ContextMenuSubContent>
+                    </ContextMenuSub>
+
+                    <ContextMenuItem onSelect={() => onUngroup(actionIds)} disabled={!group}>
+                        <FolderMinus className="mr-2 h-3.5 w-3.5" />
+                        Ungroup
+                    </ContextMenuItem>
+
+                    <ContextMenuSeparator />
+
+                    <ContextMenuItem
+                        onSelect={() => onRemove(actionIds)}
+                        className="text-[#C0392B] focus:text-[#C0392B]"
+                    >
+                        <Trash2 className="mr-2 h-3.5 w-3.5" />
+                        Remove
+                    </ContextMenuItem>
+                </>
+            );
+        },
+        []
+    );
+
+    const resolvedRenderContextMenu = renderRowContextMenu ?? defaultRenderContextMenu;
+
     return (
         <div className="mx-auto max-w-7xl bg-[#FAF7F2] p-2">
             <TableToolbar
@@ -1072,6 +1159,7 @@ export default function DataTable<TData extends BaseRow>({
                     totalRowsCount={rows.length}
                     emptyLabel={emptyLabel}
                     emptyHint={emptyHint}
+                    renderContextMenu={resolvedRenderContextMenu}
                     onCreateGroup={createGroupAndAssign}
                     onAssignToGroup={assignToGroup}
                     onUngroup={ungroupIds}
