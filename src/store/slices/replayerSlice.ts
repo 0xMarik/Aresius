@@ -10,14 +10,14 @@ const initialState : ReaplyerState  = {
     collections : [
         {
             sessions: [
-                {
-                    history: [],
-                    requestTmp: 'GET / HTTP/1.1\n\n',
-                    url: 'https://',
-                    selectedHistoryIndex: null,
-                }
+                // {
+                //     history: [],
+                //     requestTmp: 'GET / HTTP/1.1\n\n',
+                //     url: 'https://',
+                //     selectedHistoryIndex: null,
+                // }
             ],
-            selectedSessionIndex: 0,
+            selectedSessionIndex: null,
         },
     ],
     selectedCollectionIndex: 0
@@ -32,28 +32,45 @@ const replayerSlice = createSlice({
     setReaplayerContent: (state, action: PayloadAction<{ rawRequest: string }>) => {
         const { rawRequest } = action.payload;
         const collection = state.collections[state.selectedCollectionIndex];
-        const session = collection.sessions[collection.selectedSessionIndex];
-        session.requestTmp = rawRequest;
+        if(collection.selectedSessionIndex !== null){
+            const session = collection.sessions[collection.selectedSessionIndex];
+            session.requestTmp = rawRequest;
+            return;
+        }
+        console.error("Their is no replayer session selected")
     },
     setReaplayerURL: (state, action: PayloadAction<{ url: string }>) => {
         const { url } = action.payload;
         const collection = state.collections[state.selectedCollectionIndex];
-        const session = collection.sessions[collection.selectedSessionIndex];
-        session.url = url;
+        if(collection.selectedSessionIndex !== null){
+            const session = collection.sessions[collection.selectedSessionIndex];
+            session.url = url;
+            return;
+        }
+        console.error("Their is no replayer session selected")
+
     },
     addReplayerHistory: (state, action: PayloadAction<{ historyItem: ReplayerHistoryItem }>) => {
         const { historyItem } = action.payload;
         const collection = state.collections[state.selectedCollectionIndex];
-        const session = collection.sessions[collection.selectedSessionIndex];
-        session.requestTmp = historyItem.requestRaw;
-        session.history = [historyItem, ...session.history];
+        if(collection.selectedSessionIndex !== null){
+            const session = collection.sessions[collection.selectedSessionIndex];
+            session.requestTmp = historyItem.requestRaw;
+            session.history = [historyItem, ...session.history];
+            return;
+        }
+        console.error("Their is no replayer session selected")
     },
     selectedHisotryIndex: (state, action: PayloadAction<{ historyIndex: number }>) => {
         const { historyIndex } = action.payload;
         const collection = state.collections[state.selectedCollectionIndex];
-        const session = collection.sessions[collection.selectedSessionIndex];
-        session.requestTmp = session.history[historyIndex].requestRaw;
-        session.selectedHistoryIndex = historyIndex;
+        if(collection.selectedSessionIndex !== null){
+            const session = collection.sessions[collection.selectedSessionIndex];
+            session.requestTmp = session.history[historyIndex].requestRaw;
+            session.selectedHistoryIndex = historyIndex;
+            return;
+        }
+        console.error("Their is no replayer session selected")
     },
     addCollection : (state) => {
         state.collections.push({

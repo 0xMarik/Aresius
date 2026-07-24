@@ -13,5 +13,5 @@ interface ReplayerSession {
 }
 export interface ReplayerCollection {
     sessions: ReplayerSession[];
-    selectedSessionIndex: number,
+    selectedSessionIndex: number | null,
 }

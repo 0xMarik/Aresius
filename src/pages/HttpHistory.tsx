@@ -7,6 +7,8 @@ import { useState } from 'react';
 import { isRowSelected, FacetFilter } from '@/components/Table';
 import { parseRequest, parseResponse } from '@/components/utils';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
+import { renderHttpHistoryTableContextMenu } from '@/components/HttpHistoryTableContextMenu';
+
 
 export type RequestState = 'Pending' | 'Info' | 'Success' | 'Redirect' | 'Client Error' | 'Server Error' | 'Failed';
 
@@ -54,6 +56,8 @@ export function adaptFromReqRes(items: RawReqRes[]): HttpTransaction[] {
         } catch {
             // keep raw fallbacks above
         }
+
+
         return {
             id: idx,
             host,
@@ -63,6 +67,8 @@ export function adaptFromReqRes(items: RawReqRes[]): HttpTransaction[] {
             time: item.timestamp,
             duration: item.duration ?? 0,
             state: stateFromCode(res.statusCode ?? null),
+            rawRequest: item.request,
+            rawResponse: item.response,
         };
     });
 }
@@ -205,14 +211,6 @@ const HTTPHisotry = () => {
 
     return (
         <div className='overflow-hidden h-screen'>
-            {/* <ReactSplit
-                direction={SplitDirection.Vertical}
-                initialSizes={[40, 60]} // 👈 Initial widths: 40% left, 60% right
-                // minSizes={[20, 20]} // 👈 Optional: Prevent collapsing below 20%
-                // gutterClassName="custom-gutter-horizontal"
-                // draggerClassName="custom-dragger-horizontal"
-                classes={["py-1", "py-1"]}
-            > */}
             <ResizablePanelGroup direction='vertical' autoSaveId="http-history-table" >
                 <ResizablePanel defaultSize={50} minSize={15}>
                     <div className='h-full'>
@@ -222,7 +220,9 @@ const HTTPHisotry = () => {
                             searchPlaceholder="Search host, url, method, code…"
                             emptyLabel="No requests captured yet"
                             emptyHint="Start your proxy to begin capturing HTTP traffic"
-                            setSelectedRequest={setSelectedRequest} />
+                            setSelectedRequest={setSelectedRequest}
+                            renderRowContextMenu={renderHttpHistoryTableContextMenu}
+                        />
                     </div>
                 </ResizablePanel>
                 <ResizableHandle />
@@ -248,7 +248,6 @@ const HTTPHisotry = () => {
                     </div>
                 </ResizablePanel>
             </ResizablePanelGroup>
-
         </div>
     )
 }

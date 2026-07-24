@@ -16,17 +16,10 @@ import { ChevronDown, ChevronDownIcon, ChevronLeft, ChevronRight, Plus, } from '
 import { ButtonGroup } from '@/components/ui/button-group';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 
-// Add to imports
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { parseRequest } from '@/components/utils';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
-
-
-// type TaskResult = {
-//     id: string;
-//     message: string;
-// };
 
 const fullHeightTheme = EditorView.theme({
     '&': {
@@ -43,16 +36,19 @@ const fullHeightTheme = EditorView.theme({
 const RequestCodeEditor = () => {
     const editorRef = useRef<HTMLDivElement | null>(null);
     const viewRef = useRef<EditorView | null>(null);
-    // const [content, setContent] = useState<string>("");
     const { collections, selectedCollectionIndex } = useAppSelector(state => state.replayerstate);
-    const { requestTmp, selectedHistoryIndex } = collections[selectedCollectionIndex].sessions[collections[selectedCollectionIndex].selectedSessionIndex];
-    const { selectedSessionIndex } = collections[selectedCollectionIndex]
+    const { selectedSessionIndex } = collections[selectedCollectionIndex];
+    const session = selectedSessionIndex !== null
+        ? collections[selectedCollectionIndex].sessions[selectedSessionIndex]
+        : null;
+    const requestTmp = session?.requestTmp ?? "";
+    const selectedHistoryIndex = session?.selectedHistoryIndex ?? null;
     const dispatch = useAppDispatch();
 
     useEffect(() => {
         if (!editorRef.current) return;
+        if (selectedSessionIndex === null) return; // nothing to edit yet
 
-        // Clean up existing editor
         if (viewRef.current) {
             viewRef.current.destroy();
             viewRef.current = null;
@@ -61,9 +57,6 @@ const RequestCodeEditor = () => {
         const updateListener = EditorView.updateListener.of((update) => {
             if (update.docChanged) {
                 const code = update.state.doc.toString();
-                // Update Redux state with new content
-                // setContent(code);
-                console.log({ code })
                 dispatch(setReaplayerContent({ rawRequest: code }));
             }
         });
@@ -73,7 +66,6 @@ const RequestCodeEditor = () => {
             extensions: [
                 basicSetup,
                 http(),
-                // javascript(),
                 oneDark,
                 fullHeightTheme,
                 updateListener,
@@ -87,10 +79,6 @@ const RequestCodeEditor = () => {
         });
 
         viewRef.current = view;
-
-        // Initialize global state after editor creation
-        // globalRanges = [...currentFuzzerSession.payload.parameters];
-        // selectedRangeId = currentFuzzerSession.selectedHighlightId;
 
         return () => {
             if (view) {
@@ -108,29 +96,30 @@ const RequestCodeEditor = () => {
 const ResponseCodeEditor = () => {
     const editorRef = useRef<HTMLDivElement | null>(null);
     const viewRef = useRef<EditorView | null>(null);
-    // const [content, setContent] = useState<string>("");
     const { collections, selectedCollectionIndex, } = useAppSelector(state => state.replayerstate);
-
-    const { history, selectedHistoryIndex, } = collections[selectedCollectionIndex].sessions[collections[selectedCollectionIndex].selectedSessionIndex];
-    const { selectedSessionIndex } = collections[selectedCollectionIndex]
-    // const dispatch = useAppDispatch();
+    const { selectedSessionIndex } = collections[selectedCollectionIndex];
+    const session = selectedSessionIndex !== null
+        ? collections[selectedCollectionIndex].sessions[selectedSessionIndex]
+        : null;
+    const history = session?.history ?? [];
+    const selectedHistoryIndex = session?.selectedHistoryIndex ?? null;
 
     useEffect(() => {
         if (!editorRef.current) return;
+        if (selectedSessionIndex === null) return;
 
-        // Clean up existing editor
         if (viewRef.current) {
             viewRef.current.destroy();
             viewRef.current = null;
         }
 
-
         const state = EditorState.create({
-            doc: selectedHistoryIndex !== null ? history[selectedHistoryIndex].responseRaw : "",
+            doc: selectedHistoryIndex !== null && history[selectedHistoryIndex]
+                ? history[selectedHistoryIndex].responseRaw
+                : "",
             extensions: [
                 basicSetup,
                 http(),
-                // javascript(),
                 oneDark,
                 fullHeightTheme,
                 EditorView.lineWrapping,
@@ -152,8 +141,6 @@ const ResponseCodeEditor = () => {
             }
         };
     }, [history, selectedHistoryIndex, selectedCollectionIndex, selectedSessionIndex]);
-    // SelectedHistoryIndex for re-render when changeing the history item
-    // SelectedCollectionIndex for re-render when changing collection
 
     return (
         <div ref={editorRef} className="h-full w-full border rounded-lg">
@@ -161,18 +148,22 @@ const ResponseCodeEditor = () => {
     )
 }
 
-
-
 function Replayer() {
     const { collections, selectedCollectionIndex } = useAppSelector(state => state.replayerstate);
-    const { url, requestTmp, history, selectedHistoryIndex } = collections[selectedCollectionIndex].sessions[collections[selectedCollectionIndex].selectedSessionIndex];
+    const { selectedSessionIndex } = collections[selectedCollectionIndex];
+    const session = selectedSessionIndex !== null
+        ? collections[selectedCollectionIndex].sessions[selectedSessionIndex]
+        : null;
+
+    const url = session?.url ?? "";
+    const requestTmp = session?.requestTmp ?? "";
+    const history = session?.history ?? [];
+    const selectedHistoryIndex = session?.selectedHistoryIndex ?? null;
+
     const [responseLoading, setResponseLoading] = React.useState<boolean>(false);
-
     const dispatch = useAppDispatch();
-
     const [selectedIds, setSelectedIds] = React.useState<string[]>([]);
 
-    // Inside Replayer(), alongside handleSelectedHisotry:
     const goNewer = () => {
         if (selectedHistoryIndex === null || selectedHistoryIndex === 0) return;
         dispatch(selectedHisotryIndex({ historyIndex: selectedHistoryIndex - 1 }));
@@ -190,7 +181,9 @@ function Replayer() {
         }
         setSelectedIds(value)
     }
+
     const triggerRequest = async () => {
+        if (selectedSessionIndex === null) return; // no active session, nothing to run
         console.log("Triggering request with:", { requestTmp, url });
         setResponseLoading(true)
         const response = await invoke<ReplayerHistoryItem>('replay_request', { requestTmp: requestTmp, url: url });
@@ -198,6 +191,7 @@ function Replayer() {
         dispatch(addReplayerHistory({ historyItem: response }));
         dispatch(selectedHisotryIndex({ historyIndex: 0 }));
     }
+
     const [searchTerm, setSearchTerm] = useState('')
 
     const handleSelectedHisotry = (value: string) => {
@@ -210,11 +204,10 @@ function Replayer() {
         children: collection.sessions.map((session, sessIndex) => ({
             id: `${colIndex}-${sessIndex}`,
             label: `Session ${sessIndex + 1} - ${session.url}`,
-            // You can add more nesting if needed
         }))
     }))
 
-
+    const noSessionSelected = selectedSessionIndex === null;
 
     return (
         <ResizablePanelGroup direction='horizontal' autoSaveId="aresius-repeater-layout" >
@@ -249,120 +242,117 @@ function Replayer() {
                             searchTerm={searchTerm}
                             showIcons={true}
                             virtualizeEnabled={true}
-
-                        // multiSelect={true}
-                        // checkable={true}
                         />
                     </div>
                 </div>
             </ResizablePanel>
             <ResizableHandle />
             <ResizablePanel defaultSize={70} minSize={20}>
-                <div className='h-full flex flex-col gap-1'>
-                    <div className=' flex  items-center h-10 bg-muted/50 aspect-video rounded-lg p-1 gap-5'>
-                        <Input placeholder='Enter URL to replay...' className='w-64 bg-transparent border-0 focus:ring-0'
-                            value={url}
-                            onChange={(event) => dispatch(setReaplayerURL({ url: event.target.value }))}
-                        />
-                        <Button
-                            onClick={triggerRequest}
-                            // disabled={isLoading}
-                            className="p-4  text-white rounded disabled:bg-gray-400"
-                        >
-                            RUN
-                        </Button>
-
-                        <ButtonGroup>
+                {noSessionSelected ? (
+                    <div className="h-full flex items-center justify-center text-muted-foreground text-sm">
+                        Select or create a session to get started
+                    </div>
+                ) : (
+                    <div className='h-full flex flex-col gap-1'>
+                        <div className=' flex  items-center h-10 bg-muted/50 aspect-video rounded-lg p-1 gap-5'>
+                            <Input placeholder='Enter URL to replay...' className='w-64 bg-transparent border-0 focus:ring-0'
+                                value={url}
+                                onChange={(event) => dispatch(setReaplayerURL({ url: event.target.value }))}
+                            />
                             <Button
-                                disabled={selectedHistoryIndex === null || history.length - 1 === selectedHistoryIndex}
-                                variant="outline"
-                                className="pl-2!"
-                                onClick={goOlder}
+                                onClick={triggerRequest}
+                                className="p-4  text-white rounded disabled:bg-gray-400"
                             >
-                                <ChevronLeft />
+                                RUN
                             </Button>
 
-                            <Popover>
-                                <PopoverTrigger asChild>
-                                    <Button variant="outline">
-                                        History <ChevronDown />
-                                    </Button>
-                                </PopoverTrigger>
-                                <PopoverContent className="w-[520px] p-0" align="start">
-                                    <div className="max-h-80 overflow-auto">
-                                        <Table>
-                                            <TableHeader className="sticky top-0 bg-muted">
-                                                <TableRow>
-                                                    <TableHead>Method</TableHead>
-                                                    <TableHead>Host</TableHead>
-                                                    <TableHead>Path</TableHead>
-                                                    <TableHead>Time</TableHead>
-                                                </TableRow>
-                                            </TableHeader>
-                                            <TableBody>
-                                                {history.length === 0 && (
+                            <ButtonGroup>
+                                <Button
+                                    disabled={selectedHistoryIndex === null || history.length - 1 === selectedHistoryIndex}
+                                    variant="outline"
+                                    className="pl-2!"
+                                    onClick={goOlder}
+                                >
+                                    <ChevronLeft />
+                                </Button>
+
+                                <Popover>
+                                    <PopoverTrigger asChild>
+                                        <Button variant="outline">
+                                            History <ChevronDown />
+                                        </Button>
+                                    </PopoverTrigger>
+                                    <PopoverContent className="w-[520px] p-0" align="start">
+                                        <div className="max-h-80 overflow-auto">
+                                            <Table>
+                                                <TableHeader className="sticky top-0 bg-muted">
                                                     <TableRow>
-                                                        <TableCell colSpan={4} className="text-center text-muted-foreground">
-                                                            No requests yet
-                                                        </TableCell>
+                                                        <TableHead>Method</TableHead>
+                                                        <TableHead>Host</TableHead>
+                                                        <TableHead>Path</TableHead>
+                                                        <TableHead>Time</TableHead>
                                                     </TableRow>
-                                                )}
-                                                {history.map((item, index) => {
-                                                    const req = parseRequest(item.requestRaw)
-                                                    return (
-                                                        <TableRow
-                                                            key={index}
-                                                            onClick={() => handleSelectedHisotry(index.toString())}
-                                                            className={`cursor-pointer ${selectedHistoryIndex === index ? 'bg-muted' : ''
-                                                                }`}
-                                                        >
-                                                            <TableCell className="font-mono">{req.method}</TableCell>
-                                                            <TableCell>{"item.host"}</TableCell>
-                                                            <TableCell className="truncate max-w-[160px]">{req.path}</TableCell>
-                                                            <TableCell className="whitespace-nowrap">
-                                                                {new Date(item.requestTime).toLocaleTimeString()}
+                                                </TableHeader>
+                                                <TableBody>
+                                                    {history.length === 0 && (
+                                                        <TableRow>
+                                                            <TableCell colSpan={4} className="text-center text-muted-foreground">
+                                                                No requests yet
                                                             </TableCell>
                                                         </TableRow>
-                                                    )
-                                                })}
-                                            </TableBody>
-                                        </Table>
-                                    </div>
-                                </PopoverContent>
-                            </Popover>
+                                                    )}
+                                                    {history.map((item, index) => {
+                                                        const req = parseRequest(item.requestRaw)
+                                                        return (
+                                                            <TableRow
+                                                                key={index}
+                                                                onClick={() => handleSelectedHisotry(index.toString())}
+                                                                className={`cursor-pointer ${selectedHistoryIndex === index ? 'bg-muted' : ''
+                                                                    }`}
+                                                            >
+                                                                <TableCell className="font-mono">{req.method}</TableCell>
+                                                                <TableCell>{"item.host"}</TableCell>
+                                                                <TableCell className="truncate max-w-[160px]">{req.path}</TableCell>
+                                                                <TableCell className="whitespace-nowrap">
+                                                                    {new Date(item.requestTime).toLocaleTimeString()}
+                                                                </TableCell>
+                                                            </TableRow>
+                                                        )
+                                                    })}
+                                                </TableBody>
+                                            </Table>
+                                        </div>
+                                    </PopoverContent>
+                                </Popover>
 
-                            <Button
-
-                                disabled={selectedHistoryIndex === null || selectedHistoryIndex === 0}
-                                variant="outline"
-                                className="pl-2!"
-                                onClick={goNewer}
-                            >
-                                <ChevronRight />
-                            </Button>
-                        </ButtonGroup>
+                                <Button
+                                    disabled={selectedHistoryIndex === null || selectedHistoryIndex === 0}
+                                    variant="outline"
+                                    className="pl-2!"
+                                    onClick={goNewer}
+                                >
+                                    <ChevronRight />
+                                </Button>
+                            </ButtonGroup>
+                        </div>
+                        <ResizablePanelGroup direction='horizontal' autoSaveId="repeater-req-res">
+                            <ResizablePanel >
+                                <div className="bg-muted/50 min-w-0 rounded-lg p-1 w-full h-full">
+                                    <RequestCodeEditor />
+                                </div>
+                            </ResizablePanel>
+                            <ResizableHandle />
+                            <ResizablePanel>
+                                <div className="bg-muted/50 min-w-0 rounded-lg p-1 w-full h-full">
+                                    {responseLoading ? "Response is loading..." : <ResponseCodeEditor />}
+                                </div>
+                            </ResizablePanel>
+                        </ResizablePanelGroup>
                     </div>
-                    <ResizablePanelGroup direction='horizontal' autoSaveId="repeater-req-res">
-                        <ResizablePanel >
-                            <div className="bg-muted/50 min-w-0 rounded-lg p-1 w-full h-full">
-                                <RequestCodeEditor />
-                            </div>
-                        </ResizablePanel>
-                        <ResizableHandle />
-                        <ResizablePanel>
-                            <div className="bg-muted/50 min-w-0 rounded-lg p-1 w-full h-full">
-                                {responseLoading ? "Response is loading..." : <ResponseCodeEditor />}
-                            </div>
-                        </ResizablePanel>
-                    </ResizablePanelGroup>
-                </div>
+                )}
             </ResizablePanel>
         </ResizablePanelGroup>
-
-
-
     )
 }
-
 
 export default Replayer

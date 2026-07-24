@@ -31,8 +31,8 @@ const fuzzerSlice = createSlice({
       const {sessions} = action.payload
       state.fuzzerSessions = sessions;
     },
-    addFuzzSession: (state, action : PayloadAction<{ name: string}>) => {
-      const {name} = action.payload;
+    addFuzzSession: (state, action : PayloadAction<{ name: string, rawRequest? : string}>) => {
+      const {name, rawRequest} = action.payload;
       state.fuzzerSessions.push({
         name: name + ` ${state.fuzzerSessions.length + 1}`,
         fuzzingHistory: [],
@@ -41,7 +41,7 @@ const fuzzerSlice = createSlice({
           numThreads: 1,
           delayMs: 0,
           fuzzingAttackType: FuzzingAttackType.ROTATOR,
-          rawRequest: 'GET / HTTP/1.1\nHost: facebook.com\n\n',
+          rawRequest: rawRequest ||'GET / HTTP/1.1\nHost: facebook.com\n\n',
           metadata : {
             // protocol: "http",
             targetUrl: "http://google.com"
@@ -52,10 +52,6 @@ const fuzzerSlice = createSlice({
       });
     },
     
-    // removeSession: (state, action: PayloadAction<{sessionId: string}>) => {
-    //   const {sessionId} = action.payload;
-    //   state.fuzzerSessions = state.fuzzerSessions.filter(s => s.sessionId !== sessionId);
-    // },
 
     setActiveSession: (state, action : PayloadAction<{sessionIndex: number}>) => {
       const {sessionIndex} = action.payload;
@@ -84,82 +80,82 @@ const fuzzerSlice = createSlice({
       }
     },
 
-applyFuzzUpdates: (
-  state,
-  action: PayloadAction<{ updates: FuzzUpdate[] }>
-) => {
-  const { updates } = action.payload;
+  applyFuzzUpdates: (
+    state,
+    action: PayloadAction<{ updates: FuzzUpdate[] }>
+  ) => {
+    const { updates } = action.payload;
 
-  // Cache requestById maps per (sessionIndex, historyIndex) so we don't
-  // rebuild them for every update in the batch.
-  const mapCache = new Map<string, Map<string, FuzzerRequest>>();
+    // Cache requestById maps per (sessionIndex, historyIndex) so we don't
+    // rebuild them for every update in the batch.
+    const mapCache = new Map<string, Map<string, FuzzerRequest>>();
 
-  const getRequestMap = (sessionIndex: number, historyIndex: number) => {
-    const key = `${sessionIndex}:${historyIndex}`;
-    let cached = mapCache.get(key);
-    if (cached) return cached;
+    const getRequestMap = (sessionIndex: number, historyIndex: number) => {
+      const key = `${sessionIndex}:${historyIndex}`;
+      let cached = mapCache.get(key);
+      if (cached) return cached;
 
-    const session = state.fuzzerSessions[sessionIndex];
-    const history = session?.fuzzingHistory[historyIndex];
-    if (!history) {
-      console.error(`History entry not found at session ${sessionIndex}, index ${historyIndex}.`);
-      return null;
-    }
-
-    cached = new Map(history.requests.map((r) => [r.fuzzRequestId, r]));
-    mapCache.set(key, cached);
-    return cached;
-  };
-
-  const getHistory = (sessionIndex: number, historyIndex: number) =>
-    state.fuzzerSessions[sessionIndex]?.fuzzingHistory[historyIndex];
-
-  for (const update of updates) {
-    if ('Completed' in update) {
-      const { id, selectedSession, fuzzHistory, reqRes } = update.Completed;
-      const requestById = getRequestMap(selectedSession, fuzzHistory);
-      if (!requestById) continue;
-      const history = getHistory(selectedSession, fuzzHistory)!;
-
-      const existing = requestById.get(id);
-      if (existing) {
-        existing.status = 'completed';
-        existing.rawRequest = reqRes.request;
-        existing.response = { rawResponse: reqRes.response, responseTime: reqRes.responseTime };
-      } else {
-        const row: FuzzerRequest = {
-          fuzzRequestId: id,
-          rawRequest: reqRes.request,
-          response: { rawResponse: reqRes.response, responseTime: reqRes.responseTime },
-          requestDate: new Date().toISOString(),
-          status: 'completed',
-        };
-        history.requests.push(row);
-        requestById.set(id, row);
+      const session = state.fuzzerSessions[sessionIndex];
+      const history = session?.fuzzingHistory[historyIndex];
+      if (!history) {
+        console.error(`History entry not found at session ${sessionIndex}, index ${historyIndex}.`);
+        return null;
       }
-    } else if ('Error' in update) {
-      const { id, selectedSession, fuzzHistory } = update.Error;
-      const requestById = getRequestMap(selectedSession, fuzzHistory);
-      if (!requestById) continue;
-      const history = getHistory(selectedSession, fuzzHistory)!;
 
-      const existing = requestById.get(id);
-      if (existing) {
-        existing.status = 'error';
-      } else {
-        const row: FuzzerRequest = {
-          fuzzRequestId: id,
-          rawRequest: '',
-          response: null,
-          requestDate: new Date().toISOString(),
-          status: 'error',
-        };
-        history.requests.push(row);
-        requestById.set(id, row);
+      cached = new Map(history.requests.map((r) => [r.fuzzRequestId, r]));
+      mapCache.set(key, cached);
+      return cached;
+    };
+
+    const getHistory = (sessionIndex: number, historyIndex: number) =>
+      state.fuzzerSessions[sessionIndex]?.fuzzingHistory[historyIndex];
+
+    for (const update of updates) {
+      if ('Completed' in update) {
+        const { id, selectedSession, fuzzHistory, reqRes } = update.Completed;
+        const requestById = getRequestMap(selectedSession, fuzzHistory);
+        if (!requestById) continue;
+        const history = getHistory(selectedSession, fuzzHistory)!;
+
+        const existing = requestById.get(id);
+        if (existing) {
+          existing.status = 'completed';
+          existing.rawRequest = reqRes.request;
+          existing.response = { rawResponse: reqRes.response, responseTime: reqRes.responseTime };
+        } else {
+          const row: FuzzerRequest = {
+            fuzzRequestId: id,
+            rawRequest: reqRes.request,
+            response: { rawResponse: reqRes.response, responseTime: reqRes.responseTime },
+            requestDate: new Date().toISOString(),
+            status: 'completed',
+          };
+          history.requests.push(row);
+          requestById.set(id, row);
+        }
+      } else if ('Error' in update) {
+        const { id, selectedSession, fuzzHistory } = update.Error;
+        const requestById = getRequestMap(selectedSession, fuzzHistory);
+        if (!requestById) continue;
+        const history = getHistory(selectedSession, fuzzHistory)!;
+
+        const existing = requestById.get(id);
+        if (existing) {
+          existing.status = 'error';
+        } else {
+          const row: FuzzerRequest = {
+            fuzzRequestId: id,
+            rawRequest: '',
+            response: null,
+            requestDate: new Date().toISOString(),
+            status: 'error',
+          };
+          history.requests.push(row);
+          requestById.set(id, row);
+        }
       }
     }
-  }
-},
+  },
 
     setContent: (state, action: PayloadAction<{ rawRequest: string }>) => {
   if (state.activeSessionIndex !== null) {

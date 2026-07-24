@@ -11,7 +11,7 @@ import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import Fuzzer from "./pages/fuzzer/fuzzer";
 import Tweaker from "./pages/replayer/replayer";
 import Projects from "./pages/projects.page";
-import HTTPHisotry from "./pages/http-history.page";
+import HTTPHisotry from "./pages/HttpHistory";
 import { useDispatch } from "react-redux";
 import { useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";

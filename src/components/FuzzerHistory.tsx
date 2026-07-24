@@ -6,6 +6,7 @@ import { FuzzerRequest, FuzzerParameter, FuzzConfig } from '@/types/fuzzer.type'
 import { useMemo, useState } from 'react';
 import { parseRequest, parseResponse } from './utils';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from './ui/resizable';
+import { renderFuzzerHistoryTableContextMenu } from './FuzzerHistoryTableContextMenu';
 
 /**
  * Each row corresponds to a single FuzzerRequest (one fuzzed HTTP call),
@@ -326,6 +327,7 @@ function FuzzerHistoryBody({
                         emptyLabel={isLoading ? 'Running fuzzer…' : 'No fuzzing results yet'}
                         emptyHint={isLoading ? undefined : 'Run the fuzzer to see results here'}
                         setSelectedRequest={setFocusedId}
+                        renderRowContextMenu={renderFuzzerHistoryTableContextMenu}
                     />
                 </ResizablePanel>
                 <ResizableHandle />

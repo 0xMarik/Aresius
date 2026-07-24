@@ -1,6 +1,6 @@
 import { useAppSelector } from '@/hooks/redux';
 import FuzzSession from '@/components/fuzz-session.component';
-import FuzzerHistoryCompo from '@/components/history.component';
+import FuzzerHistoryCompo from '@/components/FuzzerHistory';
 import FuzzRequestPayload, { selectActiveSessionShape, shallowEqualActiveSession } from '@/components/fuzz-request-payloads.component';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 
