@@ -30,11 +30,13 @@ export type PayloadSource =
 
 
 export interface HighlightRange {
-    id: string; // still don't know why I put the Id here and not in the FuzzerParameter
-    from: number;
+    from: number; // just for front end presentation ignore \r
     to: number;
+    byteFrom: number;
+    byteTo: number; // taking into consideration \r
     originalText: string;
     isActive: boolean;
+    id: string;
 }
 
 export interface FuzzerParameter {

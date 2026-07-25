@@ -5,8 +5,8 @@ pub fn building_raw_request(
     param_value: &str,
     highlight_range: &HighlightRange,
 ) -> String {
-    let from = highlight_range.from as usize;
-    let to = highlight_range.to as usize;
+    let from = highlight_range.byte_from as usize;
+    let to = highlight_range.byte_to as usize;
 
     // Build the new request by concatenating:
     // 1. Everything before 'from'

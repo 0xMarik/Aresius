@@ -108,7 +108,7 @@ const FuzzRequestPayload: React.FC = () => {
         <Input
           onChange={(e) => dispatch(setTargerUrl({ targetUrl: e.target.value }))}
           value={activeSession?.targetUrl ?? ''}
-          placeholder="http://example.com"
+          placeholder="https://example.com"
         />
 
         <Select

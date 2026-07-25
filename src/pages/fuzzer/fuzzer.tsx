@@ -1,7 +1,7 @@
 import { useAppSelector } from '@/hooks/redux';
 import FuzzSession from '@/components/fuzz-session.component';
 import FuzzerHistoryCompo from '@/components/FuzzerHistory';
-import FuzzRequestPayload, { selectActiveSessionShape, shallowEqualActiveSession } from '@/components/fuzz-request-payloads.component';
+import FuzzRequestPayload, { selectActiveSessionShape, shallowEqualActiveSession } from '@/components/FuzzerRequestPayload';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 
 const Fuzzer: React.FC = () => {
@@ -13,11 +13,11 @@ const Fuzzer: React.FC = () => {
     return (
         <div className="py-1 pr-1 h-screen">
             <ResizablePanelGroup direction='horizontal' autoSaveId="fuzzing-layout" >
-                <ResizablePanel defaultSize={20} minSize={15}>
+                <ResizablePanel defaultSize={13} minSize={13} maxSize={20}>
                     <FuzzSession />
                 </ResizablePanel>
                 <ResizableHandle />
-                <ResizablePanel defaultSize={80} minSize={15}>
+                <ResizablePanel defaultSize={87} minSize={15}>
                     <div className='bg-muted/50 gap-2 flex w-full items-center h-14 p-2'>
 
                     </div>

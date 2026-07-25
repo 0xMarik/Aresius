@@ -86,7 +86,7 @@ export function renderHttpHistoryTableContextMenu(
     };
 
     const sendToFuzzer = () => {
-        dispatch(addFuzzSession({ name: "From history", rawRequest: row.rawRequest }))
+        dispatch(addFuzzSession({ name: "From history", rawRequest: row.rawRequest, targetUrl: row.host }))
     };
 
     return (

@@ -11,7 +11,7 @@ import { Badge } from "../../ui/badge";
 import { RangeSetBuilder } from "@codemirror/state";
 import { useAppDispatch, useAppSelector } from "@/hooks/redux";
 import { addParameter, removeParameter, setParameters, setSelectedParameter, setContent } from '@/store/slices/fuzzerSlice'
-import { FuzzerParameter } from "@/types/fuzzer.type";
+import { FuzzerParameter, HighlightRange } from "@/types/fuzzer.type";
 import { oneDark } from '@codemirror/theme-one-dark';
 
 export const fullHeightTheme = EditorView.theme({
@@ -26,13 +26,6 @@ export const fullHeightTheme = EditorView.theme({
     },
 });
 
-interface HighlightRange {
-    from: number;
-    to: number;
-    originalText: string;
-    isActive: boolean;
-    id: string; // Unique identifier for each range
-}
 
 // Create decoration with click handler and index
 const createHighlightDecoration = (id: string, isSelected: boolean = false) => Decoration.mark({
@@ -150,6 +143,7 @@ const fuzzerHighlighter = ViewPlugin.fromClass(class {
                     to: newTo
                 };
 
+
                 // Check if range is still valid and text matches
                 if (newTo <= doc.length && newFrom >= 0) {
                     const currentText = doc.sliceString(newFrom, newTo);
@@ -231,10 +225,7 @@ const fuzzerHighlighter = ViewPlugin.fromClass(class {
     decorations: v => v.decorations
 });
 
-// interface RequestEditorProps {
-//     rawRequest: string;
-//     activeSessionIndex?: number;
-// }
+
 
 const RequestEditor: React.FC = () => {
     const editorRef = useRef<HTMLDivElement | null>(null);
@@ -288,21 +279,21 @@ const RequestEditor: React.FC = () => {
     }, [activeSessionIndex, currentFuzzerSession.fuzzConfig.parameters, currentFuzzerSession.selectedHighlightId, dispatch]);
 
     // Function to add a new highlight range
-    const addHighlightRange = (from: number, to: number) => {
+    const addHighlightRange = (from: number, to: number, lineNumber: number) => {
         if (!viewRef.current) return;
-
-        const doc = viewRef.current.state.doc;
-        if (from >= 0 && to <= doc.length && from < to) {
-            const originalText = doc.sliceString(from, to);
+        const state = viewRef.current.state;
+        if (from >= 0 && to <= state.doc.length && from < to) {
+            const originalText = state.sliceDoc(from, to); // sliceDoc, not doc.sliceString — respects "\r\n"
             const newRange: HighlightRange = {
                 id: `range-${Date.now()}-${Math.random()}`,
+                byteFrom: from + (lineNumber - 1),
+                byteTo: to + (lineNumber - 1),
                 from,
                 to,
                 originalText,
                 isActive: true
             };
-
-            dispatch(addParameter({ highlightRange: newRange }))
+            dispatch(addParameter({ highlightRange: newRange }));
         }
     };
 
@@ -326,8 +317,10 @@ const RequestEditor: React.FC = () => {
         if (!viewRef.current) return;
 
         const selection = viewRef.current.state.selection.main;
+        const line = viewRef.current.state.doc.lineAt(selection.from);
+
         if (!selection.empty) {
-            addHighlightRange(selection.from, selection.to);
+            addHighlightRange(selection.from, selection.to, line.number);
         }
     };
 
@@ -344,7 +337,7 @@ const RequestEditor: React.FC = () => {
     // IMPROVED: Update editor content when Redux state changes with better sync
     useEffect(() => {
         if (viewRef.current && currentFuzzerSession.fuzzConfig.rawRequest !== undefined) {
-            const currentDoc = viewRef.current.state.doc.toString();
+            const currentDoc = viewRef.current.state.sliceDoc(0, viewRef.current.state.doc.length);
             if (currentDoc !== currentFuzzerSession.fuzzConfig.rawRequest) {
                 console.log('Updating editor content');
 
@@ -357,15 +350,17 @@ const RequestEditor: React.FC = () => {
                     }
                 });
 
+
+
                 // Force refresh after content change
                 setTimeout(() => forceEditorRefresh(), 0);
             }
         }
     }, [currentFuzzerSession.fuzzConfig.rawRequest, activeSessionIndex]); // Added activeSessionIndex as dependency
 
-    useEffect(() => {
-        console.log('Active session or sessions changed:', activeSessionIndex, fuzzerSessions)
-    }, [activeSessionIndex, fuzzerSessions])
+    // useEffect(() => {
+    //     console.log('Active session or sessions changed:', activeSessionIndex, fuzzerSessions)
+    // }, [activeSessionIndex, fuzzerSessions])
 
     // IMPROVED: Recreate editor when session changes (alternative approach)
     useEffect(() => {
@@ -379,24 +374,27 @@ const RequestEditor: React.FC = () => {
 
         const updateListener = EditorView.updateListener.of((update) => {
             if (update.docChanged) {
-                const code = update.state.doc.toString();
+                const code = update.state.sliceDoc(0, update.state.doc.length); // was doc.toString()
                 // Update Redux state with new content
                 dispatch(setContent({ rawRequest: code }));
             }
+
             if (update.selectionSet) {
                 const selection = update.state.selection.main;
                 if (!selection.empty) {
                     const from = selection.from;
                     const to = selection.to;
-                    const selectedText = update.state.doc.sliceString(from, to);
+                    const selectedText = update.state.sliceDoc(from, to); // was doc.sliceString(from, to)
                     console.log(from, to, selectedText);
                 }
             }
         });
 
+
         const state = EditorState.create({
             doc: currentFuzzerSession.fuzzConfig.rawRequest,
             extensions: [
+                EditorState.lineSeparator.of("\r\n"),
                 basicSetup,
                 http(),
                 javascript(),

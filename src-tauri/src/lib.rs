@@ -15,7 +15,7 @@ use types::replayer::*;
 
 use crate::fuzzer::combinatorial::execute_combinatorial_fuzzing;
 use crate::fuzzer::echo::execute_echo_fuzzing;
-use crate::fuzzer::rotator::*;
+use crate::fuzzer::rotator::execute_rotator_fuzzing;
 use crate::fuzzer::zipped::execute_zipped_fuzzing;
 
 mod proxy;

@@ -22,8 +22,8 @@ const Interceptor = () => {
     return (
         <div>
             {
-                interceptor.map((itm) => (
-                    <div>
+                interceptor.map((itm, idx) => (
+                    <div key={"intercept-" + idx}>
                         <p>{itm.host}</p>
                         <button onClick={() => handleClick(itm.id)}>Button</button>
                     </div>

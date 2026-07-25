@@ -211,7 +211,7 @@ function Replayer() {
 
     return (
         <ResizablePanelGroup direction='horizontal' autoSaveId="aresius-repeater-layout" >
-            <ResizablePanel defaultSize={30} minSize={15}>
+            <ResizablePanel defaultSize={13} minSize={13} maxSize={20}>
                 <div className='h-full'>
                     <ButtonGroup>
                         <Button className='mb-2 w-full' onClick={() => dispatch(addSessionToCollection({ collectionIndex: Number((selectedIds[0] ?? "0-0").split('-')[0]) }))}><Plus /> New Session</Button>

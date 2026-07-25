@@ -11,7 +11,7 @@ const initialState : FuzzerState = {
             numThreads: 1,
             delayMs: 0,
             fuzzingAttackType: FuzzingAttackType.ROTATOR,
-            rawRequest: 'GET / HTTP/1.1\nHost: www.google.com\n\n',
+            rawRequest: 'GET / HTTP/1.1\r\nHost: www.google.com\r\n\r\n',
             parameters: [],
             metadata: {
                 targetUrl: 'http://google.com:80'
@@ -31,8 +31,8 @@ const fuzzerSlice = createSlice({
       const {sessions} = action.payload
       state.fuzzerSessions = sessions;
     },
-    addFuzzSession: (state, action : PayloadAction<{ name: string, rawRequest? : string}>) => {
-      const {name, rawRequest} = action.payload;
+    addFuzzSession: (state, action : PayloadAction<{ name: string, rawRequest? : string, targetUrl ?: string}>) => {
+      const {name, rawRequest , targetUrl} = action.payload;
       state.fuzzerSessions.push({
         name: name + ` ${state.fuzzerSessions.length + 1}`,
         fuzzingHistory: [],
@@ -41,10 +41,9 @@ const fuzzerSlice = createSlice({
           numThreads: 1,
           delayMs: 0,
           fuzzingAttackType: FuzzingAttackType.ROTATOR,
-          rawRequest: rawRequest ||'GET / HTTP/1.1\nHost: facebook.com\n\n',
+          rawRequest: rawRequest ||'GET / HTTP/1.1\r\n\r\n',
           metadata : {
-            // protocol: "http",
-            targetUrl: "http://google.com"
+            targetUrl: `https://${targetUrl}` || "https://"
           },
           parameters: []
         },
@@ -159,6 +158,7 @@ const fuzzerSlice = createSlice({
 
     setContent: (state, action: PayloadAction<{ rawRequest: string }>) => {
   if (state.activeSessionIndex !== null) {
+    
     state.fuzzerSessions[state.activeSessionIndex].fuzzConfig.rawRequest = action.payload.rawRequest;
   }
 },

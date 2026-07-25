@@ -73,6 +73,8 @@ pub struct HighlightRange {
     pub id: String,
     pub from: i32,
     pub to: i32,
+    pub byte_from: i32,
+    pub byte_to: i32,
     pub original_text: String,
     pub is_active: bool,
 }

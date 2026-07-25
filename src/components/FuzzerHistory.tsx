@@ -46,15 +46,15 @@ function extractPayloadValues(
 ): { id: string; value: string }[] {
     if (!parameters.length || !rawRequest) return [];
 
-    const sorted = [...parameters].sort((a, b) => a.highlightRange.from - b.highlightRange.from);
+    const sorted = [...parameters].sort((a, b) => a.highlightRange.byteFrom - b.highlightRange.byteFrom);
 
     // Literal text between/around highlight ranges -- guaranteed unchanged by fuzzing.
     const segments: string[] = [];
-    segments.push(rawRequest.slice(0, sorted[0].highlightRange.from));
+    segments.push(rawRequest.slice(0, sorted[0].highlightRange.byteFrom));
     for (let i = 0; i < sorted.length - 1; i++) {
-        segments.push(rawRequest.slice(sorted[i].highlightRange.to, sorted[i + 1].highlightRange.from));
+        segments.push(rawRequest.slice(sorted[i].highlightRange.byteTo, sorted[i + 1].highlightRange.byteFrom));
     }
-    segments.push(rawRequest.slice(sorted[sorted.length - 1].highlightRange.to));
+    segments.push(rawRequest.slice(sorted[sorted.length - 1].highlightRange.byteTo));
 
     if (!actualRequest.startsWith(segments[0])) {
         // Template drifted from what was actually sent (e.g. request was hand-edited
@@ -309,13 +309,6 @@ function FuzzerHistoryBody({
 
     return (
         <div className="flex h-full flex-1 flex-col overflow-hidden">
-            {/* <ReactSplit
-                direction={SplitDirection.Vertical}
-                initialSizes={focusedResult ? [40, 45] : [100]}
-                minHeights={focusedResult ? [100, 100] : [100]}
-                gutterClassName="custom-gutter-vertical"
-                draggerClassName="custom-dragger-vertical"
-            > */}
             <ResizablePanelGroup direction='vertical' autoSaveId="fuzzing-history-table" >
                 <ResizablePanel defaultSize={30} minSize={15}>
                     <Table

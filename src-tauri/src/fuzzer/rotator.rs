@@ -176,7 +176,6 @@ pub async fn execute_rotator_fuzzing(
 ) -> Result<Vec<String>, String> {
     let targets = build_fuzz_requests(&session);
     let ids: Vec<String> = targets.iter().map(|t| t.id.clone()).collect();
-
     // Fire and forget: spawn the actual fuzzing work, don't await it here
     tokio::spawn(async move {
         process_fuzzer_session(
