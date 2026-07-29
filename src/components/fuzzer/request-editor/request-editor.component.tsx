@@ -337,26 +337,20 @@ const RequestEditor: React.FC = () => {
     // IMPROVED: Update editor content when Redux state changes with better sync
     useEffect(() => {
         if (viewRef.current && currentFuzzerSession.fuzzConfig.rawRequest !== undefined) {
-            const currentDoc = viewRef.current.state.sliceDoc(0, viewRef.current.state.doc.length);
+            const view = viewRef.current;
+            const currentDoc = view.state.sliceDoc(0, view.state.doc.length);
             if (currentDoc !== currentFuzzerSession.fuzzConfig.rawRequest) {
-                console.log('Updating editor content');
-
-                // Update document content
-                viewRef.current.dispatch({
+                view.dispatch({
                     changes: {
                         from: 0,
-                        to: currentDoc.length,
+                        to: view.state.doc.length,   // <-- use CodeMirror's own length, not the string's
                         insert: currentFuzzerSession.fuzzConfig.rawRequest
                     }
                 });
-
-
-
-                // Force refresh after content change
                 setTimeout(() => forceEditorRefresh(), 0);
             }
         }
-    }, [currentFuzzerSession.fuzzConfig.rawRequest, activeSessionIndex]); // Added activeSessionIndex as dependency
+    }, [currentFuzzerSession.fuzzConfig.rawRequest, activeSessionIndex]);
 
     // useEffect(() => {
     //     console.log('Active session or sessions changed:', activeSessionIndex, fuzzerSessions)
