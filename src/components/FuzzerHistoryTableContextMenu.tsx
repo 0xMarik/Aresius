@@ -7,7 +7,6 @@ import {
     ContextMenuSubTrigger,
 } from '@/components/ui/context-menu';
 import {
-    Send,
     Repeat,
     Copy,
     FolderPlus,

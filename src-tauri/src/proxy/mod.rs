@@ -21,9 +21,10 @@ const MAX_BODY_SIZE: usize = 25 * 1024 * 1024; // 25MB
 const INTERCEPT_TIMEOUT_SECS: u64 = 120;
 
 #[derive(serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 struct HttpHistoryPayload {
-    request: String,
-    response: String,
+    raw_request: String,
+    raw_response: String,
     host: String,
     timestamp: u128,
     duration: Option<u64>,
@@ -356,8 +357,8 @@ async fn handle_connect(
                     .emit(
                         "http_history",
                         HttpHistoryPayload {
-                            request: decrypted_request,
-                            response: decrypted_response,
+                            raw_request: decrypted_request,
+                            raw_response: decrypted_response,
                             host: target.clone(),
                             timestamp: ts_ms,
                             duration: Some(duration.as_millis() as u64),
@@ -515,8 +516,8 @@ async fn handle_http_request(
                     .emit(
                         "http_history",
                         HttpHistoryPayload {
-                            request: decrypted_request,
-                            response: String::from_utf8_lossy(&response_bytes).to_string(),
+                            raw_request: decrypted_request,
+                            raw_response: String::from_utf8_lossy(&response_bytes).to_string(),
                             host: target.clone(),
                             timestamp: ts_ms,
                             duration: Some(duration.as_millis() as u64),

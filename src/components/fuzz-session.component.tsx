@@ -64,7 +64,7 @@ const FuzzSession = () => {
     }, [activeSessionIndex])
 
     const handleCreateFuzzSession = useCallback(() => {
-        dispatch(addFuzzSession({ name: "Session" }))
+        dispatch(addFuzzSession({ name: "Session", targetUrl: "" }))
     }, [dispatch])
 
     const handleSelection = useCallback((value: string[]) => {

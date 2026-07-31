@@ -1,6 +1,7 @@
 import { useAppSelector } from "@/hooks/redux"
 import { removeInterceptedRequest } from "@/store/slices/interceptorSlice";
 import { invoke } from "@tauri-apps/api/core";
+import { useEffect } from "react";
 import { useDispatch } from "react-redux";
 
 const Interceptor = () => {
@@ -18,6 +19,19 @@ const Interceptor = () => {
         });
         dispatch(removeInterceptedRequest({ id }))
     }
+
+    // useEffect(() => {
+    //     interceptor.map(async (itm) => {
+    //         await invoke('resolve_intercept', {
+    //             decision: {
+    //                 id: itm.id,
+    //                 action: 'forward',
+    //                 modified_request: null
+    //             }
+    //         });
+    //         dispatch(removeInterceptedRequest({ id: itm.id }))
+    //     })
+    // }, [interceptor])
 
     return (
         <div>

@@ -64,6 +64,7 @@ const RequestCodeEditor = () => {
         const state = EditorState.create({
             doc: requestTmp,
             extensions: [
+                EditorState.lineSeparator.of("\r\n"),
                 basicSetup,
                 http(),
                 oneDark,
@@ -118,6 +119,7 @@ const ResponseCodeEditor = () => {
                 ? history[selectedHistoryIndex].responseRaw
                 : "",
             extensions: [
+                EditorState.lineSeparator.of("\r\n"),
                 basicSetup,
                 http(),
                 oneDark,

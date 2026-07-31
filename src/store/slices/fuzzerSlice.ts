@@ -14,7 +14,7 @@ const initialState : FuzzerState = {
             rawRequest: 'GET / HTTP/1.1\r\nHost: www.google.com\r\n\r\n',
             parameters: [],
             metadata: {
-                targetUrl: 'http://google.com:80'
+                targetUrl: 'https://google.com'
             }
         },
         selectedHighlightId: null,
@@ -31,7 +31,7 @@ const fuzzerSlice = createSlice({
       const {sessions} = action.payload
       state.fuzzerSessions = sessions;
     },
-    addFuzzSession: (state, action : PayloadAction<{ name: string, rawRequest? : string, targetUrl ?: string}>) => {
+    addFuzzSession: (state, action : PayloadAction<{ name: string, rawRequest? : string, targetUrl: string}>) => {
       const {name, rawRequest , targetUrl} = action.payload;
       state.fuzzerSessions.push({
         name: name + ` ${state.fuzzerSessions.length + 1}`,

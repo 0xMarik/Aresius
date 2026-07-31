@@ -8,6 +8,7 @@ import { isRowSelected, FacetFilter } from '@/components/Table';
 import { parseRequest, parseResponse } from '@/components/utils';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { renderHttpHistoryTableContextMenu } from '@/components/HttpHistoryTableContextMenu';
+import { HttpHistory } from '@/types/http.type';
 
 
 export type RequestState = 'Pending' | 'Info' | 'Success' | 'Redirect' | 'Client Error' | 'Server Error' | 'Failed';
@@ -24,14 +25,6 @@ export type HttpTransaction = {
     group?: string;
 };
 
-type RawReqRes = {
-    request: string;
-    response: string;
-    host: string;
-    timestamp: number;
-    duration: number;
-};
-
 function stateFromCode(code: number | null): RequestState {
     if (code === null || code === undefined) return 'Pending';
     if (code >= 100 && code < 200) return 'Info';
@@ -42,10 +35,10 @@ function stateFromCode(code: number | null): RequestState {
     return 'Failed';
 }
 
-export function adaptFromReqRes(items: RawReqRes[]): HttpTransaction[] {
+export function adaptFromReqRes(items: HttpHistory[]): HttpTransaction[] {
     return items.map((item, idx) => {
-        const req = parseRequest(item.request);
-        const res = parseResponse(item.response);
+        const req = parseRequest(item.rawRequest);
+        const res = parseResponse(item.rawResponse);
         let host = item.host;
         let path = req.path ?? '/';
         try {
@@ -67,8 +60,8 @@ export function adaptFromReqRes(items: RawReqRes[]): HttpTransaction[] {
             time: item.timestamp,
             duration: item.duration ?? 0,
             state: stateFromCode(res.statusCode ?? null),
-            rawRequest: item.request,
-            rawResponse: item.response,
+            rawRequest: item.rawRequest,
+            rawResponse: item.rawResponse,
         };
     });
 }
@@ -232,7 +225,7 @@ const HTTPHisotry = () => {
                             <ResizablePanel defaultSize={50} minSize={15}>
                                 <div className=' h-full'>
                                     {
-                                        (selectedRequest === null) ? "select a request" : <CodeMirrorEditor value={history[selectedRequest].request} />
+                                        (selectedRequest === null) ? "select a request" : <CodeMirrorEditor value={history[selectedRequest].rawRequest} />
                                     }
                                 </div>
                             </ResizablePanel>
@@ -240,7 +233,7 @@ const HTTPHisotry = () => {
                             <ResizablePanel defaultSize={50} minSize={15}>
                                 <div className=' h-full'>
                                     {
-                                        (selectedRequest === null) ? "select a request" : <CodeMirrorEditor value={history[selectedRequest].response} />
+                                        (selectedRequest === null) ? "select a request" : <CodeMirrorEditor value={history[selectedRequest].rawResponse} />
                                     }
                                 </div>
                             </ResizablePanel>

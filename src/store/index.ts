@@ -5,6 +5,7 @@ import ReplayerReducer from './slices/replayerSlice';
 import HttpHistoryReducer from './slices/http-historySlice';
 import { Middleware } from '@reduxjs/toolkit'
 import interceptorReducer from './slices/interceptorSlice';
+import SiteMapReducer from './slices/sitemapSlice'
 
 export const loggerMiddleware: Middleware = store => next => action => {
   if((action as any).type !== "http-history/addToHttpHistory"){
@@ -24,6 +25,7 @@ const store = configureStore({
     replayerstate: ReplayerReducer,
     httpHistory: HttpHistoryReducer,
     interceptor: interceptorReducer,
+    sitemap: SiteMapReducer,
   },
   middleware: (getDefaultMiddleware) =>
     getDefaultMiddleware().concat(loggerMiddleware),

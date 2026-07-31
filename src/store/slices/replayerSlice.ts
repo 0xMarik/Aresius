@@ -77,7 +77,7 @@ const replayerSlice = createSlice({
             sessions: [
                 {
                     history: [],
-                    requestTmp: 'GET / HTTP/1.1\n\n',
+                    requestTmp: 'GET / HTTP/1.1\r\n\r\n',
                     url: 'https://',
                     selectedHistoryIndex: null,
                 }
@@ -96,7 +96,7 @@ const replayerSlice = createSlice({
         const collection = state.collections[collectionIndex];
         collection.sessions.push({
             history: [],
-            requestTmp: 'GET / HTTP/1.1\n\n',
+            requestTmp: 'GET / HTTP/1.1\r\n\r\n',
             url: 'https://',
             selectedHistoryIndex: null,
         });

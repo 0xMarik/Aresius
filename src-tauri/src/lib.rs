@@ -103,7 +103,6 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            // process_fuzzer_session,
             execute_rotator_fuzzing,
             execute_zipped_fuzzing,
             execute_echo_fuzzing,

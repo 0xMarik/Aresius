@@ -66,7 +66,7 @@ module.exports = {
 			},
   		},
 		fontSize: {
-        	base: ['12px', '1.4'],
+        	base: ['10px', '1'],
       	},
   	}
   },

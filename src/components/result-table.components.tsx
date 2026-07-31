@@ -19,6 +19,7 @@ export const CodeMirrorEditor: React.FC<{ value: string }> = ({ value }) => {
             const state = EditorState.create({
                 doc: value,
                 extensions: [
+                    EditorState.lineSeparator.of("\r\n"),
                     basicSetup,
                     EditorView.lineWrapping,
                     fullHeightTheme,

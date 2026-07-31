@@ -22,8 +22,8 @@ export interface HttpResponse {
 }
 
 export interface HttpHistory {
-    request: string;
-    response: string;
+    rawRequest: string;
+    rawResponse: string;
     host: string;
     timestamp: number;
     duration: number;

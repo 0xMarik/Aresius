@@ -20,6 +20,8 @@ import Interceptor from "./pages/interceptor/Interceptor.page";
 import { addInterceptedRequest } from "./store/slices/interceptorSlice";
 import MenubarDemo from "./components/MenuBar";
 import { applyFuzzUpdates } from "./store/slices/fuzzerSlice";
+import SitemapTree from "./pages/sitemap/Sitemap";
+import { updateSiteMap } from "./store/slices/sitemapSlice";
 
 interface ReqRes {
     request: string;
@@ -44,7 +46,9 @@ export default function App() {
             const unlisten = await listen('http_history', (event) => {
                 console.log("Http History interceptor: ", event.payload)
                 dispatch(addToHttpHistory({ historyItem: event.payload as any }));
+                dispatch(updateSiteMap({ historyItem: event.payload as any }))
             });
+
 
             return unlisten;
         };
@@ -100,6 +104,7 @@ export default function App() {
                         <SidebarInset >
 
                             <Routes>
+                                <Route path="/site-map" element={<SitemapTree />} />
                                 <Route path="/interceptor" element={<Interceptor />} />
                                 <Route path="/replayer" element={<Tweaker />} />
                                 <Route path="/http-history" element={<HTTPHisotry />} />

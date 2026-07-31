@@ -1,0 +1,398 @@
+import { getDomainLabel, getRegistrableDomain } from './publicSuffix';
+import { splitPathSegments, templatePathSegments } from './pathTemplating';
+import { parseRequestLine, parseBodyFieldNames, parseHostname } from './requestParsing';
+
+export type SitemapKind = 'domain' | 'host' | 'folder' | 'endpoint' | 'variant';
+
+export interface SitemapNodeData {
+    kind: SitemapKind;
+    hitCount: number;
+    methods?: string[];
+    inScope?: boolean;
+}
+
+export interface TreeNode {
+    id: string;
+    label: string;
+    children?: TreeNode[];
+    data?: SitemapNodeData;
+}
+
+export interface HttpHistory {
+    rawRequest: string;
+    rawResponse: string;
+    host: string;
+    timestamp: number;
+    duration: number;
+}
+
+export interface BuildSitemapOptions {
+    /**
+     * Determines whether a host is considered in-scope. Defaults to
+     * "everything in scope" if not provided, since HttpHistory alone
+     * doesn't carry scope info.
+     */
+    isInScope?: (hostname: string) => boolean;
+}
+
+// ---- Internal mutable node used while merging, converted to TreeNode[] at the end ----
+
+interface MutableNode {
+    id: string;
+    label: string;
+    kind: SitemapKind;
+    hitCount: number;
+    methods?: Set<string>;
+    inScope?: boolean;
+    children: Map<string, MutableNode>; // keyed by child label (or method+params key for variants)
+}
+
+function createNode(id: string, label: string, kind: SitemapKind): MutableNode {
+    return { id, label, kind, hitCount: 0, children: new Map() };
+}
+
+function getOrCreateChild(parent: MutableNode, key: string, id: string, label: string, kind: SitemapKind): MutableNode {
+    let child = parent.children.get(key);
+    if (!child) {
+        child = createNode(id, label, kind);
+        parent.children.set(key, child);
+    }
+    return child;
+}
+
+/**
+ * Builds (or merges into) a sitemap TreeNode[] from a list of HTTP history
+ * entries.
+ *
+ * Tree shape: domain -> host -> folder(s) -> endpoint -> variant
+ *   - domain: grouped by eTLD+1 (e.g. "*.example.com")
+ *   - host: exact hostname (e.g. "api.example.com")
+ *   - folder: one node per static path segment (dynamic segments are
+ *     templated to "{id}" and folded together, per the v1 path-templating
+ *     requirement)
+ *   - endpoint: the final path segment, aggregating all HTTP methods seen
+ *     for that path
+ *   - variant: one node per (method, sorted query param names, sorted body
+ *     field names) combination seen for that endpoint
+ *
+ * Existing entries with the same path/host merge (hit counts increment)
+ * rather than duplicating nodes.
+ */
+export function buildSitemap(entries: HttpHistory[], options: BuildSitemapOptions = {}): TreeNode[] {
+    const root = createNode('root', 'root', 'domain'); // synthetic root, discarded at the end
+    root.kind = 'domain'; // placeholder, never emitted
+
+    for (const entry of entries) {
+        try {
+            mergeEntry(root, entry, options);
+        } catch {
+            // A single malformed entry shouldn't break the whole sitemap build.
+            continue;
+        }
+    }
+
+    return Array.from(root.children.values())
+        .map((child) => toTreeNode(child))
+        .sort(byLabel);
+}
+
+function mergeEntry(root: MutableNode, entry: HttpHistory, options: BuildSitemapOptions): void {
+    const hostname = parseHostname(entry.host);
+    const { method, path, queryParams } = parseRequestLine(entry.rawRequest);
+    const bodyFields = parseBodyFieldNames(entry.rawRequest, method);
+
+    // ---- domain node ----
+    const registrableDomain = getRegistrableDomain(hostname);
+    const domainLabel = getDomainLabel(hostname);
+    const domainId = `domain:${registrableDomain}`;
+    const domainNode = getOrCreateChild(root, domainId, domainId, domainLabel, 'domain');
+    domainNode.hitCount += 1;
+
+    // ---- host node ----
+    const hostId = `host:${hostname}`;
+    const hostNode = getOrCreateChild(domainNode, hostId, hostId, hostname, 'host');
+    hostNode.hitCount += 1;
+    if (options.isInScope) {
+        hostNode.inScope = options.isInScope(hostname);
+    } else if (hostNode.inScope === undefined) {
+        hostNode.inScope = true;
+    }
+
+    // ---- folder segments + endpoint ----
+    const rawSegments = splitPathSegments(path);
+    const segments = templatePathSegments(rawSegments);
+
+    let currentParent = hostNode;
+    let idPathPrefix = `h:${hostname}`;
+
+    if (segments.length === 0) {
+        // Root path "/" -- treat as its own endpoint directly under the host.
+        mergeEndpoint(currentParent, idPathPrefix, '/', method, queryParams, bodyFields);
+        return;
+    }
+
+    // All segments except the last are folders; the last is the endpoint name.
+    for (let i = 0; i < segments.length - 1; i++) {
+        const seg = segments[i];
+        idPathPrefix += `/${seg}`;
+        const folderId = `folder:${idPathPrefix}`;
+        currentParent = getOrCreateChild(currentParent, folderId, folderId, seg, 'folder');
+        currentParent.hitCount += 1;
+    }
+
+    const endpointSeg = segments[segments.length - 1];
+    idPathPrefix += `/${endpointSeg}`;
+    mergeEndpoint(currentParent, idPathPrefix, endpointSeg, method, queryParams, bodyFields);
+}
+
+function mergeEndpoint(
+    parent: MutableNode,
+    idPathPrefix: string,
+    label: string,
+    method: string,
+    queryParams: string[],
+    bodyFields: string[],
+): void {
+    const endpointId = `endpoint:${idPathPrefix}`;
+    const endpointNode = getOrCreateChild(parent, endpointId, endpointId, label, 'endpoint');
+    endpointNode.hitCount += 1;
+    if (!endpointNode.methods) endpointNode.methods = new Set();
+    endpointNode.methods.add(method);
+
+    // ---- variant node: keyed by method + sorted query param names + sorted body field names ----
+    const variantParamParts = [...queryParams.map((p) => `q:${p}`), ...bodyFields.map((f) => `b:${f}`)];
+    const variantKey = `${method}:${variantParamParts.join(',')}`;
+    const variantId = `variant:${idPathPrefix}:${variantKey}`;
+
+    const variantLabelParams = variantParamParts.length > 0 ? ` ?${[...queryParams, ...bodyFields].join(',')}` : '';
+    const variantLabel = `${method}${variantLabelParams}`;
+
+    const variantNode = getOrCreateChild(endpointNode, variantId, variantId, variantLabel, 'variant');
+    variantNode.hitCount += 1;
+}
+
+function toTreeNode(node: MutableNode): TreeNode {
+    const data: SitemapNodeData = {
+        kind: node.kind,
+        hitCount: node.hitCount,
+    };
+    if (node.methods && node.methods.size > 0) {
+        data.methods = Array.from(node.methods).sort();
+    }
+    if (node.inScope !== undefined) {
+        data.inScope = node.inScope;
+    }
+
+    const children = Array.from(node.children.values())
+        .map(toTreeNode)
+        .sort(byLabel);
+
+    const treeNode: TreeNode = {
+        id: node.id,
+        label: node.label,
+        data,
+    };
+    if (children.length > 0) {
+        treeNode.children = children;
+    }
+    return treeNode;
+}
+
+// Fixed kind ordering used to break ties when two sibling nodes share the
+// same label (e.g. an "endpoint" node and a "folder" node both named
+// "users", since /users and /users/{id} coexist). Using a fixed order here
+// -- rather than relying on Map/array insertion order -- keeps sibling
+// ordering deterministic regardless of what order entries are processed in,
+// which matters because insertHttpHistoryEntry must produce byte-identical
+// trees to buildSitemap no matter how the same entries are streamed in.
+const KIND_ORDER: Record<SitemapKind, number> = {
+    domain: 0,
+    host: 1,
+    folder: 2,
+    endpoint: 3,
+    variant: 4,
+};
+
+function compareNodes(a: { label: string; data?: { kind: SitemapKind } }, b: { label: string; data?: { kind: SitemapKind } }): number {
+    const labelCmp = a.label.localeCompare(b.label);
+    if (labelCmp !== 0) return labelCmp;
+    const aKind = a.data?.kind;
+    const bKind = b.data?.kind;
+    if (aKind && bKind && aKind !== bKind) {
+        return KIND_ORDER[aKind] - KIND_ORDER[bKind];
+    }
+    return 0;
+}
+
+function byLabel(a: TreeNode, b: TreeNode): number {
+    return compareNodes(a, b);
+}
+
+// ---------------------------------------------------------------------------
+// Incremental single-entry insert -- mutates a live TreeNode[] in place
+// instead of rebuilding the whole tree from the full HttpHistory[] list.
+// ---------------------------------------------------------------------------
+
+/**
+ * Inserts a single HttpHistory entry into an existing sitemap TreeNode[],
+ * mutating it in place and returning the same array reference.
+ *
+ * Unlike `buildSitemap`, this does NOT rebuild the tree from scratch --
+ * it walks the live tree from the root, finds-or-creates each node along
+ * the domain -> host -> folder(s) -> endpoint -> variant path, and bumps
+ * hit counts. Nodes that already exist keep their identity (same object
+ * reference) so this is safe to use with React state that relies on
+ * referential stability for unrelated branches (e.g. React.memo'd rows) --
+ * only the branch touched by this entry gets new object references, from
+ * the domain node down to the variant.
+ *
+ * Children arrays are kept sorted by label (same order buildSitemap
+ * produces), using binary search insertion so this stays cheap even with
+ * many siblings.
+ *
+ * @param tree The current sitemap tree (array of top-level domain nodes).
+ *             Mutated in place.
+ * @param entry The new HTTP history entry to fold into the tree.
+ * @param options Same options as buildSitemap (e.g. isInScope).
+ * @returns The same `tree` array reference, for convenience chaining
+ *          (e.g. `tree = insertHttpHistoryEntry(tree, entry)`).
+ */
+export function insertHttpHistoryEntry(
+    tree: TreeNode[],
+    entry: HttpHistory,
+    options: BuildSitemapOptions = {},
+): TreeNode[] {
+    const hostname = parseHostname(entry.host);
+    const { method, path, queryParams } = parseRequestLine(entry.rawRequest);
+    const bodyFields = parseBodyFieldNames(entry.rawRequest, method);
+
+    // ---- domain node ----
+    const registrableDomain = getRegistrableDomain(hostname);
+    const domainLabel = getDomainLabel(hostname);
+    const domainId = `domain:${registrableDomain}`;
+    const domainNode = findOrInsertChild(tree, domainId, domainLabel, 'domain');
+    domainNode.data!.hitCount += 1;
+
+    // ---- host node ----
+    const hostId = `host:${hostname}`;
+    const hostChildren = ensureChildren(domainNode);
+    const hostNode = findOrInsertChild(hostChildren, hostId, hostname, 'host');
+    hostNode.data!.hitCount += 1;
+    if (options.isInScope) {
+        hostNode.data!.inScope = options.isInScope(hostname);
+    } else if (hostNode.data!.inScope === undefined) {
+        hostNode.data!.inScope = true;
+    }
+
+    // ---- folder segments + endpoint ----
+    const rawSegments = splitPathSegments(path);
+    const segments = templatePathSegments(rawSegments);
+
+    let currentParent = hostNode;
+    let idPathPrefix = `h:${hostname}`;
+
+    if (segments.length === 0) {
+        // Root path "/" -- treat as its own endpoint directly under the host.
+        insertEndpoint(currentParent, idPathPrefix, '/', method, queryParams, bodyFields);
+        return tree;
+    }
+
+    for (let i = 0; i < segments.length - 1; i++) {
+        const seg = segments[i];
+        idPathPrefix += `/${seg}`;
+        const folderId = `folder:${idPathPrefix}`;
+        const siblings = ensureChildren(currentParent);
+        currentParent = findOrInsertChild(siblings, folderId, seg, 'folder');
+        currentParent.data!.hitCount += 1;
+    }
+
+    const endpointSeg = segments[segments.length - 1];
+    idPathPrefix += `/${endpointSeg}`;
+    insertEndpoint(currentParent, idPathPrefix, endpointSeg, method, queryParams, bodyFields);
+
+    return tree;
+}
+
+function insertEndpoint(
+    parent: TreeNode,
+    idPathPrefix: string,
+    label: string,
+    method: string,
+    queryParams: string[],
+    bodyFields: string[],
+): void {
+    const endpointId = `endpoint:${idPathPrefix}`;
+    const endpointChildren = ensureChildren(parent);
+    const endpointNode = findOrInsertChild(endpointChildren, endpointId, label, 'endpoint');
+    endpointNode.data!.hitCount += 1;
+
+    const methods = new Set(endpointNode.data!.methods ?? []);
+    methods.add(method);
+    endpointNode.data!.methods = Array.from(methods).sort();
+
+    // ---- variant node ----
+    const variantParamParts = [...queryParams.map((p) => `q:${p}`), ...bodyFields.map((f) => `b:${f}`)];
+    const variantKey = `${method}:${variantParamParts.join(',')}`;
+    const variantId = `variant:${idPathPrefix}:${variantKey}`;
+
+    const variantLabelParams = variantParamParts.length > 0 ? ` ?${[...queryParams, ...bodyFields].join(',')}` : '';
+    const variantLabel = `${method}${variantLabelParams}`;
+
+    const variantChildren = ensureChildren(endpointNode);
+    const variantNode = findOrInsertChild(variantChildren, variantId, variantLabel, 'variant');
+    variantNode.data!.hitCount += 1;
+}
+
+/** Ensures a node has a `children` array, creating one if absent, and returns it. */
+function ensureChildren(node: TreeNode): TreeNode[] {
+    if (!node.children) {
+        node.children = [];
+    }
+    return node.children;
+}
+
+/**
+ * Finds a child by id in a sorted-by-label TreeNode[] array; if not found,
+ * creates it and inserts it at the correct sorted position (binary search),
+ * keeping the array's label ordering intact without a full re-sort.
+ */
+function findOrInsertChild(siblings: TreeNode[], id: string, label: string, kind: SitemapKind): TreeNode {
+    // Existing nodes are looked up by id (stable identity), not label, since
+    // two different ids could coincidentally share a label in edge cases.
+    // Linear scan for the id match is fine here -- this is bounded by the
+    // sibling count -- but we still use the label's sorted position to know
+    // where to splice in a genuinely new node.
+    const existingIndex = siblings.findIndex((n) => n.id === id);
+    if (existingIndex !== -1) {
+        return siblings[existingIndex];
+    }
+
+    const newNode: TreeNode = {
+        id,
+        label,
+        data: { kind, hitCount: 0 },
+    };
+
+    const insertAt = lowerBound(siblings, newNode);
+    siblings.splice(insertAt, 0, newNode);
+    return newNode;
+}
+
+/**
+ * Binary search: returns the index of the first sibling that is >= `node`
+ * under the same (label, kind) ordering used by buildSitemap's final sort,
+ * so incremental inserts and full rebuilds always agree on sibling order.
+ */
+function lowerBound(siblings: TreeNode[], node: TreeNode): number {
+    let lo = 0;
+    let hi = siblings.length;
+    while (lo < hi) {
+        const mid = (lo + hi) >>> 1;
+        if (compareNodes(siblings[mid], node) < 0) {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    return lo;
+}
