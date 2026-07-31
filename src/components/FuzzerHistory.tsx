@@ -321,6 +321,7 @@ function FuzzerHistoryBody({
                         emptyHint={isLoading ? undefined : 'Run the fuzzer to see results here'}
                         setSelectedRequest={setFocusedId}
                         renderRowContextMenu={renderFuzzerHistoryTableContextMenu}
+                        fillHeight
                     />
                 </ResizablePanel>
                 <ResizableHandle />

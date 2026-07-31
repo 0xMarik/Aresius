@@ -529,6 +529,7 @@ interface RowsViewportProps<TData extends BaseRow> {
     selectedIds: Set<number>;
     setSelectedIds: React.Dispatch<React.SetStateAction<Set<number>>>;
     maxHeight: number;
+    fillHeight?: boolean;
     totalRowsCount: number;
     emptyLabel: string;
     emptyHint?: string;
@@ -546,6 +547,7 @@ function RowsViewportInner<TData extends BaseRow>({
     selectedIds,
     setSelectedIds,
     maxHeight,
+    fillHeight = false,
     totalRowsCount,
     emptyLabel,
     emptyHint,
@@ -710,7 +712,7 @@ function RowsViewportInner<TData extends BaseRow>({
 
     if (visibleRows.length === 0) {
         return (
-            <div className="py-12 text-center text-[#9A9A90]">
+            <div className={fillHeight ? 'flex min-h-0 flex-1 items-center justify-center py-12 text-center text-[#9A9A90]' : 'py-12 text-center text-[#9A9A90]'}>
                 <p className="text-[13px]">{totalRowsCount === 0 ? emptyLabel : 'No rows match the current filters'}</p>
                 {emptyHint && (
                     <p className="mt-1 text-[11px]">{totalRowsCount === 0 ? emptyHint : 'Try clearing search or filters'}</p>
@@ -720,7 +722,11 @@ function RowsViewportInner<TData extends BaseRow>({
     }
 
     return (
-        <div ref={scrollContainerRef} style={{ maxHeight, overflowY: 'auto', position: 'relative' }}>
+        <div
+            ref={scrollContainerRef}
+            className={fillHeight ? 'relative min-h-0 flex-1 overflow-y-auto' : undefined}
+            style={fillHeight ? undefined : { maxHeight, overflowY: 'auto', position: 'relative' }}
+        >
             <div style={{ height: rowVirtualizer.getTotalSize(), position: 'relative', width: '100%' }}>
                 {virtualItems.map((virtualItem) => {
                     const row = visibleRows[virtualItem.index];
@@ -778,8 +784,12 @@ interface DataTableProps<TData extends BaseRow> {
     emptyLabel?: string;
     emptyHint?: string;
     /** Max height of the scrollable row viewport. Rows outside this
-     *  viewport (plus overscan) are not mounted in the DOM. */
+     *  viewport (plus overscan) are not mounted in the DOM. Ignored when
+     *  `fillHeight` is true. */
     maxHeight?: number;
+    /** Fill the parent height and scroll rows within the remaining space.
+     *  Parent must be a bounded container (`h-full` + `min-h-0` flex chain). */
+    fillHeight?: boolean;
     /** Customize (or fully replace) the row context menu. Receives a
      *  RowContextMenuContext with the clicked row, the current
      *  multi-selection, and DataTable's built-in group/remove actions
@@ -802,6 +812,7 @@ export default function DataTable<TData extends BaseRow>({
     emptyLabel = 'No rows',
     emptyHint,
     maxHeight = 600,
+    fillHeight = false,
     renderRowContextMenu,
 }: DataTableProps<TData>) {
     const [rows, setRows] = useState<TData[]>(data);
@@ -1121,33 +1132,40 @@ export default function DataTable<TData extends BaseRow>({
     const resolvedRenderContextMenu = renderRowContextMenu ?? defaultRenderContextMenu;
 
     return (
-        <div className="mx-auto max-w-7xl bg-[#FAF7F2] p-2">
-            <TableToolbar
-                search={search}
-                onSearchChange={setSearch}
-                onClearSearch={clearSearch}
-                searchPlaceholder={searchPlaceholder}
-                facetFilters={facetFilters}
-                facetOptions={facetOptions}
-                facetState={facetState}
-                onToggleFacet={toggleFacetValue}
-                table={table}
-                columnVisibility={columnVisibility}
-                hasActiveFilters={hasActiveFilters}
-                onClearFilters={clearFilters}
-                filteredCount={filteredData.length}
-                totalCount={rows.length}
-
-            />
-
-            <div className="overflow-hidden rounded-md border border-[#E3DCCC] bg-white">
-                <TableHeaderRow
+        <div className={fillHeight ? 'flex h-full min-h-0 w-full flex-col bg-[#FAF7F2] p-2' : 'mx-auto max-w-7xl bg-[#FAF7F2] p-2'}>
+            <div className={fillHeight ? 'shrink-0' : undefined}>
+                <TableToolbar
+                    search={search}
+                    onSearchChange={setSearch}
+                    onClearSearch={clearSearch}
+                    searchPlaceholder={searchPlaceholder}
+                    facetFilters={facetFilters}
+                    facetOptions={facetOptions}
+                    facetState={facetState}
+                    onToggleFacet={toggleFacetValue}
                     table={table}
-                    columnOrder={columnOrder}
-                    sorting={sorting}
-                    sensors={sensors}
-                    onColumnDragEnd={handleColumnDragEnd}
+                    columnVisibility={columnVisibility}
+                    hasActiveFilters={hasActiveFilters}
+                    onClearFilters={clearFilters}
+                    filteredCount={filteredData.length}
+                    totalCount={rows.length}
+
                 />
+            </div>
+
+            <div className={fillHeight
+                ? 'flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-[#E3DCCC] bg-white'
+                : 'overflow-hidden rounded-md border border-[#E3DCCC] bg-white'
+            }>
+                <div className={fillHeight ? 'shrink-0' : undefined}>
+                    <TableHeaderRow
+                        table={table}
+                        columnOrder={columnOrder}
+                        sorting={sorting}
+                        sensors={sensors}
+                        onColumnDragEnd={handleColumnDragEnd}
+                    />
+                </div>
 
                 <RowsViewport
                     visibleRows={visibleRows}
@@ -1156,6 +1174,7 @@ export default function DataTable<TData extends BaseRow>({
                     selectedIds={selectedIds}
                     setSelectedIds={setSelectedIds}
                     maxHeight={maxHeight}
+                    fillHeight={fillHeight}
                     totalRowsCount={rows.length}
                     emptyLabel={emptyLabel}
                     emptyHint={emptyHint}

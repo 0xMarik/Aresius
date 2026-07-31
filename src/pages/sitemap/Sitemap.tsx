@@ -1,10 +1,17 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { RsTree } from 'rstree-ui';
 import type { ReactNode } from 'react';
 import { Globe, Server, Folder, Route, Braces } from 'lucide-react';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { SitemapKind, TreeNode } from '@/types/sitemap.type';
 import { useAppSelector } from '@/hooks/redux';
+import Table from '@/components/Table';
+import { CodeMirrorEditor } from '@/components/result-table.components';
+import { renderHttpHistoryTableContextMenu } from '@/components/HttpHistoryTableContextMenu';
+import { adaptFromReqRes, httpColumns, httpFacetFilters } from '@/pages/HttpHistory';
+import { historySelectors } from '@/store/slices/http-historySlice';
+import { buildSitemapNodeIndex, collectRequestIdsDeduped } from './utils';
+import type { EntityId } from '@reduxjs/toolkit';
 
 const kindIcon: Record<SitemapKind, ReactNode> = {
     domain: <Globe className="w-2.5 h-2.5 text-[--color-terracotta]" />,
@@ -53,21 +60,49 @@ function renderSitemapNode(node: TreeNode) {
     );
 }
 
+function resolveEntityId(id: string): EntityId {
+    const asNumber = Number(id);
+    return Number.isNaN(asNumber) ? id : asNumber;
+}
+
 export default function SitemapTree() {
     const [selectedIds, setSelectedIds] = useState<string[]>([]);
+    const [expandedIds, setExpandedIds] = useState<string[]>([]);
+    const [selectedRequest, setSelectedRequest] = useState<number | null>(null);
+
+    const sitemap = useAppSelector(state => state.sitemap);
+    const historyEntities = useAppSelector(historySelectors.selectEntities);
+
+    const selectedNodeId = selectedIds[0] ?? null;
+
+    const nodeIndex = useMemo(() => buildSitemapNodeIndex(sitemap), [sitemap]);
+
+    const selectedNode = selectedNodeId ? nodeIndex.get(selectedNodeId) ?? null : null;
+
+    const requestIds = useMemo(
+        () => (selectedNode ? collectRequestIdsDeduped(selectedNode) : []),
+        [selectedNode],
+    );
+
+    const rows = useMemo(() => {
+        const items = requestIds
+            .map((id) => historyEntities[resolveEntityId(id)])
+            .filter((item): item is NonNullable<typeof item> => item !== undefined);
+        return adaptFromReqRes(items);
+    }, [requestIds, historyEntities]);
+
+    const selectedEntity = useAppSelector((state) =>
+        selectedRequest !== null ? historySelectors.selectById(state, selectedRequest) : undefined,
+    );
 
     useEffect(() => {
-        console.log({ selectedIds })
-    }, [selectedIds])
-
-    const [expandedIds, setExpandedIds] = useState<string[]>([]);
-
-    const { sitemap } = useAppSelector(state => state);
+        setSelectedRequest(null);
+    }, [selectedNodeId]);
 
     return (
-        <div className="rounded-md h-full">
-            <ResizablePanelGroup direction="horizontal" autoSaveId="aresius-sitemap-layout">
-                <ResizablePanel defaultSize={20} minSize={13}>
+        <div className="h-full min-h-0 overflow-hidden rounded-md">
+            <ResizablePanelGroup direction="horizontal" autoSaveId="aresius-sitemap-layout" className="h-full min-h-0">
+                <ResizablePanel defaultSize={20} minSize={13} className="min-h-0 overflow-hidden">
                     <RsTree
                         data={sitemap}
                         selectedIds={selectedIds}
@@ -82,7 +117,54 @@ export default function SitemapTree() {
                     />
                 </ResizablePanel>
                 <ResizableHandle />
-                <ResizablePanel defaultSize={80} minSize={20} />
+                <ResizablePanel defaultSize={80} minSize={20} className="min-h-0 overflow-hidden">
+                    {!selectedNode ? (
+                        <div className="flex h-full items-center justify-center text-sm text-[--color-charcoal]/50">
+                            Select a sitemap node to view its requests
+                        </div>
+                    ) : (
+                        <ResizablePanelGroup direction="vertical" autoSaveId="aresius-sitemap-requests-layout" className="h-full min-h-0">
+                            <ResizablePanel defaultSize={50} minSize={15} className="min-h-0 overflow-hidden">
+                                <div className="flex h-full min-h-0 flex-col overflow-hidden">
+                                    <Table
+                                        key={selectedNodeId}
+                                        fillHeight
+                                        data={rows}
+                                        columns={httpColumns}
+                                        facetFilters={httpFacetFilters}
+                                        searchPlaceholder="Search host, url, method, code…"
+                                        emptyLabel="No requests for this node"
+                                        emptyHint="Captured traffic matching this path will appear here"
+                                        setSelectedRequest={setSelectedRequest}
+                                        renderRowContextMenu={renderHttpHistoryTableContextMenu}
+                                    />
+                                </div>
+                            </ResizablePanel>
+                            <ResizableHandle />
+                            <ResizablePanel defaultSize={50} minSize={15} className="min-h-0 overflow-hidden">
+                                <div className="flex h-full min-h-0 flex-col overflow-hidden">
+                                    <ResizablePanelGroup direction="horizontal" autoSaveId="aresius-sitemap-req-res" className="h-full min-h-0">
+                                        <ResizablePanel defaultSize={50} minSize={15} className="min-h-0 overflow-hidden">
+                                            <div className="h-full min-h-0 overflow-hidden">
+                                                {!selectedEntity
+                                                    ? 'select a request'
+                                                    : <CodeMirrorEditor value={selectedEntity.rawRequest} />}
+                                            </div>
+                                        </ResizablePanel>
+                                        <ResizableHandle />
+                                        <ResizablePanel defaultSize={50} minSize={15} className="min-h-0 overflow-hidden">
+                                            <div className="h-full min-h-0 overflow-hidden">
+                                                {!selectedEntity
+                                                    ? 'select a request'
+                                                    : <CodeMirrorEditor value={selectedEntity.rawResponse} />}
+                                            </div>
+                                        </ResizablePanel>
+                                    </ResizablePanelGroup>
+                                </div>
+                            </ResizablePanel>
+                        </ResizablePanelGroup>
+                    )}
+                </ResizablePanel>
             </ResizablePanelGroup>
         </div>
     );

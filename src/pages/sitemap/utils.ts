@@ -1,30 +1,10 @@
 import { getDomainLabel, getRegistrableDomain } from './publicSuffix';
 import { splitPathSegments, templatePathSegments } from './pathTemplating';
 import { parseRequestLine, parseBodyFieldNames, parseHostname } from './requestParsing';
+import type { HttpHistory } from '@/types/http.type';
+import type { SitemapKind, SitemapNodeData, TreeNode } from '@/types/sitemap.type';
 
-export type SitemapKind = 'domain' | 'host' | 'folder' | 'endpoint' | 'variant';
-
-export interface SitemapNodeData {
-    kind: SitemapKind;
-    hitCount: number;
-    methods?: string[];
-    inScope?: boolean;
-}
-
-export interface TreeNode {
-    id: string;
-    label: string;
-    children?: TreeNode[];
-    data?: SitemapNodeData;
-}
-
-export interface HttpHistory {
-    rawRequest: string;
-    rawResponse: string;
-    host: string;
-    timestamp: number;
-    duration: number;
-}
+export type { SitemapKind, SitemapNodeData, TreeNode };
 
 export interface BuildSitemapOptions {
     /**
@@ -44,6 +24,7 @@ interface MutableNode {
     hitCount: number;
     methods?: Set<string>;
     inScope?: boolean;
+    requestIds?: string[];
     children: Map<string, MutableNode>; // keyed by child label (or method+params key for variants)
 }
 
@@ -127,7 +108,7 @@ function mergeEntry(root: MutableNode, entry: HttpHistory, options: BuildSitemap
 
     if (segments.length === 0) {
         // Root path "/" -- treat as its own endpoint directly under the host.
-        mergeEndpoint(currentParent, idPathPrefix, '/', method, queryParams, bodyFields);
+        mergeEndpoint(currentParent, idPathPrefix, '/', method, queryParams, bodyFields, String(entry.id));
         return;
     }
 
@@ -142,7 +123,13 @@ function mergeEntry(root: MutableNode, entry: HttpHistory, options: BuildSitemap
 
     const endpointSeg = segments[segments.length - 1];
     idPathPrefix += `/${endpointSeg}`;
-    mergeEndpoint(currentParent, idPathPrefix, endpointSeg, method, queryParams, bodyFields);
+    mergeEndpoint(currentParent, idPathPrefix, endpointSeg, method, queryParams, bodyFields, String(entry.id));
+}
+
+function pushRequestId(node: { requestIds?: string[] }, requestId: string): void {
+    if (!node.requestIds) node.requestIds = [];
+    const ids = node.requestIds;
+    if (ids[ids.length - 1] !== requestId) ids.push(requestId);
 }
 
 function mergeEndpoint(
@@ -152,6 +139,7 @@ function mergeEndpoint(
     method: string,
     queryParams: string[],
     bodyFields: string[],
+    requestId: string,
 ): void {
     const endpointId = `endpoint:${idPathPrefix}`;
     const endpointNode = getOrCreateChild(parent, endpointId, endpointId, label, 'endpoint');
@@ -169,6 +157,7 @@ function mergeEndpoint(
 
     const variantNode = getOrCreateChild(endpointNode, variantId, variantId, variantLabel, 'variant');
     variantNode.hitCount += 1;
+    pushRequestId(variantNode, requestId);
 }
 
 function toTreeNode(node: MutableNode): TreeNode {
@@ -181,6 +170,9 @@ function toTreeNode(node: MutableNode): TreeNode {
     }
     if (node.inScope !== undefined) {
         data.inScope = node.inScope;
+    }
+    if (node.kind === 'variant' && node.requestIds && node.requestIds.length > 0) {
+        data.requestIds = node.requestIds;
     }
 
     const children = Array.from(node.children.values())
@@ -293,7 +285,7 @@ export function insertHttpHistoryEntry(
 
     if (segments.length === 0) {
         // Root path "/" -- treat as its own endpoint directly under the host.
-        insertEndpoint(currentParent, idPathPrefix, '/', method, queryParams, bodyFields);
+        insertEndpoint(currentParent, idPathPrefix, '/', method, queryParams, bodyFields, String(entry.id));
         return tree;
     }
 
@@ -308,7 +300,7 @@ export function insertHttpHistoryEntry(
 
     const endpointSeg = segments[segments.length - 1];
     idPathPrefix += `/${endpointSeg}`;
-    insertEndpoint(currentParent, idPathPrefix, endpointSeg, method, queryParams, bodyFields);
+    insertEndpoint(currentParent, idPathPrefix, endpointSeg, method, queryParams, bodyFields, String(entry.id));
 
     return tree;
 }
@@ -320,6 +312,7 @@ function insertEndpoint(
     method: string,
     queryParams: string[],
     bodyFields: string[],
+    requestId: string,
 ): void {
     const endpointId = `endpoint:${idPathPrefix}`;
     const endpointChildren = ensureChildren(parent);
@@ -341,6 +334,7 @@ function insertEndpoint(
     const variantChildren = ensureChildren(endpointNode);
     const variantNode = findOrInsertChild(variantChildren, variantId, variantLabel, 'variant');
     variantNode.data!.hitCount += 1;
+    pushRequestId(variantNode.data!, requestId);
 }
 
 /** Ensures a node has a `children` array, creating one if absent, and returns it. */
@@ -395,4 +389,30 @@ function lowerBound(siblings: TreeNode[], node: TreeNode): number {
         }
     }
     return lo;
+}
+
+/** Returns every request id stored on variant nodes in this node's subtree. */
+export function collectRequestIds(node: TreeNode): string[] {
+    if (node.data?.kind === 'variant') {
+        return node.data.requestIds ?? [];
+    }
+    return (node.children ?? []).flatMap(collectRequestIds);
+}
+
+/** Defensive dedup — not load-bearing; the tree shape makes duplicates structurally impossible. */
+export function collectRequestIdsDeduped(node: TreeNode): string[] {
+    return Array.from(new Set(collectRequestIds(node)));
+}
+
+/** Flat index of node id -> node, built once per tree reference. */
+export function buildSitemapNodeIndex(tree: TreeNode[]): Map<string, TreeNode> {
+    const index = new Map<string, TreeNode>();
+    const walk = (nodes: TreeNode[]) => {
+        for (const node of nodes) {
+            index.set(node.id, node);
+            if (node.children) walk(node.children);
+        }
+    };
+    walk(tree);
+    return index;
 }

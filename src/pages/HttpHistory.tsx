@@ -222,6 +222,7 @@ const HTTPHisotry = () => {
                             emptyHint="Start your proxy to begin capturing HTTP traffic"
                             setSelectedRequest={setSelectedRequest}
                             renderRowContextMenu={renderHttpHistoryTableContextMenu}
+                            fillHeight
                         />
                     </div>
                 </ResizablePanel>

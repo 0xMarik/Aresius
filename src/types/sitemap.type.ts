@@ -5,6 +5,8 @@ export interface SitemapNodeData {
     hitCount: number;
     methods?: string[];
     inScope?: boolean;
+    /** Populated only on variant nodes — one id per captured request. */
+    requestIds?: string[];
 }
 
 export interface TreeNode {

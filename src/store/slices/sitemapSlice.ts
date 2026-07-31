@@ -1,4 +1,5 @@
-import { HttpHistory, insertHttpHistoryEntry } from "@/pages/sitemap/utils";
+import { insertHttpHistoryEntry } from "@/pages/sitemap/utils";
+import { HttpHistory } from "@/types/http.type";
 import { TreeNode } from "@/types/sitemap.type";
 import { createSlice, PayloadAction} from "@reduxjs/toolkit"
 
