@@ -20,6 +20,7 @@ use crate::fuzzer::zipped::execute_zipped_fuzzing;
 
 mod proxy;
 use crate::http_request::HttpConnection;
+use crate::proxy::utils::HistoryIdCounter;
 use crate::proxy::*;
 
 use tracing;
@@ -80,6 +81,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(InterceptState::new())
         .manage(CertCache::new())
+        .manage(HistoryIdCounter::new())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {

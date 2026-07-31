@@ -8,13 +8,13 @@ import interceptorReducer from './slices/interceptorSlice';
 import SiteMapReducer from './slices/sitemapSlice'
 
 export const loggerMiddleware: Middleware = store => next => action => {
-  if((action as any).type !== "http-history/addToHttpHistory"){
-    console.log('[Logger] Dispatching:', action)
-  }
+  // if((action as any).type !== "http-history/addToHttpHistory"){
+    // }
+      console.log('[Logger] Dispatching:', action)
   const result = next(action); // Call next for ALL actions
-  if((action as any).type !== "http-history/addToHttpHistory"){
-    console.log('[Logger] Next state:', store.getState())
-  }
+  console.log('[Logger] Next state:', store.getState())
+  // if((action as any).type !== "http-history/addToHttpHistory"){
+  // }
   return result;
 }
 

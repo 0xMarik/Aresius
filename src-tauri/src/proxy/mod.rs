@@ -1,4 +1,5 @@
 use crate::ares_utils::certs::*;
+use crate::proxy::utils::HistoryIdCounter;
 use rcgen::KeyPair;
 use rustls::{pki_types::ServerName, ClientConfig, RootCertStore};
 use std::collections::HashMap;
@@ -11,7 +12,7 @@ use tokio::sync::{oneshot, Mutex};
 use tokio_rustls::client::TlsStream as ClientTlsStream;
 use tokio_rustls::TlsConnector;
 use uuid::Uuid;
-
+pub mod utils;
 /// Hard cap on a single request/response we'll buffer in memory.
 /// Protects against unbounded growth on malformed or malicious framing.
 const MAX_BODY_SIZE: usize = 25 * 1024 * 1024; // 25MB
@@ -23,6 +24,7 @@ const INTERCEPT_TIMEOUT_SECS: u64 = 120;
 #[derive(serde::Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct HttpHistoryPayload {
+    id: u32,
     raw_request: String,
     raw_response: String,
     host: String,
@@ -352,11 +354,12 @@ async fn handle_connect(
 
                 let duration = start.elapsed();
                 let decrypted_response = String::from_utf8_lossy(&response_bytes).to_string();
-
+                let history_counter: tauri::State<HistoryIdCounter> = app_handle.state();
                 app_handle
                     .emit(
                         "http_history",
                         HttpHistoryPayload {
+                            id: history_counter.next(),
                             raw_request: decrypted_request,
                             raw_response: decrypted_response,
                             host: target.clone(),
@@ -512,10 +515,12 @@ async fn handle_http_request(
                 };
                 let duration = start.elapsed();
 
+                let history_counter: tauri::State<HistoryIdCounter> = app_handle.state();
                 app_handle
                     .emit(
                         "http_history",
                         HttpHistoryPayload {
+                            id: history_counter.next(),
                             raw_request: decrypted_request,
                             raw_response: String::from_utf8_lossy(&response_bytes).to_string(),
                             host: target.clone(),

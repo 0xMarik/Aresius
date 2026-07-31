@@ -22,6 +22,7 @@ import MenubarDemo from "./components/MenuBar";
 import { applyFuzzUpdates } from "./store/slices/fuzzerSlice";
 import SitemapTree from "./pages/sitemap/Sitemap";
 import { updateSiteMap } from "./store/slices/sitemapSlice";
+import { HttpHistory } from "./types/http.type";
 
 interface ReqRes {
     request: string;
@@ -44,8 +45,7 @@ export default function App() {
         // Listen for HTTP requests from Rust
         const setupListener = async () => {
             const unlisten = await listen('http_history', (event) => {
-                console.log("Http History interceptor: ", event.payload)
-                dispatch(addToHttpHistory({ historyItem: event.payload as any }));
+                dispatch(addToHttpHistory({ historyItem: event.payload as HttpHistory }));
                 dispatch(updateSiteMap({ historyItem: event.payload as any }))
             });
 
@@ -63,7 +63,6 @@ export default function App() {
     useEffect(() => {
         const setupListener = async () => {
             const unlisten = await listen("intercept_request", (event) => {
-                console.log({ payload: event.payload })
                 dispatch(addInterceptedRequest({ interceptedRequest: event.payload as any }))
             })
 

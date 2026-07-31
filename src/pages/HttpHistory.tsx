@@ -2,13 +2,14 @@ import { CodeMirrorEditor } from '@/components/result-table.components';
 import Table from '@/components/Table';
 import { useAppSelector } from '@/hooks/redux';
 import { ColumnDef, createColumnHelper } from '@tanstack/react-table';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 
 import { isRowSelected, FacetFilter } from '@/components/Table';
 import { parseRequest, parseResponse } from '@/components/utils';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { renderHttpHistoryTableContextMenu } from '@/components/HttpHistoryTableContextMenu';
 import { HttpHistory } from '@/types/http.type';
+import { historySelectors } from '@/store/slices/http-historySlice'; // adjust path to match your alias
 
 
 export type RequestState = 'Pending' | 'Info' | 'Success' | 'Redirect' | 'Client Error' | 'Server Error' | 'Failed';
@@ -23,6 +24,8 @@ export type HttpTransaction = {
     duration: number;
     state: RequestState;
     group?: string;
+    rawRequest: string;
+    rawResponse: string;
 };
 
 function stateFromCode(code: number | null): RequestState {
@@ -36,7 +39,7 @@ function stateFromCode(code: number | null): RequestState {
 }
 
 export function adaptFromReqRes(items: HttpHistory[]): HttpTransaction[] {
-    return items.map((item, idx) => {
+    return items.map((item) => {
         const req = parseRequest(item.rawRequest);
         const res = parseResponse(item.rawResponse);
         let host = item.host;
@@ -50,9 +53,8 @@ export function adaptFromReqRes(items: HttpHistory[]): HttpTransaction[] {
             // keep raw fallbacks above
         }
 
-
         return {
-            id: idx,
+            id: Number(item.id), // real backend-assigned id, not array index
             host,
             url: path,
             method: req.method,
@@ -198,16 +200,21 @@ export const httpFacetFilters: FacetFilter<HttpTransaction>[] = [
 
 
 const HTTPHisotry = () => {
-
-    const { history } = useAppSelector(state => state.httpHistory);
+    const history = useAppSelector(historySelectors.selectAll);
     const [selectedRequest, setSelectedRequest] = useState<number | null>(null);
+
+    const selectedEntity = useAppSelector((state) =>
+        selectedRequest !== null ? historySelectors.selectById(state, selectedRequest) : undefined,
+    );
+
+    const rows = useMemo(() => adaptFromReqRes(history), [history]);
 
     return (
         <div className='overflow-hidden h-screen'>
             <ResizablePanelGroup direction='vertical' autoSaveId="http-history-table" >
                 <ResizablePanel defaultSize={50} minSize={15}>
                     <div className='h-full'>
-                        <Table data={adaptFromReqRes(history)}
+                        <Table data={rows}
                             columns={httpColumns}
                             facetFilters={httpFacetFilters}
                             searchPlaceholder="Search host, url, method, code…"
@@ -225,7 +232,7 @@ const HTTPHisotry = () => {
                             <ResizablePanel defaultSize={50} minSize={15}>
                                 <div className=' h-full'>
                                     {
-                                        (selectedRequest === null) ? "select a request" : <CodeMirrorEditor value={history[selectedRequest].rawRequest} />
+                                        !selectedEntity ? "select a request" : <CodeMirrorEditor value={selectedEntity.rawRequest} />
                                     }
                                 </div>
                             </ResizablePanel>
@@ -233,7 +240,7 @@ const HTTPHisotry = () => {
                             <ResizablePanel defaultSize={50} minSize={15}>
                                 <div className=' h-full'>
                                     {
-                                        (selectedRequest === null) ? "select a request" : <CodeMirrorEditor value={history[selectedRequest].rawResponse} />
+                                        !selectedEntity ? "select a request" : <CodeMirrorEditor value={selectedEntity.rawResponse} />
                                     }
                                 </div>
                             </ResizablePanel>

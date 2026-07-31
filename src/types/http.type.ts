@@ -1,3 +1,5 @@
+import { EntityId } from "@reduxjs/toolkit"
+
 export interface HttpRequest {
   id: string
   method: string
@@ -22,6 +24,7 @@ export interface HttpResponse {
 }
 
 export interface HttpHistory {
+    id: EntityId;
     rawRequest: string;
     rawResponse: string;
     host: string;
