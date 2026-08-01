@@ -117,7 +117,12 @@ pub fn run() {
             resend_failed_fuzz_requests,
             resend_worker_fuzz_requests,
             replay_request,
-            resolve_intercept,
+            get_intercept_settings,
+            set_intercept_settings,
+            get_intercept_queue,
+            forward_intercept_item,
+            drop_intercept_item,
+            drop_all_intercept_items,
             install_cert,
             check_cert_installed,
         ])

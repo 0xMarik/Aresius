@@ -4,22 +4,22 @@ use rcgen::KeyPair;
 use rustls::{pki_types::ServerName, ClientConfig, RootCertStore};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
-use tokio::sync::{oneshot, Mutex};
+use tokio::sync::Mutex;
 use tokio_rustls::client::TlsStream as ClientTlsStream;
 use tokio_rustls::TlsConnector;
 use uuid::Uuid;
+pub mod interceptor;
 pub mod utils;
+
+pub use interceptor::*;
+
 /// Hard cap on a single request/response we'll buffer in memory.
 /// Protects against unbounded growth on malformed or malicious framing.
 const MAX_BODY_SIZE: usize = 25 * 1024 * 1024; // 25MB
-
-/// How long we wait for the frontend to resolve an intercepted request
-/// before giving up and tearing down that connection.
-const INTERCEPT_TIMEOUT_SECS: u64 = 120;
 
 #[derive(serde::Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -32,36 +32,6 @@ struct HttpHistoryPayload {
     duration: Option<u64>,
 }
 
-#[derive(serde::Serialize, Clone)]
-struct InterceptPayload {
-    id: String,
-    request: String,
-    host: String,
-    timestamp: u128,
-    is_https: bool,
-}
-
-#[derive(serde::Deserialize, Clone, Debug)]
-pub struct InterceptDecision {
-    pub id: String,
-    pub action: String, // "forward", "drop", "modify"
-    /// Present when action == "modify": the full raw HTTP message
-    /// (request line + headers + body) the user wants sent instead.
-    pub modified_request: Option<String>,
-}
-
-pub struct InterceptState {
-    pending: Mutex<HashMap<String, oneshot::Sender<InterceptDecision>>>,
-}
-
-impl InterceptState {
-    pub fn new() -> Self {
-        Self {
-            pending: Mutex::new(HashMap::new()),
-        }
-    }
-}
-
 pub struct CertCache {
     pub certs: Mutex<HashMap<String, (Vec<u8>, Vec<u8>)>>, // domain -> (cert_pem, key_pem)
 }
@@ -71,25 +41,6 @@ impl CertCache {
         Self {
             certs: Mutex::new(HashMap::new()),
         }
-    }
-}
-
-#[tauri::command]
-pub async fn resolve_intercept(
-    state: tauri::State<'_, InterceptState>,
-    decision: InterceptDecision,
-) -> Result<(), String> {
-    println!("Frontend decision received: {:?}", decision);
-
-    let mut pending = state.pending.lock().await;
-
-    if let Some(sender) = pending.remove(&decision.id) {
-        sender
-            .send(decision)
-            .map_err(|_| "Failed to send decision".to_string())?;
-        Ok(())
-    } else {
-        Err(format!("Request ID not found: {}", decision.id))
     }
 }
 
@@ -166,36 +117,6 @@ fn build_upstream_tls_config() -> std::io::Result<ClientConfig> {
 /// Waits for the frontend's decision on an intercepted request, with a
 /// timeout. If the frontend never responds (closed UI, crash, etc.) we
 /// clean up the pending entry ourselves instead of leaking it forever.
-async fn await_decision(app_handle: &AppHandle, request_id: &str) -> Option<InterceptDecision> {
-    let (tx, rx) = oneshot::channel();
-    {
-        let intercept_state: tauri::State<InterceptState> = app_handle.state();
-        intercept_state
-            .pending
-            .lock()
-            .await
-            .insert(request_id.to_string(), tx);
-    }
-
-    match tokio::time::timeout(Duration::from_secs(INTERCEPT_TIMEOUT_SECS), rx).await {
-        Ok(Ok(decision)) => Some(decision),
-        Ok(Err(_)) => {
-            tracing::warn!("Intercept sender dropped for {}", request_id);
-            None
-        }
-        Err(_) => {
-            tracing::warn!(
-                "Intercept timed out after {}s for {}, dropping",
-                INTERCEPT_TIMEOUT_SECS,
-                request_id
-            );
-            let intercept_state: tauri::State<InterceptState> = app_handle.state();
-            intercept_state.pending.lock().await.remove(request_id);
-            None
-        }
-    }
-}
-
 fn now_ms() -> u128 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -270,6 +191,7 @@ async fn handle_connect(
     // A single upstream TLS connection is reused across every request on
     // this tunnel (keep-alive), and re-established on demand if it drops.
     let mut server_tls: Option<ClientTlsStream<TcpStream>> = None;
+    let intercept_state: tauri::State<InterceptState> = app_handle.state();
 
     loop {
         let raw_request = match read_full_message(&mut client_tls, false).await {
@@ -285,103 +207,113 @@ async fn handle_connect(
         let ts_ms = now_ms();
         let request_id = Uuid::new_v4().to_string();
 
+        let mut outgoing_request_text = decrypted_request.clone();
+        if intercept_state.should_intercept(InterceptItemType::Request).await {
+            let item = InterceptItem {
+                id: request_id.clone(),
+                item_type: InterceptItemType::Request,
+                host: target.clone(),
+                method_or_status: extract_method_or_status(&decrypted_request, true),
+                raw_message: decrypted_request.clone(),
+                timestamp: ts_ms,
+                is_https: true,
+            };
+
+            match intercept_state.add_and_await(item).await {
+                Some(InterceptDecision::Forward { modified_message }) => {
+                    if let Some(mod_msg) = modified_message {
+                        outgoing_request_text = mod_msg;
+                    }
+                }
+                Some(InterceptDecision::Drop) | None => {
+                    tracing::info!("Request dropped by user or state shutdown for {}", request_id);
+                    continue;
+                }
+            }
+        }
+
+        if server_tls.is_none() {
+            match connect_upstream_tls(&target, &domain, upstream_tls_config.clone()).await {
+                Ok(s) => server_tls = Some(s),
+                Err(e) => {
+                    tracing::warn!("Failed to connect upstream {}: {}", target, e);
+                    client_tls
+                        .write_all(b"HTTP/1.1 502 Bad Gateway\r\n\r\n")
+                        .await
+                        .ok();
+                    break;
+                }
+            }
+        }
+
+        let start = std::time::Instant::now();
+        let conn = server_tls.as_mut().unwrap();
+
+        if let Err(e) = conn.write_all(outgoing_request_text.as_bytes()).await {
+            tracing::warn!("Upstream write failed for {}: {}", target, e);
+            server_tls = None;
+            break;
+        }
+
+        let response_bytes = match read_full_message(conn, true).await {
+            Ok(data) => data,
+            Err(e) => {
+                tracing::warn!("Upstream read failed for {}: {}", target, e);
+                server_tls = None;
+                break;
+            }
+        };
+
+        let duration = start.elapsed();
+        let decrypted_response = String::from_utf8_lossy(&response_bytes).to_string();
+
+        let mut outgoing_response_bytes = response_bytes;
+        let mut final_response_text = decrypted_response.clone();
+
+        if intercept_state.should_intercept(InterceptItemType::Response).await {
+            let res_id = Uuid::new_v4().to_string();
+            let item = InterceptItem {
+                id: res_id.clone(),
+                item_type: InterceptItemType::Response,
+                host: target.clone(),
+                method_or_status: extract_method_or_status(&decrypted_response, false),
+                raw_message: decrypted_response.clone(),
+                timestamp: now_ms(),
+                is_https: true,
+            };
+
+            match intercept_state.add_and_await(item).await {
+                Some(InterceptDecision::Forward { modified_message }) => {
+                    if let Some(mod_msg) = modified_message {
+                        final_response_text = mod_msg.clone();
+                        outgoing_response_bytes = mod_msg.into_bytes();
+                    }
+                }
+                Some(InterceptDecision::Drop) | None => {
+                    tracing::info!("Response dropped by user for {}", res_id);
+                    continue;
+                }
+            }
+        }
+
+        let history_counter: tauri::State<HistoryIdCounter> = app_handle.state();
         app_handle
             .emit(
-                "intercept_request",
-                InterceptPayload {
-                    id: request_id.clone(),
-                    request: decrypted_request.clone(),
+                "http_history",
+                HttpHistoryPayload {
+                    id: history_counter.next(),
+                    raw_request: outgoing_request_text,
+                    raw_response: final_response_text,
                     host: target.clone(),
                     timestamp: ts_ms,
-                    is_https: true,
+                    duration: Some(duration.as_millis() as u64),
                 },
             )
             .ok();
 
-        let decision = match await_decision(&app_handle, &request_id).await {
-            Some(d) => d,
-            None => break, // timed out or frontend gone; tear down this tunnel
-        };
-
-        match decision.action.as_str() {
-            "drop" => {
-                println!("Request dropped by user");
-                continue; // keep the tunnel open for the next request
-            }
-            "forward" | "modify" => {
-                let outgoing_bytes: Vec<u8> = if decision.action == "modify" {
-                    decision
-                        .modified_request
-                        .clone()
-                        .unwrap_or_else(|| decrypted_request.clone())
-                        .into_bytes()
-                } else {
-                    raw_request.clone()
-                };
-
-                if server_tls.is_none() {
-                    match connect_upstream_tls(&target, &domain, upstream_tls_config.clone()).await
-                    {
-                        Ok(s) => server_tls = Some(s),
-                        Err(e) => {
-                            tracing::warn!("Failed to connect upstream {}: {}", target, e);
-                            client_tls
-                                .write_all(b"HTTP/1.1 502 Bad Gateway\r\n\r\n")
-                                .await
-                                .ok();
-                            break;
-                        }
-                    }
-                }
-
-                let start = std::time::Instant::now();
-                let conn = server_tls.as_mut().unwrap();
-
-                if let Err(e) = conn.write_all(&outgoing_bytes).await {
-                    tracing::warn!("Upstream write failed for {}: {}", target, e);
-                    server_tls = None;
-                    break;
-                }
-
-                let response_bytes = match read_full_message(conn, true).await {
-                    Ok(data) => data,
-                    Err(e) => {
-                        tracing::warn!("Upstream read failed for {}: {}", target, e);
-                        server_tls = None;
-                        break;
-                    }
-                };
-
-                let duration = start.elapsed();
-                let decrypted_response = String::from_utf8_lossy(&response_bytes).to_string();
-                let history_counter: tauri::State<HistoryIdCounter> = app_handle.state();
-                app_handle
-                    .emit(
-                        "http_history",
-                        HttpHistoryPayload {
-                            id: history_counter.next(),
-                            raw_request: decrypted_request,
-                            raw_response: decrypted_response,
-                            host: target.clone(),
-                            timestamp: ts_ms,
-                            duration: Some(duration.as_millis() as u64),
-                        },
-                    )
-                    .ok();
-
-                if let Err(e) = client_tls.write_all(&response_bytes).await {
-                    tracing::debug!("Client write failed for {}: {}", target, e);
-                    break;
-                }
-            }
-            _ => {
-                tracing::info!("Unknown action: {}", decision.action);
-                client_tls
-                    .write_all(b"HTTP/1.1 400 Bad Request\r\n\r\n")
-                    .await
-                    .ok();
-                break;
-            }
+        if let Err(e) = client_tls.write_all(&outgoing_response_bytes).await {
+            tracing::debug!("Client write failed for {}: {}", target, e);
+            break;
         }
     }
 
@@ -453,6 +385,7 @@ async fn handle_http_request(
     let target = parse_target(&String::from_utf8_lossy(&first_request_bytes))?;
     let mut server_stream: Option<TcpStream> = None;
     let mut pending_bytes = Some(first_request_bytes);
+    let intercept_state: tauri::State<InterceptState> = app_handle.state();
 
     loop {
         let raw_request = match pending_bytes.take() {
@@ -468,79 +401,94 @@ async fn handle_http_request(
         let ts_ms = now_ms();
         let request_id = Uuid::new_v4().to_string();
 
+        let mut outgoing_request_text = decrypted_request.clone();
+        if intercept_state.should_intercept(InterceptItemType::Request).await {
+            let item = InterceptItem {
+                id: request_id.clone(),
+                item_type: InterceptItemType::Request,
+                host: target.clone(),
+                method_or_status: extract_method_or_status(&decrypted_request, true),
+                raw_message: decrypted_request.clone(),
+                timestamp: ts_ms,
+                is_https: false,
+            };
+
+            match intercept_state.add_and_await(item).await {
+                Some(InterceptDecision::Forward { modified_message }) => {
+                    if let Some(mod_msg) = modified_message {
+                        outgoing_request_text = mod_msg;
+                    }
+                }
+                Some(InterceptDecision::Drop) | None => {
+                    tracing::info!("Request dropped by user or state shutdown for {}", request_id);
+                    continue;
+                }
+            }
+        }
+
+        if server_stream.is_none() {
+            server_stream = Some(TcpStream::connect(&target).await?);
+        }
+        let conn = server_stream.as_mut().unwrap();
+        let start = std::time::Instant::now();
+
+        if conn.write_all(outgoing_request_text.as_bytes()).await.is_err() {
+            break;
+        }
+
+        let response_bytes = match read_full_message(conn, true).await {
+            Ok(d) => d,
+            Err(_) => break,
+        };
+        let duration = start.elapsed();
+        let decrypted_response = String::from_utf8_lossy(&response_bytes).to_string();
+
+        let mut outgoing_response_bytes = response_bytes;
+        let mut final_response_text = decrypted_response.clone();
+
+        if intercept_state.should_intercept(InterceptItemType::Response).await {
+            let res_id = Uuid::new_v4().to_string();
+            let item = InterceptItem {
+                id: res_id.clone(),
+                item_type: InterceptItemType::Response,
+                host: target.clone(),
+                method_or_status: extract_method_or_status(&decrypted_response, false),
+                raw_message: decrypted_response.clone(),
+                timestamp: now_ms(),
+                is_https: false,
+            };
+
+            match intercept_state.add_and_await(item).await {
+                Some(InterceptDecision::Forward { modified_message }) => {
+                    if let Some(mod_msg) = modified_message {
+                        final_response_text = mod_msg.clone();
+                        outgoing_response_bytes = mod_msg.into_bytes();
+                    }
+                }
+                Some(InterceptDecision::Drop) | None => {
+                    tracing::info!("Response dropped by user for {}", res_id);
+                    continue;
+                }
+            }
+        }
+
+        let history_counter: tauri::State<HistoryIdCounter> = app_handle.state();
         app_handle
             .emit(
-                "intercept_request",
-                InterceptPayload {
-                    id: request_id.clone(),
-                    request: decrypted_request.clone(),
+                "http_history",
+                HttpHistoryPayload {
+                    id: history_counter.next(),
+                    raw_request: outgoing_request_text,
+                    raw_response: final_response_text,
                     host: target.clone(),
                     timestamp: ts_ms,
-                    is_https: false,
+                    duration: Some(duration.as_millis() as u64),
                 },
             )
             .ok();
 
-        let decision = match await_decision(&app_handle, &request_id).await {
-            Some(d) => d,
-            None => break,
-        };
-
-        match decision.action.as_str() {
-            "drop" => continue,
-            "forward" | "modify" => {
-                let outgoing: Vec<u8> = if decision.action == "modify" {
-                    decision
-                        .modified_request
-                        .clone()
-                        .unwrap_or_else(|| decrypted_request.clone())
-                        .into_bytes()
-                } else {
-                    raw_request.clone()
-                };
-
-                if server_stream.is_none() {
-                    server_stream = Some(TcpStream::connect(&target).await?);
-                }
-                let conn = server_stream.as_mut().unwrap();
-                let start = std::time::Instant::now();
-
-                if conn.write_all(&outgoing).await.is_err() {
-                    break;
-                }
-
-                let response_bytes = match read_full_message(conn, true).await {
-                    Ok(d) => d,
-                    Err(_) => break,
-                };
-                let duration = start.elapsed();
-
-                let history_counter: tauri::State<HistoryIdCounter> = app_handle.state();
-                app_handle
-                    .emit(
-                        "http_history",
-                        HttpHistoryPayload {
-                            id: history_counter.next(),
-                            raw_request: decrypted_request,
-                            raw_response: String::from_utf8_lossy(&response_bytes).to_string(),
-                            host: target.clone(),
-                            timestamp: ts_ms,
-                            duration: Some(duration.as_millis() as u64),
-                        },
-                    )
-                    .ok();
-
-                if client_stream.write_all(&response_bytes).await.is_err() {
-                    break;
-                }
-            }
-            _ => {
-                client_stream
-                    .write_all(b"HTTP/1.1 400 Bad Request\r\n\r\n")
-                    .await
-                    .ok();
-                break;
-            }
+        if client_stream.write_all(&outgoing_response_bytes).await.is_err() {
+            break;
         }
     }
     Ok(())

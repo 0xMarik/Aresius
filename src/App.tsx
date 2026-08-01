@@ -17,7 +17,7 @@ import { useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { addToHttpHistory } from "./store/slices/http-historySlice";
 import Interceptor from "./pages/interceptor/Interceptor.page";
-import { addInterceptedRequest } from "./store/slices/interceptorSlice";
+import { useInterceptPoller } from "./hooks/useInterceptPoller";
 import MenubarDemo from "./components/MenuBar";
 import { applyFuzzUpdates, updateFuzzProgress, updateFuzzWorkerProgress } from "./store/slices/fuzzerSlice";
 import SitemapTree from "./pages/sitemap/Sitemap";
@@ -59,6 +59,7 @@ export type FuzzWorkerUpdate = {
 
 export default function App() {
     const dispatch = useDispatch();
+    useInterceptPoller();
 
     useEffect(() => {
         // Listen for HTTP requests from Rust
@@ -79,20 +80,7 @@ export default function App() {
         };
     }, [dispatch]);
 
-    useEffect(() => {
-        const setupListener = async () => {
-            const unlisten = await listen("intercept_request", (event) => {
-                dispatch(addInterceptedRequest({ interceptedRequest: event.payload as any }))
-            })
 
-            return unlisten;
-        }
-
-        const unlistenPromise = setupListener();
-        return () => {
-            unlistenPromise.then(unlisten => unlisten());
-        };
-    }, [dispatch])
 
     useEffect(() => {
         const unlisten = listen<FuzzUpdate[]>("fuzz-update-batch", (event) => {
