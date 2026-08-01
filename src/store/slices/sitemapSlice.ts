@@ -18,8 +18,8 @@ const SiteMapSlice = createSlice({
   initialState,
   reducers: {
     updateSiteMap: (state, action: PayloadAction<{ historyItem: HttpHistory }>) => {
-        const {historyItem} = action.payload
-        state = insertHttpHistoryEntry(state, historyItem)
+        const { historyItem } = action.payload;
+        insertHttpHistoryEntry(state, historyItem);
     }
   }
 });
