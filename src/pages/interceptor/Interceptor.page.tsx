@@ -1,179 +1,312 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { basicSetup, EditorView } from 'codemirror';
 import { EditorState } from '@codemirror/state';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { http } from '@/components/http-parser.component';
-import { useAppDispatch, useAppSelector } from '@/hooks/redux';
-import { useInterceptPoller } from '@/hooks/useInterceptPoller';
-import {
-    setSelectedId,
-    removeQueueItem,
-    clearQueue,
-} from '@/store/slices/interceptorSlice';
+import DataTable, { BaseRow } from '@/components/Table';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import {
+    ResizablePanelGroup,
+    ResizablePanel,
+    ResizableHandle,
+} from '@/components/ui/resizable';
+import { ColumnDef } from '@tanstack/react-table';
+import {
     Play,
+    Pause,
     Trash2,
     Shield,
     ShieldAlert,
-    ShieldOff,
-    ArrowRight,
     Globe,
-    Clock,
+    Wand2,
+    Files,
+    Inbox,
+    Send,
 } from 'lucide-react';
+import { useAppDispatch, useAppSelector } from '@/hooks/redux';
+import { useInterceptSettings } from '@/hooks/useInterceptPoller';
+import {
+    setSelectedId,
+    removeQueueItem,
+    clearQueue,
+    InterceptItem,
+} from '@/store/slices/interceptorSlice';
+import { parseRequest, parseResponse } from '@/components/utils';
+import { formatHttpMessage } from './http-pretty';
+import LightDataTable from '@/components/LightDataTable';
 
-const InterceptorPage: React.FC = () => {
-    const dispatch = useAppDispatch();
-    const { queue, settings, selectedId } = useAppSelector((state) => state.interceptor);
-    const { updateSettings } = useInterceptPoller();
+/* -------------------------------------------------------------------------- */
+/*  Row Interfaces for TanStack Table (extends BaseRow with numeric `id`)     */
+/* -------------------------------------------------------------------------- */
 
-    const selectedItem = queue.find((item) => item.id === selectedId) || null;
-    const [editedContent, setEditedContent] = useState<string>('');
-    const [validationError, setValidationError] = useState<string | null>(null);
-    const [actionLoading, setActionLoading] = useState<boolean>(false);
+interface RequestRowItem extends BaseRow {
+    id: number;
+    originalId: string;
+    host: string;
+    method: string;
+    path: string;
+    item: InterceptItem;
+}
 
-    const editorContainerRef = useRef<HTMLDivElement | null>(null);
-    const editorViewRef = useRef<EditorView | null>(null);
+interface ResponseRowItem extends BaseRow {
+    id: number;
+    originalId: string;
+    requestId: string;
+    requestPath: string;
+    status: string;
+    item: InterceptItem;
+}
 
-    // Sync selected item raw message to editor content state
+/* -------------------------------------------------------------------------- */
+/*  CodeMirror 6 Raw HTTP Message Editor Component                            */
+/* -------------------------------------------------------------------------- */
+
+interface RawMessageEditorProps {
+    value: string;
+    onChange?: (val: string) => void;
+    readOnly?: boolean;
+}
+
+const RawMessageEditor: React.FC<RawMessageEditorProps> = ({
+    value,
+    onChange,
+    readOnly = false,
+}) => {
+    const editorRef = useRef<HTMLDivElement>(null);
+    const viewRef = useRef<EditorView | null>(null);
+
     useEffect(() => {
-        if (selectedItem) {
-            setEditedContent(selectedItem.rawMessage);
-            setValidationError(null);
-        } else {
-            setEditedContent('');
-            setValidationError(null);
-        }
-    }, [selectedItem?.id, selectedItem?.rawMessage]);
+        if (!editorRef.current) return;
 
-    // Initialize or update CodeMirror 6 Editor
-    useEffect(() => {
-        if (!editorContainerRef.current) return;
+        if (!viewRef.current) {
+            const extensions = [
+                EditorState.lineSeparator.of("\r\n"),
+                basicSetup,
+                http(),
+                oneDark,
+                EditorView.theme({
+                    '&': {
+                        height: '100%',
+                        fontSize: '12px',
+                        backgroundColor: '#0d1117',
+                    },
+                    '.cm-scroller': { overflow: 'auto' },
+                    '.cm-content': { fontFamily: 'JetBrains Mono, Menlo, monospace' },
+                }),
+                EditorView.lineWrapping,
+            ];
 
-        if (!editorViewRef.current) {
-            const startState = EditorState.create({
-                doc: editedContent,
-                extensions: [
-                    basicSetup,
-                    http(),
-                    oneDark,
-                    EditorView.theme({
-                        '&': {
-                            height: '100%',
-                            fontSize: '13px',
-                            backgroundColor: '#0d1117',
-                        },
-                        '.cm-scroller': { overflow: 'auto' },
-                        '.cm-content': { fontFamily: 'JetBrains Mono, Menlo, monospace' },
-                    }),
+            if (readOnly) {
+                extensions.push(EditorState.readOnly.of(true));
+            } else if (onChange) {
+                extensions.push(
                     EditorView.updateListener.of((update) => {
                         if (update.docChanged) {
-                            setEditedContent(update.state.doc.toString());
-                            setValidationError(null);
+                            onChange(update.state.doc.toString());
                         }
-                    }),
-                ],
+                    })
+                );
+            }
+
+            const state = EditorState.create({
+                doc: value,
+                extensions,
             });
 
-            editorViewRef.current = new EditorView({
-                state: startState,
-                parent: editorContainerRef.current,
+            viewRef.current = new EditorView({
+                state,
+                parent: editorRef.current,
             });
-        } else {
-            const currentDoc = editorViewRef.current.state.doc.toString();
-            if (currentDoc !== editedContent) {
-                editorViewRef.current.dispatch({
+        }
+    }, []);
+
+    // Sync external doc changes to editor without losing cursor position when possible
+    useEffect(() => {
+        if (viewRef.current) {
+            const currentDoc = viewRef.current.state.doc.toString();
+            if (currentDoc !== value) {
+                viewRef.current.dispatch({
                     changes: {
                         from: 0,
                         to: currentDoc.length,
-                        insert: editedContent,
+                        insert: value,
                     },
                 });
             }
         }
-    }, [selectedItem?.id]);
+    }, [value]);
 
-    // Cleanup editor on unmount
     useEffect(() => {
         return () => {
-            if (editorViewRef.current) {
-                editorViewRef.current.destroy();
-                editorViewRef.current = null;
+            if (viewRef.current) {
+                viewRef.current.destroy();
+                viewRef.current = null;
             }
         };
     }, []);
 
-    // Per-scope live toggle handlers
-    const handleToggleRequests = () => {
-        updateSettings({
-            ...settings,
-            requestsEnabled: !settings.requestsEnabled,
-        });
-    };
+    return <div ref={editorRef} className="h-full w-full overflow-hidden" />;
+};
 
-    const handleToggleResponses = () => {
-        updateSettings({
-            ...settings,
-            responsesEnabled: !settings.responsesEnabled,
-        });
-    };
+/* -------------------------------------------------------------------------- */
+/*  Main Interceptor Page Component                                           */
+/* -------------------------------------------------------------------------- */
 
-    const handlePreset = (req: boolean, res: boolean) => {
-        updateSettings({
-            requestsEnabled: req,
-            responsesEnabled: res,
-        });
-    };
+const InterceptorPage: React.FC = () => {
+    const dispatch = useAppDispatch();
+    // Use granular selectors so this component only re-renders when the specific
+    // field changes — NOT on every setSelectedId dispatch from DataTable.
+    const queue = useAppSelector((state) => state.interceptor.queue);
+    const settings = useAppSelector((state) => state.interceptor.settings);
+    const selectedId = useAppSelector((state) => state.interceptor.selectedId);
+    const { updateSettings } = useInterceptSettings();
 
-    // Forward single item
-    const handleForward = async (andSelectNext: boolean = false) => {
-        if (!selectedItem) return;
+    const [activeTab, setActiveTab] = useState<'requests' | 'responses'>('requests');
+    const [actionLoading, setActionLoading] = useState<boolean>(false);
+    const [validationError, setValidationError] = useState<string | null>(null);
+
+    // Selected response tracking (separately selectable or reactive to request selection)
+    const [selectedResponseIdState, setSelectedResponseIdState] = useState<string | null>(null);
+
+    // Pretty formatting states for request and response detail panels
+    const [isReqPretty, setIsReqPretty] = useState<boolean>(false);
+    const [isResPretty, setIsResPretty] = useState<boolean>(false);
+
+    // Filter queue items by type
+    const requestItems = useMemo(
+        () => queue.filter((item) => item.itemType === 'request'),
+        [queue]
+    );
+    const responseItems = useMemo(
+        () => queue.filter((item) => item.itemType === 'response'),
+        [queue]
+    );
+
+    // Active selected items
+    const selectedRequestItem = useMemo(() => {
+        if (!selectedId) return requestItems[0] || null;
+        return requestItems.find((item) => item.id === selectedId) || requestItems[0] || null;
+    }, [requestItems, selectedId]);
+
+    const selectedResponseItem = useMemo(() => {
+        if (selectedResponseIdState) {
+            const found = responseItems.find((item) => item.id === selectedResponseIdState);
+            if (found) return found;
+        }
+        // Reactive fallback: match response for selected request by index or host/timestamp proximity
+        if (selectedRequestItem) {
+            const match = responseItems.find((res) => res.host === selectedRequestItem.host);
+            if (match) return match;
+        }
+        return responseItems[0] || null;
+    }, [responseItems, selectedResponseIdState, selectedRequestItem]);
+
+    // Content buffers for editing
+    const [editedReqContent, setEditedReqContent] = useState<string>('');
+    const [editedResContent, setEditedResContent] = useState<string>('');
+
+    // Sync edited request content on selection change
+    useEffect(() => {
+        if (selectedRequestItem) {
+            setEditedReqContent(
+                isReqPretty
+                    ? formatHttpMessage(selectedRequestItem.rawMessage)
+                    : selectedRequestItem.rawMessage
+            );
+            setValidationError(null);
+        } else {
+            setEditedReqContent('');
+        }
+    }, [selectedRequestItem?.id, selectedRequestItem?.rawMessage, isReqPretty]);
+
+    // Sync edited response content on selection change
+    useEffect(() => {
+        if (selectedResponseItem) {
+            setEditedResContent(
+                isResPretty
+                    ? formatHttpMessage(selectedResponseItem.rawMessage)
+                    : selectedResponseItem.rawMessage
+            );
+        } else {
+            setEditedResContent('');
+        }
+    }, [selectedResponseItem?.id, selectedResponseItem?.rawMessage, isResPretty]);
+
+    /* ---------------------------------------------------------------------- */
+    /*  Handlers for Forward & Drop Actions                                   */
+    /* ---------------------------------------------------------------------- */
+
+    const handleForwardRequest = async () => {
+        if (!selectedRequestItem) return;
         setActionLoading(true);
         setValidationError(null);
 
-        const isModified = editedContent !== selectedItem.rawMessage;
+        const isModified = editedReqContent !== selectedRequestItem.rawMessage;
         const payload = {
-            id: selectedItem.id,
-            modifiedMessage: isModified ? editedContent : null,
+            id: selectedRequestItem.id,
+            modifiedMessage: isModified ? editedReqContent : null,
         };
 
         try {
             await invoke('forward_intercept_item', { payload });
-            dispatch(removeQueueItem(selectedItem.id));
-
-            if (andSelectNext && queue.length > 1) {
-                const remaining = queue.filter((i) => i.id !== selectedItem.id);
-                if (remaining.length > 0) {
-                    dispatch(setSelectedId(remaining[0].id));
-                }
-            }
+            dispatch(removeQueueItem(selectedRequestItem.id));
         } catch (err: any) {
-            console.error('Failed to forward item:', err);
+            console.error('Failed to forward request:', err);
             setValidationError(typeof err === 'string' ? err : err.message || 'Validation error');
         } finally {
             setActionLoading(false);
         }
     };
 
-    // Drop single item
-    const handleDrop = async () => {
-        if (!selectedItem) return;
+    const handleDropRequest = async () => {
+        if (!selectedRequestItem) return;
         setActionLoading(true);
         try {
-            await invoke('drop_intercept_item', { id: selectedItem.id });
-            dispatch(removeQueueItem(selectedItem.id));
+            await invoke('drop_intercept_item', { id: selectedRequestItem.id });
+            dispatch(removeQueueItem(selectedRequestItem.id));
         } catch (err) {
-            console.error('Failed to drop item:', err);
+            console.error('Failed to drop request:', err);
         } finally {
             setActionLoading(false);
         }
     };
 
-    // Drop all items in queue
+    const handleForwardResponse = async () => {
+        if (!selectedResponseItem) return;
+        setActionLoading(true);
+        const isModified = editedResContent !== selectedResponseItem.rawMessage;
+        const payload = {
+            id: selectedResponseItem.id,
+            modifiedMessage: isModified ? editedResContent : null,
+        };
+
+        try {
+            await invoke('forward_intercept_item', { payload });
+            dispatch(removeQueueItem(selectedResponseItem.id));
+        } catch (err: any) {
+            console.error('Failed to forward response:', err);
+        } finally {
+            setActionLoading(false);
+        }
+    };
+
+    const handleDropResponse = async () => {
+        if (!selectedResponseItem) return;
+        setActionLoading(true);
+        try {
+            await invoke('drop_intercept_item', { id: selectedResponseItem.id });
+            dispatch(removeQueueItem(selectedResponseItem.id));
+        } catch (err) {
+            console.error('Failed to drop response:', err);
+        } finally {
+            setActionLoading(false);
+        }
+    };
+
     const handleDropAll = async () => {
         if (queue.length === 0) return;
         setActionLoading(true);
@@ -187,104 +320,247 @@ const InterceptorPage: React.FC = () => {
         }
     };
 
-    const isIntercepting = settings.requestsEnabled || settings.responsesEnabled;
+    /* ---------------------------------------------------------------------- */
+    /*  DataTable Data Adaptors & Column Definitions                          */
+    /* ---------------------------------------------------------------------- */
+
+    const requestRows: RequestRowItem[] = useMemo(() => {
+        return requestItems.map((item, idx) => {
+            const parsed = parseRequest(item.rawMessage);
+            const numericId = parseInt(item.id, 10) || idx + 1;
+            return {
+                id: numericId,
+                originalId: item.id,
+                host: item.host,
+                method: parsed.method || item.methodOrStatus || 'GET',
+                path: parsed.path || '/',
+                item,
+            };
+        });
+    }, [requestItems]);
+
+    const responseRows: ResponseRowItem[] = useMemo(() => {
+        return responseItems.map((item, idx) => {
+            const parsed = parseResponse(item.rawMessage);
+            const numericId = parseInt(item.id, 10) || idx + 1;
+            return {
+                id: numericId,
+                originalId: item.id,
+                requestId: `#${numericId}`,
+                requestPath: item.host,
+                status: parsed.statusCode ? `${parsed.statusCode} ${parsed.statusText}` : item.methodOrStatus || '200 OK',
+                item,
+            };
+        });
+    }, [responseItems]);
+
+    const requestColumns = useMemo<ColumnDef<RequestRowItem, any>[]>(
+        () => [
+            {
+                accessorKey: 'originalId',
+                id: 'originalId',
+                header: 'ID',
+                cell: ({ row }) => (
+                    <span className="font-mono text-xs text-muted-foreground">
+                        {row.original.originalId}
+                    </span>
+                ),
+                size: 60,
+            },
+            {
+                accessorKey: 'host',
+                id: 'host',
+                header: 'Host',
+                cell: ({ row }) => (
+                    <span className="font-mono text-xs truncate max-w-[120px] block">
+                        {row.original.host}
+                    </span>
+                ),
+            },
+            {
+                accessorKey: 'method',
+                id: 'method',
+                header: 'Method',
+                cell: ({ row }) => {
+                    const method = row.original.method;
+                    const methodColor =
+                        method === 'GET'
+                            ? 'text-cyan-400 bg-cyan-950/40 border-cyan-500/30'
+                            : method === 'POST'
+                                ? 'text-emerald-400 bg-emerald-950/40 border-emerald-500/30'
+                                : method === 'PUT'
+                                    ? 'text-amber-400 bg-amber-950/40 border-amber-500/30'
+                                    : method === 'DELETE'
+                                        ? 'text-rose-400 bg-rose-950/40 border-rose-500/30'
+                                        : 'text-muted-foreground bg-muted/40 border-border';
+                    return (
+                        <Badge
+                            variant="outline"
+                            className={`text-[10px] font-mono px-1.5 py-0 ${methodColor}`}
+                        >
+                            {method}
+                        </Badge>
+                    );
+                },
+                size: 80,
+            },
+            {
+                accessorKey: 'path',
+                id: 'path',
+                header: 'Path',
+                cell: ({ row }) => (
+                    <span className="font-mono text-xs truncate text-foreground/90 block">
+                        {row.original.path}
+                    </span>
+                ),
+            },
+        ],
+        []
+    );
+
+    const responseColumns = useMemo<ColumnDef<ResponseRowItem, any>[]>(
+        () => [
+            {
+                accessorKey: 'originalId',
+                id: 'originalId',
+                header: 'ID',
+                cell: ({ row }) => (
+                    <span className="font-mono text-xs text-muted-foreground">
+                        {row.original.originalId}
+                    </span>
+                ),
+                size: 60,
+            },
+            {
+                accessorKey: 'requestId',
+                id: 'requestId',
+                header: 'Request',
+                cell: ({ row }) => (
+                    <span className="font-mono text-xs truncate text-foreground/90 block">
+                        {row.original.requestPath}
+                    </span>
+                ),
+            },
+            {
+                accessorKey: 'status',
+                id: 'status',
+                header: 'Status',
+                cell: ({ row }) => {
+                    const status = row.original.status;
+                    const is2xx = status.startsWith('2');
+                    const is3xx = status.startsWith('3');
+                    const is4xx = status.startsWith('4');
+                    const is5xx = status.startsWith('5');
+                    const statusColor = is2xx
+                        ? 'text-emerald-400 bg-emerald-950/40 border-emerald-500/30'
+                        : is3xx
+                            ? 'text-amber-400 bg-amber-950/40 border-amber-500/30'
+                            : is4xx || is5xx
+                                ? 'text-rose-400 bg-rose-950/40 border-rose-500/30'
+                                : 'text-muted-foreground bg-muted/40 border-border';
+                    return (
+                        <Badge
+                            variant="outline"
+                            className={`text-[10px] font-mono px-1.5 py-0 ${statusColor}`}
+                        >
+                            {status}
+                        </Badge>
+                    );
+                },
+                size: 100,
+            },
+        ],
+        []
+    );
+
+    const requestRowsRef = useRef(requestRows);
+    useEffect(() => {
+        requestRowsRef.current = requestRows;
+    }, [requestRows]);
+
+    const responseRowsRef = useRef(responseRows);
+    useEffect(() => {
+        responseRowsRef.current = responseRows;
+    }, [responseRows]);
+
+    const selectedIdRef = useRef(selectedId);
+    useEffect(() => {
+        selectedIdRef.current = selectedId;
+    }, [selectedId]);
+
+    const handleSelectRequestRow = useCallback(
+        (idNum: number | null) => {
+            if (idNum === null) {
+                if (selectedIdRef.current !== null) {
+                    dispatch(setSelectedId(null));
+                }
+                return;
+            }
+            const match = requestRowsRef.current.find((r) => r.id === idNum);
+            if (match && match.originalId !== selectedIdRef.current) {
+                dispatch(setSelectedId(match.originalId));
+            }
+        },
+        [dispatch]
+    );
+
+    const handleSelectResponseRow = useCallback(
+        (idNum: number | null) => {
+            if (idNum === null) {
+                setSelectedResponseIdState((prev) => (prev !== null ? null : prev));
+                return;
+            }
+            const match = responseRowsRef.current.find((r) => r.id === idNum);
+            if (match) {
+                setSelectedResponseIdState((prev) => (prev !== match.originalId ? match.originalId : prev));
+            }
+        },
+        []
+    );
+
+    /* ---------------------------------------------------------------------- */
+    /*  Render Component                                                      */
+    /* ---------------------------------------------------------------------- */
 
     return (
         <div className="flex flex-col h-full bg-background text-foreground overflow-hidden">
-            {/* Top Toolbar */}
-            <div className="flex items-center justify-between px-4 py-2 border-b bg-card/50 backdrop-blur-sm shrink-0">
-                <div className="flex items-center gap-4">
-                    <div className="flex items-center gap-2">
-                        {isIntercepting ? (
-                            <ShieldAlert className="w-5 h-5 text-emerald-400 animate-pulse" />
-                        ) : (
-                            <ShieldOff className="w-5 h-5 text-muted-foreground" />
-                        )}
-                        <span className="font-semibold text-sm tracking-wide">
-                            Proxy Intercept
-                        </span>
-                    </div>
-
-                    <div className="h-4 w-px bg-border" />
-
-                    {/* Scope Switches */}
-                    <div className="flex items-center gap-4 bg-muted/30 px-3 py-1 rounded-md border">
-                        <div className="flex items-center space-x-2">
-                            <Switch
-                                id="req-intercept"
-                                checked={settings.requestsEnabled}
-                                onCheckedChange={handleToggleRequests}
-                            />
-                            <Label htmlFor="req-intercept" className="cursor-pointer text-xs font-medium">
-                                Requests
-                            </Label>
-                        </div>
-
-                        <div className="flex items-center space-x-2">
-                            <Switch
-                                id="res-intercept"
-                                checked={settings.responsesEnabled}
-                                onCheckedChange={handleToggleResponses}
-                            />
-                            <Label htmlFor="res-intercept" className="cursor-pointer text-xs font-medium">
-                                Responses
-                            </Label>
-                        </div>
-                    </div>
-
-                    {/* Presets */}
-                    <div className="flex items-center gap-1">
-                        <Button
-                            variant={settings.requestsEnabled && settings.responsesEnabled ? 'default' : 'outline'}
-                            size="sm"
-                            className="h-7 text-[11px]"
-                            onClick={() => handlePreset(true, true)}
-                        >
-                            Intercept All
-                        </Button>
-                        <Button
-                            variant={settings.requestsEnabled && !settings.responsesEnabled ? 'default' : 'outline'}
-                            size="sm"
-                            className="h-7 text-[11px]"
-                            onClick={() => handlePreset(true, false)}
-                        >
-                            Req Only
-                        </Button>
-                        <Button
-                            variant={!settings.requestsEnabled && settings.responsesEnabled ? 'default' : 'outline'}
-                            size="sm"
-                            className="h-7 text-[11px]"
-                            onClick={() => handlePreset(false, true)}
-                        >
-                            Res Only
-                        </Button>
-                        <Button
-                            variant={!settings.requestsEnabled && !settings.responsesEnabled ? 'secondary' : 'outline'}
-                            size="sm"
-                            className="h-7 text-[11px]"
-                            onClick={() => handlePreset(false, false)}
-                        >
-                            Passthrough
-                        </Button>
-                    </div>
-                </div>
-
+            {/* Top Bar: Requests / Responses Tabs & Live Capture State Controls */}
+            <div className="flex items-center justify-between px-3 py-1.5 border-b bg-card/60 backdrop-blur-sm shrink-0">
                 <div className="flex items-center gap-3">
-                    <Badge variant={isIntercepting ? 'default' : 'outline'} className={isIntercepting ? 'bg-emerald-600 hover:bg-emerald-600' : ''}>
-                        {settings.requestsEnabled && settings.responsesEnabled
-                            ? 'BOTH ACTIVE'
-                            : settings.requestsEnabled
-                            ? 'REQUESTS ACTIVE'
-                            : settings.responsesEnabled
-                            ? 'RESPONSES ACTIVE'
-                            : 'PASSTHROUGH'}
-                    </Badge>
+                    {/* Live Capture Switches */}
+                    <div className="flex items-center gap-3 bg-muted/30 px-2.5 py-1 rounded-md border text-xs">
+                        <div className="flex items-center space-x-1.5">
+                            <Switch
+                                id="top-req-switch"
+                                checked={settings.requestsEnabled}
+                                onCheckedChange={(val) =>
+                                    updateSettings({ ...settings, requestsEnabled: val })
+                                }
+                            />
+                            <Label htmlFor="top-req-switch" className="cursor-pointer text-[11px] font-medium text-muted-foreground">
+                                Intercept Req
+                            </Label>
+                        </div>
+                        <div className="h-3 w-px bg-border" />
+                        <div className="flex items-center space-x-1.5">
+                            <Switch
+                                id="top-res-switch"
+                                checked={settings.responsesEnabled}
+                                onCheckedChange={(val) =>
+                                    updateSettings({ ...settings, responsesEnabled: val })
+                                }
+                            />
+                            <Label htmlFor="top-res-switch" className="cursor-pointer text-[11px] font-medium text-muted-foreground">
+                                Intercept Res
+                            </Label>
+                        </div>
+                    </div>
 
                     {queue.length > 0 && (
                         <Button
                             variant="destructive"
                             size="sm"
-                            className="h-7 gap-1.5 text-xs"
+                            className="h-7 text-xs gap-1"
                             onClick={handleDropAll}
                             disabled={actionLoading}
                         >
@@ -295,153 +571,243 @@ const InterceptorPage: React.FC = () => {
                 </div>
             </div>
 
-            {/* Main Split Body */}
-            <div className="flex flex-1 min-h-0 divide-x divide-border">
-                {/* Left Sidebar: Held Queue Items */}
-                <div className="w-72 flex flex-col bg-muted/10 shrink-0">
-                    <div className="p-2.5 border-b bg-card/30 flex items-center justify-between">
-                        <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                            Held Items ({queue.length})
-                        </span>
-                        {queue.length > 0 && (
-                            <span className="text-[10px] text-amber-400 font-mono flex items-center gap-1">
-                                <Clock className="w-3 h-3" /> Waiting
-                            </span>
-                        )}
-                    </div>
-
-                    <div className="flex-1 overflow-y-auto divide-y divide-border/50">
-                        {queue.length === 0 ? (
-                            <div className="p-6 text-center text-muted-foreground flex flex-col items-center justify-center gap-2">
-                                <Shield className="w-8 h-8 opacity-30" />
-                                <p className="text-xs">No held traffic</p>
-                                <p className="text-[10px] opacity-70">
-                                    {isIntercepting
-                                        ? 'Matching in-flight traffic will pause here'
-                                        : 'Turn on intercept to hold requests/responses'}
-                                </p>
-                            </div>
-                        ) : (
-                            queue.map((item) => {
-                                const isSelected = item.id === selectedId;
-                                return (
-                                    <div
-                                        key={item.id}
-                                        onClick={() => dispatch(setSelectedId(item.id))}
-                                        className={`p-2.5 cursor-pointer transition-colors hover:bg-accent/50 ${
-                                            isSelected ? 'bg-accent border-l-2 border-primary font-medium' : ''
-                                        }`}
-                                    >
-                                        <div className="flex items-center justify-between gap-1 mb-1">
-                                            <Badge
-                                                variant="outline"
-                                                className={`text-[10px] uppercase font-mono px-1.5 py-0 ${
-                                                    item.itemType === 'request'
-                                                        ? 'border-cyan-500/50 text-cyan-400 bg-cyan-950/30'
-                                                        : 'border-purple-500/50 text-purple-400 bg-purple-950/30'
-                                                }`}
-                                            >
-                                                {item.itemType === 'request' ? 'REQ' : 'RES'}
-                                            </Badge>
-                                            <span className="text-[10px] font-mono text-muted-foreground">
-                                                {new Date(Number(item.timestamp)).toLocaleTimeString()}
-                                            </span>
-                                        </div>
-                                        <div className="text-xs font-mono truncate text-foreground mb-0.5">
-                                            {item.methodOrStatus}
-                                        </div>
-                                        <div className="text-[11px] text-muted-foreground truncate flex items-center gap-1 font-mono">
-                                            <Globe className="w-3 h-3 shrink-0" />
-                                            {item.host}
-                                        </div>
+            <div className="flex-1 min-h-0 relative">
+                {!(settings.requestsEnabled || settings.responsesEnabled) &&
+                    <div className='h-full w-full flex justify-center items-center'>
+                        <h1>Intercept page</h1>
+                        <p>Click on Intercept Request or Intercept Responses</p>
+                    </div>}
+                <ResizablePanelGroup direction="horizontal">
+                    {/* -------------------------------------------------------------- */}
+                    {/* Left Pane: Requests Side                                       */}
+                    {/* -------------------------------------------------------------- */}
+                    <ResizablePanel defaultSize={50} minSize={30} hidden={!settings.requestsEnabled}>
+                        <ResizablePanelGroup direction="vertical">
+                            {/* Top Left: Request Queue Table */}
+                            <ResizablePanel defaultSize={45} minSize={20}>
+                                <div className="flex flex-col h-full bg-background border-r border-border">
+                                    <div className="px-3 py-1.5 border-b bg-card/30 flex items-center justify-between shrink-0">
+                                        <span className="text-xs font-semibold tracking-wide uppercase text-muted-foreground flex items-center gap-1.5">
+                                            <Globe className="w-3.5 h-3.5 text-primary" />
+                                            Request Queue ({requestItems.length})
+                                        </span>
                                     </div>
-                                );
-                            })
-                        )}
-                    </div>
-                </div>
-
-                {/* Right Panel: CodeMirror Raw Message Editor & Actions */}
-                <div className="flex-1 flex flex-col bg-background min-w-0">
-                    {selectedItem ? (
-                        <>
-                            {/* Item Toolbar */}
-                            <div className="p-2 border-b bg-card/30 flex items-center justify-between shrink-0">
-                                <div className="flex items-center gap-2">
-                                    <Badge
-                                        variant="default"
-                                        className={
-                                            selectedItem.itemType === 'request'
-                                                ? 'bg-cyan-600 hover:bg-cyan-600'
-                                                : 'bg-purple-600 hover:bg-purple-600'
+                                    <div className="flex-1 min-h-0 relative">
+                                        {
+                                            requestItems.length === 0 ? <div className="flex flex-col items-center justify-center h-full p-6 text-center text-muted-foreground gap-2">
+                                                <p className="text-sm font-semibold text-foreground/80">
+                                                    You don't have any requests queued up
+                                                </p>
+                                                <p className="text-xs max-w-sm text-muted-foreground/80 leading-relaxed">
+                                                    Click the{' '}
+                                                    <span className="font-semibold text-primary">Intercept Request</span> switch on the top right of the page to begin queuing.
+                                                </p>
+                                            </div> :
+                                                <LightDataTable
+                                                    data={requestRows}
+                                                    columns={requestColumns}
+                                                    fillHeight
+                                                    onSelectRow={handleSelectRequestRow}
+                                                />
                                         }
-                                    >
-                                        Intercepted {selectedItem.itemType.toUpperCase()}
-                                    </Badge>
-                                    <span className="text-xs font-mono text-muted-foreground truncate max-w-md">
-                                        {selectedItem.host} — {selectedItem.methodOrStatus}
-                                    </span>
+                                    </div>
                                 </div>
+                            </ResizablePanel>
 
-                                <div className="flex items-center gap-2">
-                                    <Button
-                                        variant="default"
-                                        size="sm"
-                                        className="h-8 gap-1 bg-emerald-600 hover:bg-emerald-500 text-white font-medium"
-                                        onClick={() => handleForward(false)}
-                                        disabled={actionLoading}
-                                    >
-                                        <Play className="w-3.5 h-3.5 fill-white" />
-                                        Forward
-                                    </Button>
+                            <ResizableHandle withHandle />
 
-                                    <Button
-                                        variant="secondary"
-                                        size="sm"
-                                        className="h-8 gap-1"
-                                        onClick={() => handleForward(true)}
-                                        disabled={actionLoading || queue.length <= 1}
-                                    >
-                                        <ArrowRight className="w-3.5 h-3.5" />
-                                        Forward & Next
-                                    </Button>
+                            {/* Bottom Left: Request Detail Panel */}
+                            <ResizablePanel defaultSize={55} minSize={20}>
+                                <div className="flex flex-col h-full bg-background border-r border-border min-w-0">
+                                    {selectedRequestItem ? (
+                                        <>
+                                            {/* Panel Top Header Bar */}
+                                            <div className="p-2 border-b bg-card/40 flex items-center justify-between shrink-0 gap-2">
+                                                <div className="flex items-center gap-2 min-w-0">
+                                                    <span className="text-xs font-mono font-medium truncate text-foreground">
+                                                        https://{selectedRequestItem.host}
+                                                    </span>
+                                                </div>
 
-                                    <Button
-                                        variant="outline"
-                                        size="sm"
-                                        className="h-8 gap-1 border-rose-500/50 text-rose-400 hover:bg-rose-950/30"
-                                        onClick={handleDrop}
-                                        disabled={actionLoading}
-                                    >
-                                        <Trash2 className="w-3.5 h-3.5" />
-                                        Drop
-                                    </Button>
+                                                <div className="flex items-center gap-2 shrink-0">
+                                                    <Button
+                                                        variant="secondary"
+                                                        size="sm"
+                                                        className="h-7 px-3 text-xs"
+                                                        onClick={handleDropRequest}
+                                                        disabled={actionLoading}
+                                                    >
+                                                        Drop
+                                                    </Button>
+
+                                                    <Button
+                                                        variant="default"
+                                                        size="sm"
+                                                        className="h-7 px-3 text-xs font-medium gap-1"
+                                                        onClick={handleForwardRequest}
+                                                        disabled={actionLoading}
+                                                    >
+                                                        <Send className="w-3 h-3" />
+                                                        Forward
+                                                    </Button>
+                                                </div>
+                                            </div>
+
+                                            {/* Error notification if validation fails */}
+                                            {validationError && (
+                                                <div className="bg-destructive/10 border-b border-destructive/20 p-2 text-destructive text-xs font-mono flex items-center gap-2">
+                                                    <ShieldAlert className="w-4 h-4 shrink-0" />
+                                                    <span>{validationError}</span>
+                                                </div>
+                                            )}
+
+                                            {/* CodeMirror 6 Raw Request Editor */}
+                                            <div className="flex-1 min-h-0 relative">
+                                                <RawMessageEditor
+                                                    value={editedReqContent}
+                                                    onChange={setEditedReqContent}
+                                                />
+                                            </div>
+
+                                            {/* Panel Bottom Footer Bar */}
+                                            <div className="p-1.5 border-t bg-card/30 flex items-center justify-between shrink-0">
+                                                <Button
+                                                    variant={isReqPretty ? 'default' : 'outline'}
+                                                    size="sm"
+                                                    className="h-6 text-[11px] gap-1 px-2"
+                                                    onClick={() => setIsReqPretty((prev) => !prev)}
+                                                >
+                                                    <Wand2 className="w-3 h-3" />
+                                                    Pretty
+                                                </Button>
+                                            </div>
+                                        </>
+                                    ) : (
+                                        <div className="flex-1 flex flex-col items-center justify-center p-4 text-center text-muted-foreground gap-2">
+                                            <Shield className="w-8 h-8 opacity-20" />
+                                            <p className="text-xs">No request selected</p>
+                                        </div>
+                                    )}
                                 </div>
-                            </div>
+                            </ResizablePanel>
+                        </ResizablePanelGroup>
+                    </ResizablePanel>
 
-                            {/* Validation error notification */}
-                            {validationError && (
-                                <div className="bg-rose-950/60 border-b border-rose-800 p-2 text-rose-200 text-xs font-mono flex items-center gap-2">
-                                    <ShieldAlert className="w-4 h-4 shrink-0 text-rose-400" />
-                                    <span>{validationError}</span>
+                    {(settings.responsesEnabled && settings.requestsEnabled) && <ResizableHandle withHandle />}
+
+                    <ResizablePanel defaultSize={50} minSize={30} hidden={!settings.responsesEnabled}>
+                        <ResizablePanelGroup direction="vertical">
+                            {/* Top Right: Response Queue Table */}
+                            <ResizablePanel defaultSize={45} minSize={20}>
+                                <div className="flex flex-col h-full bg-background">
+                                    <div className="px-3 py-1.5 border-b bg-card/30 flex items-center justify-between shrink-0">
+                                        <span className="text-xs font-semibold tracking-wide uppercase text-muted-foreground flex items-center gap-1.5">
+                                            <Inbox className="w-3.5 h-3.5 text-primary" />
+                                            Response Queue ({responseItems.length})
+                                        </span>
+                                    </div>
+
+                                    <div className="flex-1 min-h-0 relative">
+                                        {responseItems.length === 0 ? (
+                                            <div className="flex flex-col items-center justify-center h-full p-6 text-center text-muted-foreground gap-2">
+                                                <p className="text-sm font-semibold text-foreground/80">
+                                                    You don't have any responses queued up
+                                                </p>
+                                                <p className="text-xs max-w-sm text-muted-foreground/80 leading-relaxed">
+                                                    Queuing allows you to edit responses as they come in. Click the{' '}
+                                                    <span className="font-semibold text-primary">Intercept Res</span> switch on the top right of the page to begin queuing.
+                                                </p>
+                                            </div>
+                                        ) : (
+
+                                            <LightDataTable
+                                                data={responseRows}
+                                                columns={responseColumns}
+                                                fillHeight
+                                                onSelectRow={handleSelectResponseRow}
+                                            />
+                                        )}
+                                    </div>
                                 </div>
-                            )}
+                            </ResizablePanel>
 
-                            {/* CodeMirror 6 Editor */}
-                            <div className="flex-1 min-h-0 relative">
-                                <div ref={editorContainerRef} className="absolute inset-0" />
-                            </div>
-                        </>
-                    ) : (
-                        <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground gap-3">
-                            <Shield className="w-12 h-12 opacity-20" />
-                            <p className="text-sm">No item selected</p>
-                            <p className="text-xs opacity-70">
-                                Select an intercepted item from the left queue to view and edit raw HTTP headers & body.
-                            </p>
-                        </div>
-                    )}
-                </div>
+                            <ResizableHandle withHandle />
+
+                            {/* Bottom Right: Response Detail Panel */}
+                            <ResizablePanel defaultSize={55} minSize={20}>
+                                <div className="flex flex-col h-full bg-background min-w-0">
+                                    {selectedResponseItem ? (
+                                        <>
+                                            {/* Panel Top Header Bar */}
+                                            <div className="p-2 border-b bg-card/40 flex items-center justify-between shrink-0 gap-2">
+                                                <span className="text-xs font-mono font-medium text-foreground truncate">
+                                                    Response for {selectedResponseItem.host}
+                                                </span>
+
+                                                <div className="flex items-center gap-2 shrink-0">
+                                                    <Button
+                                                        variant="secondary"
+                                                        size="sm"
+                                                        className="h-7 px-3 text-xs"
+                                                        onClick={handleDropResponse}
+                                                        disabled={actionLoading}
+                                                    >
+                                                        Drop
+                                                    </Button>
+
+                                                    <Button
+                                                        variant="default"
+                                                        size="sm"
+                                                        className="h-7 px-3 text-xs font-medium gap-1"
+                                                        onClick={handleForwardResponse}
+                                                        disabled={actionLoading}
+                                                    >
+                                                        <Send className="w-3 h-3" />
+                                                        Forward
+                                                    </Button>
+                                                </div>
+                                            </div>
+
+                                            {/* CodeMirror 6 Raw Response Editor */}
+                                            <div className="flex-1 min-h-0 relative">
+                                                <RawMessageEditor
+                                                    value={editedResContent}
+                                                    onChange={setEditedResContent}
+                                                />
+                                            </div>
+
+                                            {/* Panel Bottom Footer Bar */}
+                                            <div className="p-1.5 border-t bg-card/30 flex items-center justify-between shrink-0">
+                                                <Button
+                                                    variant={isResPretty ? 'default' : 'outline'}
+                                                    size="sm"
+                                                    className="h-6 text-[11px] gap-1 px-2"
+                                                    onClick={() => setIsResPretty((prev) => !prev)}
+                                                >
+                                                    <Wand2 className="w-3 h-3" />
+                                                    Pretty
+                                                </Button>
+                                            </div>
+                                        </>
+                                    ) : (
+                                        /* Empty state when no response is queued / selected */
+                                        <div className="flex flex-col items-center justify-center h-full p-6 text-center text-muted-foreground gap-3">
+                                            <Files className="w-10 h-10 opacity-20 text-muted-foreground" />
+                                            <div className="space-y-1">
+                                                <p className="text-sm font-medium text-foreground/80">
+                                                    No response to display
+                                                </p>
+                                                <p className="text-xs text-muted-foreground/70">
+                                                    Select a request with a response to view it here.
+                                                </p>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            </ResizablePanel>
+                        </ResizablePanelGroup>
+                    </ResizablePanel>
+                </ResizablePanelGroup>
             </div>
         </div>
     );
