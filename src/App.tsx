@@ -7,7 +7,7 @@ import {
 
 } from "@/components/ui/sidebar"
 
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import Fuzzer from "./pages/fuzzer/fuzzer";
 import Tweaker from "./pages/replayer/replayer";
 import Projects from "./pages/projects.page";
@@ -127,7 +127,8 @@ export default function App() {
                         <AppSidebar />
                         <SidebarInset >
 
-                            <Routes>
+                            <Routes >
+                                <Route path="/" element={<Navigate to="/projects" replace />} />
                                 <Route path="/site-map" element={<SitemapTree />} />
                                 <Route path="/interceptor" element={<Interceptor />} />
                                 <Route path="/replayer" element={<Tweaker />} />
