@@ -1,4 +1,4 @@
-import { useAppSelector } from '@/hooks/redux';
+import { useAppDispatch, useAppSelector } from '@/hooks/redux';
 import { CodeMirrorEditor } from './result-table.components';
 import { createColumnHelper, ColumnDef } from '@tanstack/react-table';
 import Table, { isRowSelected, FacetFilter, BaseRow } from '@/components/Table';
@@ -7,6 +7,10 @@ import { useMemo, useState } from 'react';
 import { parseRequest, parseResponse } from './utils';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from './ui/resizable';
 import { renderFuzzerHistoryTableContextMenu } from './FuzzerHistoryTableContextMenu';
+import { FuzzerRunToolbar, resendSingleFuzzRequest } from './fuzzer/FuzzerRunToolbar';
+import { initialFuzzRunState } from '@/types/fuzzer.type';
+import { Button } from './ui/button';
+import { RotateCcw } from 'lucide-react';
 
 /**
  * Each row corresponds to a single FuzzerRequest (one fuzzed HTTP call),
@@ -115,6 +119,7 @@ function statusBadgeColor(status: FuzzerRequest['status'], selected: boolean) {
         pending: 'bg-[#F6EEDD] text-[#8A6A2E]',
         completed: 'bg-[#E7EFEA] text-[#3C7A5A]',
         error: 'bg-[#F4E4DE] text-[#C0392B]',
+        cancelled: 'bg-[#E8E8E4] text-[#9A9A90]',
     };
     return colors[status];
 }
@@ -241,38 +246,27 @@ export const fuzzerSearchFn = (row: EnrichedFuzzerRow, q: string) =>
 
 interface ParamsType {
     isLoading: boolean;
+    sessionIndex: number;
+    historyIndex: number;
 }
 
-const FuzzerHistoryCompo = ({ isLoading }: ParamsType) => {
-    const { fuzzerSessions, activeSessionIndex } = useAppSelector((state) => state.fuzzerstate);
+const FuzzerHistoryCompo = ({ isLoading, sessionIndex, historyIndex }: ParamsType) => {
+    const { fuzzerSessions } = useAppSelector((state) => state.fuzzerstate);
     const [focusedId, setFocusedId] = useState<number | null>(null);
 
-    if (activeSessionIndex === null) {
-        return <div>No active session selected</div>;
-    }
+    const session = fuzzerSessions[sessionIndex];
+    if (!session) return <div>Session not found</div>;
 
-    const session = fuzzerSessions[activeSessionIndex];
-
-    if (!session) {
-        return <div>Session not found</div>;
-    }
-
-    const { selectedHistoryIndex } = session;
-
-    if (selectedHistoryIndex === null) {
-        return <div>No history entry selected</div>;
-    }
-
-    const historyEntry = session.fuzzingHistory[selectedHistoryIndex];
-
-    if (!historyEntry) {
-        return <div>History entry not found</div>;
-    }
+    const historyEntry = session.fuzzingHistory[historyIndex];
+    if (!historyEntry) return <div>History entry not found</div>;
 
     return (
         <FuzzerHistoryBody
+            sessionIndex={sessionIndex}
+            historyIndex={historyIndex}
             requests={historyEntry.requests}
             fuzzConfigSnapshot={historyEntry.fuzzConfigSnapshot}
+            runState={historyEntry.runState ?? initialFuzzRunState()}
             isLoading={isLoading}
             focusedId={focusedId}
             setFocusedId={setFocusedId}
@@ -283,18 +277,25 @@ const FuzzerHistoryCompo = ({ isLoading }: ParamsType) => {
 /** Split into its own component so hooks below aren't called conditionally
  *  relative to the early returns above. */
 function FuzzerHistoryBody({
+    sessionIndex,
+    historyIndex,
     requests,
     fuzzConfigSnapshot,
+    runState,
     isLoading,
     focusedId,
     setFocusedId,
 }: {
+    sessionIndex: number;
+    historyIndex: number;
     requests: FuzzerRequest[];
     fuzzConfigSnapshot: FuzzConfig;
+    runState: import('@/types/fuzzer.type').FuzzRunState;
     isLoading: boolean;
     focusedId: number | null;
     setFocusedId: (id: number | null) => void;
 }) {
+    const dispatch = useAppDispatch();
     const rows = useMemo(() => adaptFuzzerRequests(requests), [requests]);
 
     const enrichedRows = useMemo(
@@ -307,8 +308,28 @@ function FuzzerHistoryBody({
         return enrichedRows.find((r) => r.id === focusedId) ?? null;
     }, [focusedId, enrichedRows]);
 
+    const failedCount = useMemo(
+        () => requests.filter((r) => r.status === 'error' || r.status === 'cancelled' || r.connectionDropped).length,
+        [requests],
+    );
+
+    const canResendFocused = focusedResult && (
+        focusedResult.status === 'error' ||
+        focusedResult.status === 'cancelled' ||
+        focusedResult.connectionDropped
+    ) && focusedResult.rawRequest;
+
     return (
         <div className="flex h-full flex-1 flex-col overflow-hidden">
+            <FuzzerRunToolbar
+                sessionIndex={sessionIndex}
+                historyIndex={historyIndex}
+                runState={runState}
+                targetUrl={fuzzConfigSnapshot.metadata.targetUrl}
+                numThreads={fuzzConfigSnapshot.numThreads}
+                delayMs={fuzzConfigSnapshot.delayMs}
+                failedCount={failedCount}
+            />
             <ResizablePanelGroup direction='vertical' autoSaveId="fuzzing-history-table" >
                 <ResizablePanel defaultSize={30} minSize={15}>
                     <Table
@@ -356,6 +377,24 @@ function FuzzerHistoryBody({
                                         <div className="flex flex-shrink-0 items-center justify-between border-b border-gray-800 p-2">
                                             <h3 className="text-xs font-semibold text-white">Response</h3>
                                             <div className="flex items-center gap-2">
+                                                {canResendFocused && (
+                                                    <Button
+                                                        variant="outline"
+                                                        size="sm"
+                                                        className="h-6 gap-1 border-gray-700 bg-gray-800 text-[11px] text-gray-200 hover:bg-gray-700"
+                                                        onClick={() => resendSingleFuzzRequest(
+                                                            dispatch,
+                                                            sessionIndex,
+                                                            historyIndex,
+                                                            focusedResult!.fuzzRequestId,
+                                                            focusedResult!.rawRequest,
+                                                            fuzzConfigSnapshot.metadata.targetUrl,
+                                                        )}
+                                                    >
+                                                        <RotateCcw className="size-3" />
+                                                        Resend
+                                                    </Button>
+                                                )}
                                                 {focusedResult.statusCode !== undefined && (
                                                     <span className={`font-mono text-xs font-semibold ${getStatusCodeColor(focusedResult.statusCode)}`}>
                                                         {focusedResult.statusCode}
@@ -370,7 +409,38 @@ function FuzzerHistoryBody({
                                             </div>
                                         </div>
                                         <div className="flex-1 overflow-hidden">
-                                            <CodeMirrorEditor value={focusedResult.response?.rawResponse || 'No response available'} />
+                                            {focusedResult.status === 'error' || focusedResult.connectionDropped ? (
+                                                <div className="flex h-full flex-col gap-2 p-3">
+                                                    <div className="rounded-md border border-red-900/50 bg-red-950/40 p-3">
+                                                        <p className="text-xs font-semibold text-red-400">
+                                                            {focusedResult.connectionDropped ? 'Connection dropped' : 'Request failed'}
+                                                        </p>
+                                                        <p className="mt-1 font-mono text-[11px] leading-relaxed text-red-300/90">
+                                                            {focusedResult.errorMessage ?? 'Unknown error'}
+                                                        </p>
+                                                    </div>
+                                                    {canResendFocused && (
+                                                        <Button
+                                                            variant="outline"
+                                                            size="sm"
+                                                            className="w-fit gap-1 border-gray-700 text-gray-200"
+                                                            onClick={() => resendSingleFuzzRequest(
+                                                                dispatch,
+                                                                sessionIndex,
+                                                                historyIndex,
+                                                                focusedResult.fuzzRequestId,
+                                                                focusedResult.rawRequest,
+                                                                fuzzConfigSnapshot.metadata.targetUrl,
+                                                            )}
+                                                        >
+                                                            <RotateCcw className="size-3" />
+                                                            Resend request
+                                                        </Button>
+                                                    )}
+                                                </div>
+                                            ) : (
+                                                <CodeMirrorEditor value={focusedResult.response?.rawResponse || 'No response available'} />
+                                            )}
                                         </div>
                                     </div>
                                 </ResizablePanel>

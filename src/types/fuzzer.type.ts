@@ -3,51 +3,68 @@ interface FuzzerResponse {
     responseTime: number;
 }
 
+export type FuzzerRequestStatus = 'pending' | 'completed' | 'error' | 'cancelled';
+
 export interface FuzzerRequest {
     fuzzRequestId: string;
     rawRequest: string;
     response: FuzzerResponse | null;
     requestDate: string;
-    status: 'pending' | 'completed' | 'error';
+    status: FuzzerRequestStatus;
+    errorMessage?: string;
+    connectionDropped?: boolean;
+    workerId?: number;
+}
+
+export type FuzzRunStatus = 'idle' | 'running' | 'completed' | 'cancelled' | 'connection_dropped';
+
+export type FuzzWorkerStatus = 'pending' | 'connected' | 'running' | 'dropped' | 'completed';
+
+export interface FuzzWorkerState {
+    workerId: number;
+    status: FuzzWorkerStatus;
+    total: number;
+    completed: number;
+    errorMessage?: string;
+}
+
+export interface FuzzRunState {
+    status: FuzzRunStatus;
+    total: number;
+    completed: number;
+    connectionDropped: boolean;
+    workers: FuzzWorkerState[];
 }
 
 // Fuzzing attack types
 export enum FuzzingAttackType {
-  ROTATOR = 'rotator',           // Single payload set, iterates through one position at a time
-  ECHO = 'echo', // Single payload set, same value in all positions
-  ZIPPED = 'zipped',     // Multiple payload sets, parallel iteration
-  COMBINATORIAL = 'combinatorial' // Multiple payload sets, all combinations
+  ROTATOR = 'rotator',
+  ECHO = 'echo',
+  ZIPPED = 'zipped',
+  COMBINATORIAL = 'combinatorial'
 }
 
-
-
-export type PayloadSource = 
-  | 'library' // Predefined payload library
-  | 'file' 
+export type PayloadSource =
+  | 'library'
+  | 'file'
   | 'generator'
   | 'manual';
 
-
-
 export interface HighlightRange {
-    from: number; // just for front end presentation ignore \r
+    from: number;
     to: number;
     byteFrom: number;
-    byteTo: number; // taking into consideration \r
+    byteTo: number;
     originalText: string;
     isActive: boolean;
     id: string;
 }
 
 export interface FuzzerParameter {
-    // id: string; // New: unique identifier for each parameter
-    // name: string; // e.g., 'FUZZ_1', 'FUZZ_2'
     payloadSource: 'manual' | 'wordlist' | 'generator';
-    // replacedValue: string; // The original text that was replaced
     values: string[];
-    highlightRange: HighlightRange; // Links to the corresponding highlight range
+    highlightRange: HighlightRange;
 }
-
 
 export interface FuzzConfig {
     rawRequest: string;
@@ -62,8 +79,9 @@ export interface FuzzConfig {
 
 export interface FuzzingHistory {
     date: string;
-    requests: FuzzerRequest[]; // Your existing request type
-    fuzzConfigSnapshot: FuzzConfig
+    requests: FuzzerRequest[];
+    fuzzConfigSnapshot: FuzzConfig;
+    runState: FuzzRunState;
 }
 
 export interface FuzzerSession {
@@ -77,4 +95,42 @@ export interface FuzzerSession {
 export interface FuzzerState {
     fuzzerSessions: FuzzerSession[];
     activeSessionIndex: number | null;
+}
+
+export const initialFuzzRunState = (): FuzzRunState => ({
+    status: 'idle',
+    total: 0,
+    completed: 0,
+    connectionDropped: false,
+    workers: [],
+});
+
+/** Must match backend chunking: ceil(len / numThreads) per worker. */
+export function assignWorkerIds<T extends { id: string }>(
+    targets: T[],
+    numThreads: number,
+): (T & { workerId: number })[] {
+    if (targets.length === 0) return [];
+    const chunkSize = Math.max(1, Math.ceil(targets.length / Math.max(1, numThreads)));
+    return targets.map((target, index) => ({
+        ...target,
+        workerId: Math.floor(index / chunkSize),
+    }));
+}
+
+export function buildInitialWorkers(
+    targets: { workerId: number }[],
+): FuzzWorkerState[] {
+    const byWorker = new Map<number, number>();
+    for (const target of targets) {
+        byWorker.set(target.workerId, (byWorker.get(target.workerId) ?? 0) + 1);
+    }
+    return [...byWorker.entries()]
+        .sort(([a], [b]) => a - b)
+        .map(([workerId, total]) => ({
+            workerId,
+            status: 'pending' as const,
+            total,
+            completed: 0,
+        }));
 }

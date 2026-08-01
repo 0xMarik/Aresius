@@ -15,6 +15,9 @@ use types::replayer::*;
 
 use crate::fuzzer::combinatorial::execute_combinatorial_fuzzing;
 use crate::fuzzer::echo::execute_echo_fuzzing;
+use crate::fuzzer::engine::{
+    cancel_fuzzing, resend_failed_fuzz_requests, resend_fuzz_request, resend_worker_fuzz_requests,
+};
 use crate::fuzzer::rotator::execute_rotator_fuzzing;
 use crate::fuzzer::zipped::execute_zipped_fuzzing;
 
@@ -109,6 +112,10 @@ pub fn run() {
             execute_zipped_fuzzing,
             execute_echo_fuzzing,
             execute_combinatorial_fuzzing,
+            cancel_fuzzing,
+            resend_fuzz_request,
+            resend_failed_fuzz_requests,
+            resend_worker_fuzz_requests,
             replay_request,
             resolve_intercept,
             install_cert,

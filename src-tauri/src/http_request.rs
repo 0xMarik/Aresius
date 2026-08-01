@@ -265,7 +265,7 @@ impl HttpConnection {
         })
     }
 
-    async fn reconnect(&mut self) -> Result<()> {
+    pub async fn reconnect(&mut self) -> Result<()> {
         self.connection =
             connect_stream(&self.host, self.port, self.use_tls, &self.options).await?;
         Ok(())

@@ -1,7 +1,6 @@
 import { useAppSelector } from "@/hooks/redux"
 import { removeInterceptedRequest } from "@/store/slices/interceptorSlice";
 import { invoke } from "@tauri-apps/api/core";
-import { useEffect } from "react";
 import { useDispatch } from "react-redux";
 
 const Interceptor = () => {

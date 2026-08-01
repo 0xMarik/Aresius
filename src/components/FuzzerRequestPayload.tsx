@@ -5,8 +5,8 @@ import RequestEditor from './fuzzer/request-editor/request-editor.component';
 import FuzzConfig from './fuzzer/FuzzConfig';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from './ui/resizable';
 import { Input } from './ui/input';
-import { addFuzzingHistory, setFuzzingAttackType, setTargerUrl } from '@/store/slices/fuzzerSlice';
-import { FuzzingAttackType } from '@/types/fuzzer.type';
+import { addFuzzingHistory, setFuzzingAttackType, setFuzzRunTargets, setTargerUrl } from '@/store/slices/fuzzerSlice';
+import { FuzzingAttackType, initialFuzzRunState } from '@/types/fuzzer.type';
 import { invoke } from '@tauri-apps/api/core';
 import { useStore } from 'react-redux';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
@@ -72,31 +72,50 @@ const FuzzRequestPayload: React.FC = () => {
     const fuzzSession = fuzzerSessions[activeSessionIndex]
     if (!fuzzSession) return;
 
+    const historyIndex = fuzzSession.fuzzingHistory.length;
+
+    dispatch(addFuzzingHistory({
+      sessionIndex: activeSessionIndex,
+      history: {
+        date: (new Date()).toISOString(),
+        fuzzConfigSnapshot: fuzzSession.fuzzConfig,
+        requests: [],
+        runState: { ...initialFuzzRunState(), status: 'running' },
+      },
+    }));
+
     const executeProps = {
       session: fuzzSession,
       numTasks: fuzzSession.fuzzConfig.numThreads,
       selectedSession: activeSessionIndex,
-      fuzzHistory: fuzzSession.fuzzingHistory.length
+      fuzzHistory: historyIndex,
     }
 
-    switch (fuzzSession.fuzzConfig.fuzzingAttackType) {
-      case FuzzingAttackType.ROTATOR:
-        await invoke<string[]>("execute_rotator_fuzzing", executeProps);
-        break;
-      case FuzzingAttackType.ECHO:
-        await invoke<string[]>("execute_echo_fuzzing", executeProps);
-        break;
-      case FuzzingAttackType.ZIPPED:
-        await invoke<string[]>("execute_zipped_fuzzing", executeProps);
-        break;
-      case FuzzingAttackType.COMBINATORIAL:
-        await invoke<string[]>("execute_combinatorial_fuzzing", executeProps);
-        break;
+    let targets: { id: string; request: string }[] = [];
+    try {
+      switch (fuzzSession.fuzzConfig.fuzzingAttackType) {
+        case FuzzingAttackType.ROTATOR:
+          targets = await invoke("execute_rotator_fuzzing", executeProps);
+          break;
+        case FuzzingAttackType.ECHO:
+          targets = await invoke("execute_echo_fuzzing", executeProps);
+          break;
+        case FuzzingAttackType.ZIPPED:
+          targets = await invoke("execute_zipped_fuzzing", executeProps);
+          break;
+        case FuzzingAttackType.COMBINATORIAL:
+          targets = await invoke("execute_combinatorial_fuzzing", executeProps);
+          break;
+      }
+    } catch (err) {
+      console.error('Failed to start fuzzing:', err);
+      return;
     }
 
-    dispatch(addFuzzingHistory({
+    dispatch(setFuzzRunTargets({
       sessionIndex: activeSessionIndex,
-      history: { date: (new Date()).toISOString(), fuzzConfigSnapshot: fuzzSession.fuzzConfig, requests: [] }
+      historyIndex,
+      targets,
     }))
   }
 

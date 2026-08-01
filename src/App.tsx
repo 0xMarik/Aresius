@@ -19,7 +19,7 @@ import { addToHttpHistory } from "./store/slices/http-historySlice";
 import Interceptor from "./pages/interceptor/Interceptor.page";
 import { addInterceptedRequest } from "./store/slices/interceptorSlice";
 import MenubarDemo from "./components/MenuBar";
-import { applyFuzzUpdates } from "./store/slices/fuzzerSlice";
+import { applyFuzzUpdates, updateFuzzProgress, updateFuzzWorkerProgress } from "./store/slices/fuzzerSlice";
 import SitemapTree from "./pages/sitemap/Sitemap";
 import { updateSiteMap } from "./store/slices/sitemapSlice";
 import { HttpHistory } from "./types/http.type";
@@ -32,8 +32,27 @@ interface ReqRes {
 
 // Externally-tagged: variant name is the object's single key
 export type FuzzUpdate =
-    | { Completed: { id: string; selectedSession: number, fuzzHistory: number, reqRes: ReqRes } }
-    | { Error: { id: string; selectedSession: number, fuzzHistory: number, message: string } };
+    | { Completed: { id: string; selectedSession: number; fuzzHistory: number; reqRes: ReqRes } }
+    | { Error: { id: string; selectedSession: number; fuzzHistory: number; message: string; connectionDropped?: boolean; request?: string } };
+
+export type FuzzProgressUpdate = {
+    selectedSession: number;
+    fuzzHistory: number;
+    completed: number;
+    total: number;
+    status: 'running' | 'completed' | 'cancelled' | 'connection_dropped';
+    connectionDropped: boolean;
+};
+
+export type FuzzWorkerUpdate = {
+    selectedSession: number;
+    fuzzHistory: number;
+    workerId: number;
+    status: 'pending' | 'connected' | 'running' | 'dropped' | 'completed';
+    completed: number;
+    total: number;
+    message?: string;
+};
 
 
 
@@ -77,15 +96,33 @@ export default function App() {
 
     useEffect(() => {
         const unlisten = listen<FuzzUpdate[]>("fuzz-update-batch", (event) => {
-            const resultArr = event.payload;
-            console.warn("HERE FUZZ UPDATE !! : ", resultArr);
-            dispatch(applyFuzzUpdates({ updates: resultArr }))
+            dispatch(applyFuzzUpdates({ updates: event.payload }))
         });
 
         return () => {
             unlisten.then((f) => f());
         };
-    }, []);
+    }, [dispatch]);
+
+    useEffect(() => {
+        const unlisten = listen<FuzzProgressUpdate>("fuzz-progress", (event) => {
+            dispatch(updateFuzzProgress(event.payload));
+        });
+
+        return () => {
+            unlisten.then((f) => f());
+        };
+    }, [dispatch]);
+
+    useEffect(() => {
+        const unlisten = listen<FuzzWorkerUpdate>("fuzz-worker-update", (event) => {
+            dispatch(updateFuzzWorkerProgress(event.payload));
+        });
+
+        return () => {
+            unlisten.then((f) => f());
+        };
+    }, [dispatch]);
 
     return (
         <Router>

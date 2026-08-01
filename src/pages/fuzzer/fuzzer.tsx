@@ -26,7 +26,11 @@ const Fuzzer: React.FC = () => {
                         activeSessionIndex !== null && activeSessionIndex !== undefined ?
                             (
                                 activeSession?.selectedHistoryIndex !== null ?
-                                    <FuzzerHistoryCompo isLoading={false} /> :
+                                    <FuzzerHistoryCompo
+                                        isLoading={false}
+                                        sessionIndex={activeSessionIndex}
+                                        historyIndex={activeSession!.selectedHistoryIndex!}
+                                    /> :
                                     <FuzzRequestPayload />
                             )
                             : <h1>Choose a session</h1>

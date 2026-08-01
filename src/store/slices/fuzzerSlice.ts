@@ -1,5 +1,5 @@
-import { FuzzUpdate } from '@/App';
-import { FuzzingHistory, FuzzerParameter, FuzzerSession, FuzzerState, HighlightRange, FuzzingAttackType, FuzzerRequest } from '@/types/fuzzer.type';
+import { FuzzUpdate, FuzzProgressUpdate, FuzzWorkerUpdate } from '@/App';
+import { FuzzingHistory, FuzzerParameter, FuzzerSession, FuzzerState, HighlightRange, FuzzingAttackType, FuzzerRequest, assignWorkerIds, buildInitialWorkers, initialFuzzRunState } from '@/types/fuzzer.type';
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 
 const initialState : FuzzerState = {
@@ -121,6 +121,8 @@ const fuzzerSlice = createSlice({
           existing.status = 'completed';
           existing.rawRequest = reqRes.request;
           existing.response = { rawResponse: reqRes.response, responseTime: reqRes.responseTime };
+          existing.errorMessage = undefined;
+          existing.connectionDropped = false;
         } else {
           const row: FuzzerRequest = {
             fuzzRequestId: id,
@@ -133,7 +135,7 @@ const fuzzerSlice = createSlice({
           requestById.set(id, row);
         }
       } else if ('Error' in update) {
-        const { id, selectedSession, fuzzHistory } = update.Error;
+        const { id, selectedSession, fuzzHistory, message, connectionDropped, request } = update.Error;
         const requestById = getRequestMap(selectedSession, fuzzHistory);
         if (!requestById) continue;
         const history = getHistory(selectedSession, fuzzHistory)!;
@@ -141,19 +143,183 @@ const fuzzerSlice = createSlice({
         const existing = requestById.get(id);
         if (existing) {
           existing.status = 'error';
+          existing.errorMessage = message;
+          existing.connectionDropped = connectionDropped ?? false;
+          if (request) existing.rawRequest = request;
         } else {
           const row: FuzzerRequest = {
             fuzzRequestId: id,
-            rawRequest: '',
+            rawRequest: request ?? '',
             response: null,
             requestDate: new Date().toISOString(),
             status: 'error',
+            errorMessage: message,
+            connectionDropped: connectionDropped ?? false,
           };
           history.requests.push(row);
           requestById.set(id, row);
         }
       }
     }
+  },
+
+  updateFuzzProgress: (
+    state,
+    action: PayloadAction<FuzzProgressUpdate>
+  ) => {
+    const { selectedSession, fuzzHistory, completed, total, status, connectionDropped } = action.payload;
+    const history = state.fuzzerSessions[selectedSession]?.fuzzingHistory[fuzzHistory];
+    if (!history) return;
+
+    history.runState = {
+      ...history.runState,
+      status: status as FuzzingHistory['runState']['status'],
+      total,
+      completed,
+      connectionDropped,
+      workers: history.runState?.workers ?? [],
+    };
+
+    if (status === 'cancelled') {
+      for (const req of history.requests) {
+        if (req.status === 'pending') {
+          req.status = 'cancelled';
+        }
+      }
+    }
+  },
+
+  updateFuzzWorkerProgress: (
+    state,
+    action: PayloadAction<FuzzWorkerUpdate>
+  ) => {
+    const { selectedSession, fuzzHistory, workerId, status, completed, total, message } = action.payload;
+    const history = state.fuzzerSessions[selectedSession]?.fuzzingHistory[fuzzHistory];
+    if (!history) return;
+
+    if (!history.runState) {
+      history.runState = initialFuzzRunState();
+    }
+
+    let worker = history.runState.workers.find((w) => w.workerId === workerId);
+    if (!worker) {
+      worker = {
+        workerId,
+        status,
+        completed,
+        total,
+        errorMessage: message,
+      };
+      history.runState.workers.push(worker);
+    } else {
+      worker.status = status;
+      worker.completed = completed;
+      worker.total = total;
+      if (message) worker.errorMessage = message;
+    }
+
+    if (status === 'dropped') {
+      history.runState.connectionDropped = true;
+    }
+  },
+
+  markRequestPending: (
+    state,
+    action: PayloadAction<{ sessionIndex: number; historyIndex: number; requestId: string }>
+  ) => {
+    const { sessionIndex, historyIndex, requestId } = action.payload;
+    const req = state.fuzzerSessions[sessionIndex]?.fuzzingHistory[historyIndex]?.requests
+      .find((r) => r.fuzzRequestId === requestId);
+    if (req) {
+      req.status = 'pending';
+      req.errorMessage = undefined;
+      req.connectionDropped = false;
+      req.response = null;
+      const history = state.fuzzerSessions[sessionIndex]?.fuzzingHistory[historyIndex];
+      if (history) {
+        history.runState = { ...history.runState, status: 'running', connectionDropped: false };
+      }
+    }
+  },
+
+  markWorkerRequestsPending: (
+    state,
+    action: PayloadAction<{ sessionIndex: number; historyIndex: number; workerId: number }>
+  ) => {
+    const { sessionIndex, historyIndex, workerId } = action.payload;
+    const history = state.fuzzerSessions[sessionIndex]?.fuzzingHistory[historyIndex];
+    if (!history) return;
+
+    for (const req of history.requests) {
+      if (req.workerId === workerId && (req.status === 'error' || req.status === 'cancelled' || req.connectionDropped)) {
+        req.status = 'pending';
+        req.errorMessage = undefined;
+        req.connectionDropped = false;
+        req.response = null;
+      }
+    }
+
+    const worker = history.runState.workers.find((w) => w.workerId === workerId);
+    if (worker) {
+      worker.status = 'running';
+      worker.errorMessage = undefined;
+    }
+
+    history.runState.status = 'running';
+    history.runState.connectionDropped = history.runState.workers.some((w) => w.status === 'dropped');
+  },
+
+  markFailedRequestsPending: (
+    state,
+    action: PayloadAction<{ sessionIndex: number; historyIndex: number }>
+  ) => {
+    const { sessionIndex, historyIndex } = action.payload;
+    const history = state.fuzzerSessions[sessionIndex]?.fuzzingHistory[historyIndex];
+    if (!history) return;
+
+    for (const req of history.requests) {
+      if (req.status === 'error' || req.status === 'cancelled' || req.connectionDropped) {
+        req.status = 'pending';
+        req.errorMessage = undefined;
+        req.connectionDropped = false;
+        req.response = null;
+      }
+    }
+
+    history.runState = {
+      ...history.runState,
+      status: 'running',
+      connectionDropped: false,
+    };
+  },
+
+  setFuzzRunTargets: (
+    state,
+    action: PayloadAction<{ sessionIndex: number; historyIndex: number; targets: { id: string; request: string }[] }>
+  ) => {
+    const { sessionIndex, historyIndex, targets } = action.payload;
+    const history = state.fuzzerSessions[sessionIndex]?.fuzzingHistory[historyIndex];
+    if (!history) return;
+
+    const numThreads = history.fuzzConfigSnapshot.numThreads || 1;
+    const targetsWithWorkers = assignWorkerIds(targets, numThreads);
+    const initialWorkers = buildInitialWorkers(targetsWithWorkers);
+
+    history.requests = targetsWithWorkers.map((target) => ({
+      fuzzRequestId: target.id,
+      rawRequest: target.request,
+      response: null,
+      requestDate: new Date().toISOString(),
+      status: 'pending' as const,
+      workerId: target.workerId,
+    }));
+    history.runState = {
+      status: 'running',
+      total: targets.length,
+      completed: 0,
+      connectionDropped: false,
+      workers: initialWorkers,
+    };
   },
 
     setContent: (state, action: PayloadAction<{ rawRequest: string }>) => {
@@ -309,9 +475,14 @@ setSelectedFuzz: (state, action: PayloadAction<{ sessionIndex: number | null, hi
 
 export const { 
   setActiveSession,
-  // removeSession,
   applyFuzzUpdates,
-   addFuzzSession,
+  updateFuzzProgress,
+  updateFuzzWorkerProgress,
+  markRequestPending,
+  markWorkerRequestsPending,
+  markFailedRequestsPending,
+  setFuzzRunTargets,
+  addFuzzSession,
   addFuzzingHistory,
   activeFuzzSession,
   setSessions,
