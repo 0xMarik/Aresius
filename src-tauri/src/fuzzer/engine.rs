@@ -6,7 +6,7 @@ use tauri::{AppHandle, Emitter};
 use tokio::sync::{mpsc, Mutex};
 use tokio::time::{interval, sleep, Duration};
 
-use crate::http_request::HttpConnection;
+use crate::ares_utils::http_connection::HttpConnection;
 use crate::types::ReqRes;
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]

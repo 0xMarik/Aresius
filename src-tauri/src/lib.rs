@@ -1,6 +1,5 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 mod ares_utils;
-mod http_request;
 use tokio::time::timeout;
 mod fuzzer;
 // src-tauri/src/main.rs
@@ -22,7 +21,6 @@ use crate::fuzzer::rotator::execute_rotator_fuzzing;
 use crate::fuzzer::zipped::execute_zipped_fuzzing;
 
 mod proxy;
-use crate::http_request::HttpConnection;
 use crate::proxy::utils::HistoryIdCounter;
 use crate::proxy::*;
 
@@ -30,6 +28,7 @@ use tracing;
 
 use ares_utils::certs::certification_installation::install_cert;
 use ares_utils::certs::check_cert_installed::check_cert_installed;
+use ares_utils::http_connection::HttpConnection;
 
 #[tauri::command]
 async fn replay_request(url: String, request_tmp: String) -> Result<ReplayerResponse, String> {

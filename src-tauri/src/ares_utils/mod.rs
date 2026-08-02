@@ -1,6 +1,7 @@
 pub mod body_decoder;
 pub mod certs;
 use url::Url;
+pub mod http_connection;
 
 #[derive(Debug, Clone)]
 pub struct UrlComponents {
