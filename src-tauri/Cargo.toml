@@ -34,3 +34,6 @@ rustls-native-certs = "0.8.3"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 tauri-plugin-shell = "2.3.5"
+flate2 = "1.1.9"
+brotli = "8.0.4"
+ruzstd = "0.9.0"

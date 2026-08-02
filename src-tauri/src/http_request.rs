@@ -1,3 +1,4 @@
+use crate::ares_utils::body_decoder::{decode_http_body, DecodeLimits, DecodedBody};
 use crate::ares_utils::*;
 use anyhow::{anyhow, Result};
 use std::sync::{Arc, OnceLock};
@@ -11,6 +12,21 @@ use tokio_rustls::rustls::client::danger::{
 use tokio_rustls::rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use tokio_rustls::rustls::{ClientConfig, DigitallySignedStruct, RootCertStore, SignatureScheme};
 use tokio_rustls::TlsConnector;
+
+/// Parses the status-line + header block `read_response` produces into
+/// (name, value) pairs for `decode_http_body`. Skips the status line,
+/// stops at the first blank line.
+fn parse_header_pairs(headers: &str) -> Vec<(String, String)> {
+    headers
+        .split("\r\n")
+        .skip(1)
+        .take_while(|line| !line.is_empty())
+        .filter_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            Some((name.trim().to_string(), value.trim().to_string()))
+        })
+        .collect()
+}
 
 /// Verifier that accepts any certificate presented by the server.
 ///
@@ -189,6 +205,14 @@ pub struct ConnectionOptions {
     /// slowloris-style target trickling bytes just under the idle timeout
     /// can't hang a request indefinitely.
     pub total_timeout: Duration,
+    /// Automatically decode the body's Content-Encoding as soon as the
+    /// response finishes reading. Turn off for max throughput (e.g. a
+    /// fuzzing loop) when you don't need decompressed bodies most of the
+    /// time -- `HttpResponse::decoded` will be `None` and no decode work
+    /// happens at all.
+    pub auto_decode: bool,
+    /// Limits passed to the decoder when `auto_decode` is true.
+    pub decode_limits: DecodeLimits,
 }
 
 impl Default for ConnectionOptions {
@@ -199,6 +223,8 @@ impl Default for ConnectionOptions {
             connect_timeout: Duration::from_secs(10),
             read_idle_timeout: Duration::from_secs(30),
             total_timeout: Duration::from_secs(60),
+            auto_decode: true,
+            decode_limits: DecodeLimits::default(),
         }
     }
 }
@@ -215,6 +241,10 @@ pub struct HttpResponse {
     pub headers: String,
     pub body: Vec<u8>,
     pub elapsed: Duration,
+    /// Decoded body, populated automatically when `auto_decode` is on.
+    /// `None` if auto-decode was off. `body` above always stays the raw,
+    /// untouched bytes -- this is purely additive.
+    pub decoded: Option<DecodedBody>,
 }
 
 impl HttpResponse {
@@ -227,8 +257,16 @@ impl HttpResponse {
 
     /// Lossy text view of the entire response, for display purposes only --
     /// not safe to use where byte-exact content matters.
+    // pub fn as_text_lossy(&self) -> String {
+    //     format!("{}{}", self.headers, String::from_utf8_lossy(&self.body))
+    // }
     pub fn as_text_lossy(&self) -> String {
-        format!("{}{}", self.headers, String::from_utf8_lossy(&self.body))
+        let body_view: &[u8] = self
+            .decoded
+            .as_ref()
+            .map(|d| d.bytes.as_slice())
+            .unwrap_or(&self.body);
+        format!("{}{}", self.headers, String::from_utf8_lossy(body_view))
     }
 }
 
@@ -288,10 +326,22 @@ impl HttpConnection {
                 )
             })?;
 
-        result.map(|(headers, body)| HttpResponse {
-            headers,
-            body,
-            elapsed: start.elapsed(),
+        result.map(|(headers, body)| {
+            let decoded = if self.options.auto_decode {
+                Some(decode_http_body(
+                    &parse_header_pairs(&headers),
+                    &body,
+                    &self.options.decode_limits,
+                ))
+            } else {
+                None
+            };
+            HttpResponse {
+                headers,
+                body,
+                decoded,
+                elapsed: start.elapsed(),
+            }
         })
     }
 
