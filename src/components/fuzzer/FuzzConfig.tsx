@@ -8,6 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { loadValuesParam, setDelayMs, setNumThreads, setSelectedParameter } from "@/store/slices/fuzzerSlice";
 import { FuzzingAttackType } from "@/types/fuzzer.type";
 import { IconUpload } from "@tabler/icons-react";
+import { FuzzerParamEmptyState } from "./FuzzerParamEmptyState";
 
 export default function PayloadConfigurator() {
     const { activeSessionIndex, fuzzerSessions } = useAppSelector(state => state.fuzzerstate);
@@ -78,7 +79,7 @@ export default function PayloadConfigurator() {
     };
 
     if (selectedParam === null) {
-        return <p>Select a param</p>;
+        return <FuzzerParamEmptyState />;
     }
 
     return (
@@ -90,27 +91,32 @@ export default function PayloadConfigurator() {
             </TabsList>
 
             <TabsContent value="payload" className="space-y-4 mt-4 h-full">
-                <div>
-                    <Label htmlFor="payloadNumber">Payload #</Label>
-                    <Select
-                        disabled={isOnePayload}
-                        value={selectedParam.highlightRange.id}
-                        onValueChange={(value) => {
-                            dispatch(setSelectedParameter({ parameterId: value }));
-                        }}
-                    >
-                        <SelectTrigger className="w-[180px]">
-                            <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                            {(isOnePayload ? [parameters[0]] : parameters).map((param, index) => (
-                                <SelectItem key={index} value={param.highlightRange.id}>
-                                    {param.highlightRange.originalText}
-                                </SelectItem>
-                            ))}
-                        </SelectContent>
-                    </Select>
-                </div>
+                {
+                    // their is no need to show payload if you won't set each parameter their payloads values
+                    (session.fuzzConfig.fuzzingAttackType === FuzzingAttackType.ZIPPED || session.fuzzConfig.fuzzingAttackType === FuzzingAttackType.COMBINATORIAL) &&
+                    <div>
+                        <Label htmlFor="payloadNumber">Payload #</Label>
+                        <Select
+                            disabled={isOnePayload}
+                            value={selectedParam.highlightRange.id}
+                            onValueChange={(value) => {
+                                dispatch(setSelectedParameter({ parameterId: value }));
+                            }}
+                        >
+                            <SelectTrigger className="w-[180px]">
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                                {(isOnePayload ? [parameters[0]] : parameters).map((param, index) => (
+                                    <SelectItem key={index} value={param.highlightRange.id}>
+                                        {param.highlightRange.originalText}
+                                    </SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                    </div>
+
+                }
 
                 <div>
                     <Label>Type</Label>

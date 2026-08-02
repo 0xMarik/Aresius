@@ -46,8 +46,7 @@ export const CodeMirrorEditor: React.FC<{ value: string }> = ({ value }) => {
 
     useEffect(() => {
         if (viewRef.current) {
-            const currentValue = viewRef.current.state.doc.sliceString(0, viewRef.current.state.doc.length, viewRef.current.state.lineBreak)
-            // linebreak add \r\n into consideration
+            const currentValue = viewRef.current.state.doc.toString();
             if (currentValue !== value) {
                 viewRef.current.dispatch({
                     changes: {

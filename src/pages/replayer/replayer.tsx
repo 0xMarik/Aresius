@@ -249,7 +249,7 @@ function Replayer() {
                     </div>
                 </div>
             </ResizablePanel>
-            <ResizableHandle />
+            <ResizableHandle withHandle />
             <ResizablePanel defaultSize={70} minSize={20}>
                 {noSessionSelected ? (
                     <div className="h-full flex items-center justify-center text-muted-foreground text-sm">
@@ -344,7 +344,7 @@ function Replayer() {
                                     <RequestCodeEditor />
                                 </div>
                             </ResizablePanel>
-                            <ResizableHandle />
+                            <ResizableHandle withHandle />
                             <ResizablePanel>
                                 <div className="bg-muted/50 min-w-0 rounded-lg p-1 w-full h-full">
                                     {responseLoading ? "Response is loading..." : <ResponseCodeEditor />}

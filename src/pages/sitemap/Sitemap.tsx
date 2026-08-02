@@ -177,7 +177,7 @@ const SitemapRequestViewerPane = React.memo<SitemapRequestViewerPaneProps>(funct
                     )}
                 </div>
             </ResizablePanel>
-            <ResizableHandle />
+            <ResizableHandle withHandle />
             <ResizablePanel defaultSize={50} minSize={15} className="min-h-0 overflow-hidden">
                 <div className="h-full min-h-0 overflow-hidden">
                     {!selectedEntity ? (
@@ -238,7 +238,7 @@ export default function SitemapTree() {
                         onExpand={handleExpandTree}
                     />
                 </ResizablePanel>
-                <ResizableHandle />
+                <ResizableHandle withHandle />
                 <ResizablePanel defaultSize={80} minSize={20} className="min-h-0 overflow-hidden">
                     {!selectedNode ? (
                         <div className="flex h-full items-center justify-center text-sm text-[--color-charcoal]/50">
@@ -253,7 +253,7 @@ export default function SitemapTree() {
                                     onSelectRequest={handleSelectRequest}
                                 />
                             </ResizablePanel>
-                            <ResizableHandle />
+                            <ResizableHandle withHandle />
                             <ResizablePanel defaultSize={50} minSize={15} className="min-h-0 overflow-hidden">
                                 <div className="flex h-full min-h-0 flex-col overflow-hidden">
                                     <SitemapRequestViewerPane selectedRequestId={selectedRequest} />

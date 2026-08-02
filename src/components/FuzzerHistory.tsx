@@ -345,7 +345,7 @@ function FuzzerHistoryBody({
                         fillHeight
                     />
                 </ResizablePanel>
-                <ResizableHandle />
+                <ResizableHandle withHandle />
                 <ResizablePanel defaultSize={70} minSize={15}>
                     <div className='h-full'>
 
@@ -371,7 +371,7 @@ function FuzzerHistoryBody({
                                         </div>
                                     </div>
                                 </ResizablePanel>
-                                <ResizableHandle />
+                                <ResizableHandle withHandle />
                                 <ResizablePanel defaultSize={50} minSize={15}>
                                     <div className="flex h-full flex-col overflow-hidden rounded-lg border border-gray-800 bg-gray-900">
                                         <div className="flex flex-shrink-0 items-center justify-between border-b border-gray-800 p-2">

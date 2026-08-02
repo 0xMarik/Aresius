@@ -118,18 +118,21 @@ export default function App() {
                 <div className="h-10 shrink-0 relative">
                     <MenubarDemo />
                 </div>
-                <div className="flex-1 min-h-0 overflow-hidden">
+                <div className="flex-1 min-h-0 ">
                     {/* <Headers/> */}
-                    <SidebarProvider className="h-full" style={{
+                    <SidebarProvider className="h-full min-h-0" style={{
                         "--sidebar-width": "13rem",
                         "--sidebar-width-icon": "3rem",
                     } as React.CSSProperties} >
                         <AppSidebar />
-                        <SidebarInset >
+                        <SidebarInset className="min-h-0 overflow-auto">
 
                             <Routes >
                                 <Route path="/" element={<Navigate to="/projects" replace />} />
                                 <Route path="/site-map" element={<SitemapTree />} />
+                                <Route path="/scope" element={
+                                    <div>Under Construction</div>
+                                } />
                                 <Route path="/interceptor" element={<Interceptor />} />
                                 <Route path="/replayer" element={<Tweaker />} />
                                 <Route path="/http-history" element={<HTTPHisotry />} />

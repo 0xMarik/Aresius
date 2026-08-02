@@ -157,7 +157,7 @@ const FuzzRequestPayload: React.FC = () => {
         <ResizablePanel defaultSize={50} minSize={15}>
           <RequestEditor />
         </ResizablePanel>
-        <ResizableHandle />
+        <ResizableHandle withHandle />
         <ResizablePanel defaultSize={50} minSize={15}>
           <FuzzConfig key={fuzzerSessions[activeSessionIndex].name} />
         </ResizablePanel>

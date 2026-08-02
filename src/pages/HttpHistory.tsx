@@ -226,7 +226,7 @@ const HTTPHisotry = () => {
                         />
                     </div>
                 </ResizablePanel>
-                <ResizableHandle />
+                <ResizableHandle withHandle />
                 <ResizablePanel defaultSize={50} minSize={15}>
                     <div className='h-full'>
                         <ResizablePanelGroup direction='horizontal' autoSaveId="http-history-req-res" >
@@ -237,7 +237,7 @@ const HTTPHisotry = () => {
                                     }
                                 </div>
                             </ResizablePanel>
-                            <ResizableHandle />
+                            <ResizableHandle withHandle />
                             <ResizablePanel defaultSize={50} minSize={15}>
                                 <div className=' h-full'>
                                     {

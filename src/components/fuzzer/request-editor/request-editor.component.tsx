@@ -368,7 +368,10 @@ const RequestEditor: React.FC = () => {
 
         const updateListener = EditorView.updateListener.of((update) => {
             if (update.docChanged) {
-                const code = update.state.sliceDoc(0, update.state.doc.length); // was doc.toString()
+                // const code = update.state.sliceDoc(0, update.state.doc.length); // was doc.toString()
+                const state = update.state
+                const doc = state.doc
+                const code = doc.sliceString(0, doc.length, state.lineBreak);
                 // Update Redux state with new content
                 dispatch(setContent({ rawRequest: code }));
             }
@@ -378,7 +381,7 @@ const RequestEditor: React.FC = () => {
                 if (!selection.empty) {
                     const from = selection.from;
                     const to = selection.to;
-                    const selectedText = update.state.sliceDoc(from, to); // was doc.sliceString(from, to)
+                    const selectedText = update.state.doc.sliceString(from, to, update.state.lineBreak);
                     console.log(from, to, selectedText);
                 }
             }
