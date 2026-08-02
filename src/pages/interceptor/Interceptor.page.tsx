@@ -105,7 +105,7 @@ const RawMessageEditor: React.FC<RawMessageEditorProps> = ({
                 extensions.push(
                     EditorView.updateListener.of((update) => {
                         if (update.docChanged) {
-                            onChange(update.state.doc.toString());
+                            onChange(update.state.doc.sliceString(0, update.state.doc.length, update.state.lineBreak));
                         }
                     })
                 );
@@ -249,6 +249,7 @@ const InterceptorPage: React.FC = () => {
             id: selectedRequestItem.id,
             modifiedMessage: isModified ? editedReqContent : null,
         };
+
 
         try {
             await invoke('forward_intercept_item', { payload });

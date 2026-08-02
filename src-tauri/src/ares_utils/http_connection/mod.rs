@@ -13,7 +13,7 @@ mod framing;
 mod tls;
 mod transport;
 
-use crate::ares_utils::body_decoder::{decode_http_body, DecodeLimits, DecodedBody};
+use crate::ares_utils::body_decoder::DecodeLimits;
 use crate::ares_utils::*;
 use anyhow::{anyhow, Result};
 use chunked::dechunk_or_fallback;
@@ -24,24 +24,6 @@ use std::time::{Duration, Instant};
 use tokio::time::timeout;
 use transport::{connect_stream, Connection};
 
-/// Parses the status-line + header block `read_response` produces into
-/// (name, value) pairs for `decode_http_body`. Skips the status line,
-/// stops at the first blank line.
-fn parse_header_pairs(headers: &str) -> Vec<(String, String)> {
-    headers
-        .split("\r\n")
-        .skip(1)
-        .take_while(|line| !line.is_empty())
-        .filter_map(|line| {
-            let (name, value) = line.split_once(':')?;
-            Some((name.trim().to_string(), value.trim().to_string()))
-        })
-        .collect()
-}
-
-/// Tunables for a connection. Defaults are conservative for talking to
-/// arbitrary (including hostile/misbehaving) targets during fuzzing or
-/// proxying, which is the primary use case here.
 #[derive(Clone, Debug)]
 pub struct ConnectionOptions {
     /// Verify the server's TLS certificate against the platform root store.
@@ -98,20 +80,12 @@ pub struct HttpResponse {
     pub headers: String,
     pub body: Vec<u8>,
     pub elapsed: Duration,
-    /// Decoded body, populated automatically when `auto_decode` is on.
-    /// `None` if auto-decode was off. `body` above always stays the raw,
-    /// untouched bytes -- this is purely additive.
-    pub decoded: Option<DecodedBody>,
+    // pub is_decoded: bool,
 }
 
 impl HttpResponse {
     pub fn as_text_lossy(&self) -> String {
-        let body_view: &[u8] = self
-            .decoded
-            .as_ref()
-            .map(|d| d.bytes.as_slice())
-            .unwrap_or(&self.body);
-        format!("{}{}", self.headers, String::from_utf8_lossy(body_view))
+        format!("{}{}", self.headers, String::from_utf8_lossy(&self.body))
     }
 }
 
@@ -167,11 +141,18 @@ impl HttpConnection {
                 )
             })??;
 
-        let decoded = self.decode_if_enabled(&headers, &body);
+        let (headers, body, _is_decoded) = if self.options.auto_decode {
+            let decoded =
+                body_decoder::decode_response(&headers, body, &self.options.decode_limits);
+            (decoded.headers, decoded.body, true)
+        } else {
+            (headers, body, false)
+        };
+
         Ok(HttpResponse {
             headers,
             body,
-            decoded,
+            // is_decoded,
             elapsed: start.elapsed(),
         })
     }
@@ -186,19 +167,6 @@ impl HttpConnection {
             self.disconnected = false;
         }
         Ok(())
-    }
-
-    /// Runs the configured Content-Encoding decoder over a finished
-    /// response, unless `auto_decode` is off (in which case decoding is
-    /// skipped entirely, not just discarded).
-    fn decode_if_enabled(&self, headers: &str, body: &[u8]) -> Option<DecodedBody> {
-        self.options.auto_decode.then(|| {
-            decode_http_body(
-                &parse_header_pairs(headers),
-                body,
-                &self.options.decode_limits,
-            )
-        })
     }
 
     /// Reads one chunk from the socket under the per-read idle timeout,
