@@ -85,6 +85,7 @@ export const InterceptStack: React.FC<InterceptStackProps> = ({
                 extensions: [
                     http(),
                     oneDark,
+                    EditorView.lineWrapping,
                     EditorView.theme({
                         '&': { height: '100%', fontSize: '12px', backgroundColor: '#0d1117' },
                         '.cm-scroller': { overflow: 'auto' },

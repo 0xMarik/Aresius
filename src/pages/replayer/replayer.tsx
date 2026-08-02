@@ -56,7 +56,8 @@ const RequestCodeEditor = () => {
 
         const updateListener = EditorView.updateListener.of((update) => {
             if (update.docChanged) {
-                const code = update.state.doc.toString();
+                // line break to specify \r\n that are in the origin request
+                const code = update.state.doc.sliceString(0, update.state.doc.length, state.lineBreak)
                 dispatch(setReaplayerContent({ rawRequest: code }));
             }
         });

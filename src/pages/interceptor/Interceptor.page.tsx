@@ -4,7 +4,7 @@ import { basicSetup, EditorView } from 'codemirror';
 import { EditorState } from '@codemirror/state';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { http } from '@/components/http-parser.component';
-import DataTable, { BaseRow } from '@/components/Table';
+import { BaseRow } from '@/components/Table';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
@@ -16,8 +16,7 @@ import {
 } from '@/components/ui/resizable';
 import { ColumnDef } from '@tanstack/react-table';
 import {
-    Play,
-    Pause,
+
     Trash2,
     Shield,
     ShieldAlert,
@@ -165,7 +164,7 @@ const InterceptorPage: React.FC = () => {
     const selectedId = useAppSelector((state) => state.interceptor.selectedId);
     const { updateSettings } = useInterceptSettings();
 
-    const [activeTab, setActiveTab] = useState<'requests' | 'responses'>('requests');
+    // const [activeTab, setActiveTab] = useState<'requests' | 'responses'>('requests');
     const [actionLoading, setActionLoading] = useState<boolean>(false);
     const [validationError, setValidationError] = useState<string | null>(null);
 

@@ -391,6 +391,7 @@ const RequestEditor: React.FC = () => {
                 EditorState.lineSeparator.of("\r\n"),
                 basicSetup,
                 http(),
+                EditorView.lineWrapping,
                 javascript(),
                 oneDark,
                 fullHeightTheme,
