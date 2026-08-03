@@ -13,8 +13,10 @@ mod framing;
 mod tls;
 mod transport;
 
-use crate::ares_utils::body_decoder::DecodeLimits;
 use crate::ares_utils::*;
+use crate::ares_utils::{
+    body_decoder::DecodeLimits, http_connection::framing::parse_request_framing,
+};
 use anyhow::{anyhow, Result};
 use chunked::dechunk_or_fallback;
 use framing::{
@@ -309,4 +311,134 @@ enum ReadOutcome {
     Data(usize),
     /// Nothing arrived before `read_idle_timeout` elapsed.
     Idle,
+}
+
+/// Reads one full HTTP *request* off an already-accepted stream, writing
+/// nothing first -- the mirror image of `read_response`, for a server
+/// (e.g. the proxy's listener) instead of a client. Shares the same
+/// size-cap/framing/dechunk machinery `read_response` uses, via
+/// `parse_request_framing` and `body_is_complete`.
+///
+/// `keep_alive_idle_timeout` governs the wait for the *first* byte of a
+/// new request on a reused connection -- deliberately separate from
+/// `options.read_idle_timeout`, which only kicks in once a request has
+/// started arriving (mid-message stalls, i.e. slowloris protection).
+/// `options.total_timeout` is enforced from the moment the first byte of
+/// the request arrives, same as `send_request` enforces it from the
+/// moment a response starts arriving.
+///
+/// Returns an empty `Vec` if the connection closes (or the keep-alive
+/// wait times out) before any bytes of a new request arrive -- callers
+/// should treat that as "nothing more to read," not an error.
+pub async fn read_request_message<S>(
+    stream: &mut S,
+    options: &ConnectionOptions,
+    keep_alive_idle_timeout: Duration,
+) -> Result<Vec<u8>>
+where
+    S: tokio::io::AsyncRead + Unpin,
+{
+    use tokio::io::AsyncReadExt;
+
+    let mut buffer: Vec<u8> = Vec::new();
+    let mut chunk = [0u8; 4096];
+    let mut header_scan_from = 0usize;
+    let mut header_end_pos = 0usize;
+    let mut framing: Option<BodyFraming> = None;
+    let mut chunk_cursor = 0usize;
+    let mut message_started_at: Option<Instant> = None;
+
+    loop {
+        if buffer.len() > options.max_response_size {
+            return Err(anyhow!(
+                "request exceeded max size of {} bytes",
+                options.max_response_size
+            ));
+        }
+
+        if let Some(started) = message_started_at {
+            if started.elapsed() > options.total_timeout {
+                return Err(anyhow!(
+                    "request exceeded total timeout of {:?}",
+                    options.total_timeout
+                ));
+            }
+        }
+
+        let idle_budget = if buffer.is_empty() {
+            keep_alive_idle_timeout
+        } else {
+            options.read_idle_timeout
+        };
+
+        let outcome = match timeout(idle_budget, stream.read(&mut chunk)).await {
+            Ok(Ok(0)) => ReadOutcome::Closed,
+            Ok(Ok(n)) => ReadOutcome::Data(n),
+            Ok(Err(e)) => return Err(anyhow!("Failed to read request: {}", e)),
+            Err(_) => ReadOutcome::Idle,
+        };
+
+        match outcome {
+            ReadOutcome::Closed => break,
+            ReadOutcome::Data(n) => {
+                if message_started_at.is_none() {
+                    message_started_at = Some(Instant::now());
+                }
+                buffer.extend_from_slice(&chunk[..n]);
+
+                if framing.is_none() {
+                    if let Some(pos) = locate_header_terminator(&buffer, &mut header_scan_from) {
+                        let header_block = String::from_utf8_lossy(&buffer[..pos]);
+                        let parsed = parse_request_framing(&header_block)?;
+                        header_end_pos = pos + 4;
+                        framing = Some(parsed.body_framing);
+                        // parsed.connection_close is available here if the
+                        // proxy ever wants to honor a client-sent
+                        // `Connection: close` on the inbound leg; unused
+                        // for now since tunnel lifetime is driven by the
+                        // accept loop, not this reader.
+                    }
+                }
+
+                if let Some(body_framing) = framing {
+                    if let Some(total_len) =
+                        body_is_complete(&buffer, header_end_pos, body_framing, &mut chunk_cursor)?
+                    {
+                        buffer.truncate(total_len);
+                        break;
+                    }
+                }
+            }
+            ReadOutcome::Idle => {
+                if buffer.is_empty() {
+                    // Keep-alive wait timed out with nothing arriving --
+                    // treat like a clean close, not an error.
+                    return Ok(Vec::new());
+                }
+                return Err(anyhow!(
+                    "request read timed out after {:?} of inactivity",
+                    options.read_idle_timeout
+                ));
+                // note: request framing never produces BodyFraming::UntilClose,
+                // so unlike read_response there's no "idle + framing.is_some()
+                // => treat as complete" branch needed here.
+            }
+        }
+    }
+
+    let header_end = match framing {
+        Some(_) => header_end_pos,
+        None => buffer.len(),
+    };
+
+    let raw_body = &buffer[header_end..];
+    let body = if matches!(framing, Some(BodyFraming::Chunked)) {
+        dechunk_or_fallback(raw_body)
+    } else {
+        raw_body.to_vec()
+    };
+
+    let mut full = buffer[..header_end].to_vec();
+    full.extend_from_slice(&body);
+    Ok(full)
 }

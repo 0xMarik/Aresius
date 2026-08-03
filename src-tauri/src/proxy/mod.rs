@@ -1,16 +1,17 @@
+use crate::ares_utils::body_decoder;
 use crate::ares_utils::certs::*;
+use crate::ares_utils::http_connection::read_request_message;
+use crate::ares_utils::http_connection::ConnectionOptions;
+use crate::ares_utils::http_connection::HttpConnection;
 use crate::proxy::utils::HistoryIdCounter;
 use rcgen::KeyPair;
-use rustls::{pki_types::ServerName, ClientConfig, RootCertStore};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
-use tokio_rustls::client::TlsStream as ClientTlsStream;
-use tokio_rustls::TlsConnector;
 use uuid::Uuid;
 pub mod interceptor;
 pub mod utils;
@@ -20,6 +21,13 @@ pub use interceptor::*;
 /// Hard cap on a single request/response we'll buffer in memory.
 /// Protects against unbounded growth on malformed or malicious framing.
 const MAX_BODY_SIZE: usize = 25 * 1024 * 1024; // 25MB
+
+/// How long to wait for the *next* request on a reused client connection
+/// before giving up and letting the tunnel end. Deliberately generous and
+/// separate from `ConnectionOptions::read_idle_timeout`, which only governs
+/// stalls *mid*-request (slowloris protection) -- an idle keep-alive
+/// connection between requests is normal, not an attack.
+const KEEP_ALIVE_IDLE_TIMEOUT: Duration = Duration::from_secs(120);
 
 #[derive(serde::Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -44,15 +52,25 @@ impl CertCache {
     }
 }
 
+/// Options for the `HttpConnection`s used on both proxy legs (CONNECT
+/// tunnels and plain HTTP). `auto_decode` is deliberately `false`: the
+/// proxy must forward byte-exact responses to the client, so decoding (for
+/// the history/UI payload only) is done separately via `body_decoder`
+/// after the raw response is already in hand -- see `decode_for_display`.
+fn proxy_connection_options() -> ConnectionOptions {
+    ConnectionOptions {
+        max_response_size: MAX_BODY_SIZE,
+        auto_decode: false,
+        ..ConnectionOptions::default()
+    }
+}
+
 pub async fn start_http_proxy(app_handle: AppHandle, bind_addr: &str) -> std::io::Result<()> {
     // Generate CA certificate once at startup
     let (ca_cert_pem, key_pair) = generate_ca_cert(&app_handle)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
     let key_pair = Arc::new(key_pair);
-
-    // Build the upstream TLS client config ONCE. Previously this loaded
-    // native root certs from disk on every intercepted request.
-    let upstream_tls_config = Arc::new(build_upstream_tls_config()?);
+    let connection_options = proxy_connection_options();
 
     let listener = tokio::net::TcpListener::bind(bind_addr).await?;
     tracing::info!("MITM Proxy listening on {}", bind_addr);
@@ -65,14 +83,14 @@ pub async fn start_http_proxy(app_handle: AppHandle, bind_addr: &str) -> std::io
                 let ca_cert_pem = ca_cert_pem.clone();
                 let key_pair = key_pair.clone();
                 let app = app.clone();
-                let upstream_tls_config = upstream_tls_config.clone();
+                let connection_options = connection_options.clone();
                 tokio::spawn(async move {
                     if let Err(e) = handle_client(
                         app,
                         client_stream,
                         ca_cert_pem,
                         key_pair,
-                        upstream_tls_config,
+                        connection_options,
                     )
                     .await
                     {
@@ -85,43 +103,25 @@ pub async fn start_http_proxy(app_handle: AppHandle, bind_addr: &str) -> std::io
     }
 }
 
-fn build_upstream_tls_config() -> std::io::Result<ClientConfig> {
-    let mut root_store = RootCertStore::empty();
-
-    // load_native_certs() is infallible: it returns whatever certs it could
-    // find plus a separate list of per-source errors, rather than an
-    // all-or-nothing Result. Log the errors but keep going with whatever
-    // succeeded — that mirrors what the crate itself recommends.
-    let result = rustls_native_certs::load_native_certs();
-
-    for err in &result.errors {
-        tracing::warn!("Error loading a native cert source: {}", err);
-    }
-
-    for cert in result.certs {
-        root_store.add(cert).ok();
-    }
-
-    if root_store.is_empty() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "No native root certificates could be loaded",
-        ));
-    }
-
-    Ok(ClientConfig::builder()
-        .with_root_certificates(root_store)
-        .with_no_client_auth())
-}
-
-/// Waits for the frontend's decision on an intercepted request, with a
-/// timeout. If the frontend never responds (closed UI, crash, etc.) we
-/// clean up the pending entry ourselves instead of leaking it forever.
 fn now_ms() -> u128 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_millis()
+}
+
+/// Decodes a raw `HttpConnection` response purely for the history/UI
+/// payload. The bytes actually written back to the client always stay the
+/// untouched originals (see call sites) -- decoding here must never affect
+/// what's forwarded, or a client expecting `Content-Encoding: gzip` would
+/// receive plaintext under headers that still claim otherwise.
+fn decode_for_display(headers: &str, body: &[u8], options: &ConnectionOptions) -> String {
+    let decoded = body_decoder::decode_response(headers, body.to_vec(), &options.decode_limits);
+    format!(
+        "{}{}",
+        decoded.headers,
+        String::from_utf8_lossy(&decoded.body)
+    )
 }
 
 // Main client handler
@@ -130,7 +130,7 @@ async fn handle_client(
     mut client_stream: TcpStream,
     ca_cert_pem: String,
     ca_key_pair: Arc<KeyPair>,
-    upstream_tls_config: Arc<ClientConfig>,
+    connection_options: ConnectionOptions,
 ) -> std::io::Result<()> {
     let mut buffer = [0u8; 8192];
     let bytes_read = client_stream.read(&mut buffer).await?;
@@ -148,11 +148,17 @@ async fn handle_client(
             &request,
             ca_cert_pem,
             ca_key_pair,
-            upstream_tls_config,
+            connection_options,
         )
         .await
     } else {
-        handle_http_request(app_handle, client_stream, buffer[..bytes_read].to_vec()).await
+        handle_http_request(
+            app_handle,
+            client_stream,
+            buffer[..bytes_read].to_vec(),
+            connection_options,
+        )
+        .await
     }
 }
 
@@ -162,7 +168,7 @@ async fn handle_connect(
     request: &str,
     ca_cert_pem: String,
     ca_key_pair: Arc<KeyPair>,
-    upstream_tls_config: Arc<ClientConfig>,
+    connection_options: ConnectionOptions,
 ) -> std::io::Result<()> {
     let target = request
         .lines()
@@ -188,13 +194,23 @@ async fn handle_connect(
     // Perform TLS handshake with client
     let mut client_tls = acceptor.accept(client_stream).await?;
 
-    // A single upstream TLS connection is reused across every request on
-    // this tunnel (keep-alive), and re-established on demand if it drops.
-    let mut server_tls: Option<ClientTlsStream<TcpStream>> = None;
+    // A single upstream HttpConnection is reused across every request on
+    // this tunnel (keep-alive) and lazily (re)dialed on demand -- both on
+    // first use and after any failed request, since HttpConnection only
+    // self-marks as disconnected on a clean close / `Connection: close`,
+    // not on a hard IO error.
+    let upstream_url = format!("https://{}", target);
+    let mut upstream: Option<HttpConnection> = None;
     let intercept_state: tauri::State<InterceptState> = app_handle.state();
 
     loop {
-        let raw_request = match read_full_message(&mut client_tls, false).await {
+        let raw_request = match read_request_message(
+            &mut client_tls,
+            &connection_options,
+            KEEP_ALIVE_IDLE_TIMEOUT,
+        )
+        .await
+        {
             Ok(data) if data.is_empty() => break, // client closed the connection cleanly
             Ok(data) => data,
             Err(e) => {
@@ -208,7 +224,10 @@ async fn handle_connect(
         let request_id = Uuid::new_v4().to_string();
 
         let mut outgoing_request_text = decrypted_request.clone();
-        if intercept_state.should_intercept(InterceptItemType::Request).await {
+        if intercept_state
+            .should_intercept(InterceptItemType::Request)
+            .await
+        {
             let item = InterceptItem {
                 id: request_id.clone(),
                 item_type: InterceptItemType::Request,
@@ -226,15 +245,24 @@ async fn handle_connect(
                     }
                 }
                 Some(InterceptDecision::Drop) | None => {
-                    tracing::info!("Request dropped by user or state shutdown for {}", request_id);
+                    tracing::info!(
+                        "Request dropped by user or state shutdown for {}",
+                        request_id
+                    );
                     continue;
                 }
             }
         }
 
-        if server_tls.is_none() {
-            match connect_upstream_tls(&target, &domain, upstream_tls_config.clone()).await {
-                Ok(s) => server_tls = Some(s),
+        let conn = match upstream.as_mut() {
+            Some(c) => c,
+            None => match HttpConnection::with_options(&upstream_url, connection_options.clone())
+                .await
+            {
+                Ok(c) => {
+                    upstream = Some(c);
+                    upstream.as_mut().unwrap()
+                }
                 Err(e) => {
                     tracing::warn!("Failed to connect upstream {}: {}", target, e);
                     client_tls
@@ -243,41 +271,38 @@ async fn handle_connect(
                         .ok();
                     break;
                 }
-            }
-        }
+            },
+        };
 
-        let start = std::time::Instant::now();
-        let conn = server_tls.as_mut().unwrap();
-
-        if let Err(e) = conn.write_all(outgoing_request_text.as_bytes()).await {
-            tracing::warn!("Upstream write failed for {}: {}", target, e);
-            server_tls = None;
-            break;
-        }
-
-        let response_bytes = match read_full_message(conn, true).await {
-            Ok(data) => data,
+        let response = match conn.send_request(&outgoing_request_text).await {
+            Ok(r) => r,
             Err(e) => {
-                tracing::warn!("Upstream read failed for {}: {}", target, e);
-                server_tls = None;
+                tracing::warn!("Upstream request failed for {}: {}", target, e);
+                // upstream = None;
                 break;
             }
         };
 
-        let duration = start.elapsed();
-        let decrypted_response = String::from_utf8_lossy(&response_bytes).to_string();
+        // Byte-exact reproduction of what the origin sent -- what actually
+        // gets forwarded to the client.
+        let mut outgoing_response_bytes = response.headers.clone().into_bytes();
+        outgoing_response_bytes.extend_from_slice(&response.body);
 
-        let mut outgoing_response_bytes = response_bytes;
-        let mut final_response_text = decrypted_response.clone();
+        // Decoded copy, purely for the history/UI payload.
+        let mut final_response_text =
+            decode_for_display(&response.headers, &response.body, &connection_options);
 
-        if intercept_state.should_intercept(InterceptItemType::Response).await {
+        if intercept_state
+            .should_intercept(InterceptItemType::Response)
+            .await
+        {
             let res_id = Uuid::new_v4().to_string();
             let item = InterceptItem {
                 id: res_id.clone(),
                 item_type: InterceptItemType::Response,
                 host: target.clone(),
-                method_or_status: extract_method_or_status(&decrypted_response, false),
-                raw_message: decrypted_response.clone(),
+                method_or_status: extract_method_or_status(&final_response_text, false),
+                raw_message: final_response_text.clone(),
                 timestamp: now_ms(),
                 is_https: true,
             };
@@ -285,6 +310,10 @@ async fn handle_connect(
             match intercept_state.add_and_await(item).await {
                 Some(InterceptDecision::Forward { modified_message }) => {
                     if let Some(mod_msg) = modified_message {
+                        // NOTE: if the user edited the *decoded* body here,
+                        // forwarding it raw under the original
+                        // Content-Encoding header will desync the client.
+                        // Flagging as a known follow-up, not fixed here.
                         final_response_text = mod_msg.clone();
                         outgoing_response_bytes = mod_msg.into_bytes();
                     }
@@ -306,7 +335,7 @@ async fn handle_connect(
                     raw_response: final_response_text,
                     host: target.clone(),
                     timestamp: ts_ms,
-                    duration: Some(duration.as_millis() as u64),
+                    duration: Some(response.elapsed.as_millis() as u64),
                 },
             )
             .ok();
@@ -317,23 +346,8 @@ async fn handle_connect(
         }
     }
 
-    if let Some(mut s) = server_tls {
-        s.shutdown().await.ok();
-    }
     client_tls.shutdown().await.ok();
     Ok(())
-}
-
-async fn connect_upstream_tls(
-    target: &str,
-    domain: &str,
-    upstream_tls_config: Arc<ClientConfig>,
-) -> std::io::Result<ClientTlsStream<TcpStream>> {
-    let server_stream = TcpStream::connect(target).await?;
-    let connector = TlsConnector::from(upstream_tls_config);
-    let server_name = ServerName::try_from(domain.to_string())
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
-    connector.connect(server_name, server_stream).await
 }
 
 /// Looks up a cached leaf cert for `domain`, or generates one. The
@@ -375,22 +389,35 @@ async fn get_or_generate_server_cert(
     Ok((cert, key))
 }
 
-/// Plain HTTP now gets the same intercept/log/modify treatment as HTTPS,
-/// instead of being blind-tunneled with copy_bidirectional.
+/// Plain HTTP gets the same intercept/log/modify/decode treatment as HTTPS.
 async fn handle_http_request(
     app_handle: AppHandle,
     mut client_stream: TcpStream,
     first_request_bytes: Vec<u8>,
+    connection_options: ConnectionOptions,
 ) -> std::io::Result<()> {
     let target = parse_target(&String::from_utf8_lossy(&first_request_bytes))?;
-    let mut server_stream: Option<TcpStream> = None;
+    let upstream_url = format!("http://{}", target);
+    let mut upstream: Option<HttpConnection> = None;
+    // NOTE (pre-existing limitation, carried over unchanged): the very
+    // first request is whatever `handle_client`'s initial 8KB read
+    // captured, not re-framed through `read_request_message`. If that
+    // first request's body is larger than one read or arrives split
+    // across reads, it can be incomplete. Every subsequent request on
+    // this connection is fully framed via `read_request_message` below.
     let mut pending_bytes = Some(first_request_bytes);
     let intercept_state: tauri::State<InterceptState> = app_handle.state();
 
     loop {
         let raw_request = match pending_bytes.take() {
             Some(b) => b,
-            None => match read_full_message(&mut client_stream, false).await {
+            None => match read_request_message(
+                &mut client_stream,
+                &connection_options,
+                KEEP_ALIVE_IDLE_TIMEOUT,
+            )
+            .await
+            {
                 Ok(data) if data.is_empty() => break,
                 Ok(data) => data,
                 Err(_) => break,
@@ -402,7 +429,10 @@ async fn handle_http_request(
         let request_id = Uuid::new_v4().to_string();
 
         let mut outgoing_request_text = decrypted_request.clone();
-        if intercept_state.should_intercept(InterceptItemType::Request).await {
+        if intercept_state
+            .should_intercept(InterceptItemType::Request)
+            .await
+        {
             let item = InterceptItem {
                 id: request_id.clone(),
                 item_type: InterceptItemType::Request,
@@ -420,40 +450,57 @@ async fn handle_http_request(
                     }
                 }
                 Some(InterceptDecision::Drop) | None => {
-                    tracing::info!("Request dropped by user or state shutdown for {}", request_id);
+                    tracing::info!(
+                        "Request dropped by user or state shutdown for {}",
+                        request_id
+                    );
                     continue;
                 }
             }
         }
 
-        if server_stream.is_none() {
-            server_stream = Some(TcpStream::connect(&target).await?);
-        }
-        let conn = server_stream.as_mut().unwrap();
-        let start = std::time::Instant::now();
-
-        if conn.write_all(outgoing_request_text.as_bytes()).await.is_err() {
-            break;
-        }
-
-        let response_bytes = match read_full_message(conn, true).await {
-            Ok(d) => d,
-            Err(_) => break,
+        let conn = match upstream.as_mut() {
+            Some(c) => c,
+            None => match HttpConnection::with_options(&upstream_url, connection_options.clone())
+                .await
+            {
+                Ok(c) => {
+                    upstream = Some(c);
+                    upstream.as_mut().unwrap()
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to connect upstream {}: {}", target, e);
+                    break;
+                }
+            },
         };
-        let duration = start.elapsed();
-        let decrypted_response = String::from_utf8_lossy(&response_bytes).to_string();
 
-        let mut outgoing_response_bytes = response_bytes;
-        let mut final_response_text = decrypted_response.clone();
+        let response = match conn.send_request(&outgoing_request_text).await {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!("Upstream request failed for {}: {}", target, e);
+                // upstream = None;
+                break;
+            }
+        };
 
-        if intercept_state.should_intercept(InterceptItemType::Response).await {
+        let mut outgoing_response_bytes = response.headers.clone().into_bytes();
+        outgoing_response_bytes.extend_from_slice(&response.body);
+
+        let mut final_response_text =
+            decode_for_display(&response.headers, &response.body, &connection_options);
+
+        if intercept_state
+            .should_intercept(InterceptItemType::Response)
+            .await
+        {
             let res_id = Uuid::new_v4().to_string();
             let item = InterceptItem {
                 id: res_id.clone(),
                 item_type: InterceptItemType::Response,
                 host: target.clone(),
-                method_or_status: extract_method_or_status(&decrypted_response, false),
-                raw_message: decrypted_response.clone(),
+                method_or_status: extract_method_or_status(&final_response_text, false),
+                raw_message: final_response_text.clone(),
                 timestamp: now_ms(),
                 is_https: false,
             };
@@ -482,12 +529,16 @@ async fn handle_http_request(
                     raw_response: final_response_text,
                     host: target.clone(),
                     timestamp: ts_ms,
-                    duration: Some(duration.as_millis() as u64),
+                    duration: Some(response.elapsed.as_millis() as u64),
                 },
             )
             .ok();
 
-        if client_stream.write_all(&outgoing_response_bytes).await.is_err() {
+        if client_stream
+            .write_all(&outgoing_response_bytes)
+            .await
+            .is_err()
+        {
             break;
         }
     }
@@ -510,103 +561,4 @@ fn parse_target(request: &str) -> std::io::Result<String> {
         std::io::ErrorKind::InvalidInput,
         "No Host header found",
     ))
-}
-
-// ---------------------------------------------------------------------
-// Full-message reading: reads headers, then keeps reading until the full
-// body has arrived (Content-Length or chunked terminator), instead of
-// relying on a single 8KB read that silently truncated anything larger.
-// ---------------------------------------------------------------------
-
-async fn read_full_message<S>(stream: &mut S, is_response: bool) -> std::io::Result<Vec<u8>>
-where
-    S: AsyncReadExt + Unpin,
-{
-    let mut data = Vec::with_capacity(8192);
-    let mut chunk = [0u8; 8192];
-
-    let header_end = loop {
-        let n = stream.read(&mut chunk).await?;
-        if n == 0 {
-            return Ok(data); // closed before headers completed (or empty read = clean close)
-        }
-        data.extend_from_slice(&chunk[..n]);
-        if data.len() > MAX_BODY_SIZE {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "Headers exceeded max size",
-            ));
-        }
-        if let Some(pos) = find_header_end(&data) {
-            break pos;
-        }
-    };
-
-    let (content_length, is_chunked) = parse_body_framing(&data[..header_end]);
-    let _ = is_response; // reserved: could special-case 204/304/HEAD as bodyless
-
-    if is_chunked {
-        while !has_chunked_terminator(&data[header_end..]) {
-            let n = stream.read(&mut chunk).await?;
-            if n == 0 {
-                break;
-            }
-            data.extend_from_slice(&chunk[..n]);
-            if data.len() > MAX_BODY_SIZE {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "Chunked body exceeded max size",
-                ));
-            }
-        }
-    } else if let Some(len) = content_length {
-        let target_len = header_end + len;
-        while data.len() < target_len {
-            let n = stream.read(&mut chunk).await?;
-            if n == 0 {
-                break; // server closed early; return what we have
-            }
-            data.extend_from_slice(&chunk[..n]);
-            if data.len() > MAX_BODY_SIZE {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "Body exceeded max size",
-                ));
-            }
-        }
-    }
-    // No Content-Length and not chunked: assume no body (typical for GET,
-    // or a response whose body is terminated by connection close, which
-    // we can't distinguish from "still coming" without more signal).
-
-    Ok(data)
-}
-
-fn find_header_end(data: &[u8]) -> Option<usize> {
-    data.windows(4)
-        .position(|w| w == b"\r\n\r\n")
-        .map(|p| p + 4)
-}
-
-fn parse_body_framing(header_bytes: &[u8]) -> (Option<usize>, bool) {
-    let header_str = String::from_utf8_lossy(header_bytes);
-    let mut content_length = None;
-    let mut is_chunked = false;
-
-    for line in header_str.lines() {
-        let lower = line.to_lowercase();
-        if lower.starts_with("content-length:") {
-            if let Some(v) = line.splitn(2, ':').nth(1) {
-                content_length = v.trim().parse::<usize>().ok();
-            }
-        } else if lower.starts_with("transfer-encoding:") && lower.contains("chunked") {
-            is_chunked = true;
-        }
-    }
-
-    (content_length, is_chunked)
-}
-
-fn has_chunked_terminator(body: &[u8]) -> bool {
-    body.windows(5).any(|w| w == b"0\r\n\r\n")
 }

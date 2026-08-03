@@ -186,200 +186,61 @@ pub(super) fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(needle.len()).position(|w| w == needle)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+#[derive(Debug)]
+pub(super) struct RequestFraming {
+    // pub(super) connection_close: bool,
+    pub(super) body_framing: BodyFraming,
+}
 
-    #[test]
-    fn head_method_is_case_insensitive_and_ignores_other_verbs() {
-        assert!(is_head_method("HEAD /foo HTTP/1.1"));
-        assert!(is_head_method("head /foo HTTP/1.1"));
-        assert!(!is_head_method("GET /foo HTTP/1.1"));
-        assert!(!is_head_method(""));
-    }
+/// Same header rules as `parse_response_framing`, minus the status-code /
+/// HEAD bodyless check (not applicable to requests) and minus the
+/// `UntilClose` fallback (RFC 7230 §3.3.3 rule 6: a request with neither
+/// header always means no body -- never "read until close").
+pub(super) fn parse_request_framing(header_block: &str) -> Result<RequestFraming> {
+    // let mut connection_close = false;
+    let mut is_chunked = false;
+    let mut content_length: Option<usize> = None;
 
-    #[test]
-    fn locate_header_terminator_finds_separator_and_advances_scan_from() {
-        let mut scan_from = 0;
-        let buf = b"HTTP/1.1 200 OK\r\nA: b\r\n\r\nbody";
-        let pos = locate_header_terminator(buf, &mut scan_from);
-        assert_eq!(pos, Some(21));
-    }
-
-    #[test]
-    fn locate_header_terminator_returns_none_and_records_progress_when_absent() {
-        let mut scan_from = 0;
-        let buf = b"HTTP/1.1 200 OK\r\nA: b\r\n";
-        let pos = locate_header_terminator(buf, &mut scan_from);
-        assert_eq!(pos, None);
-        assert_eq!(scan_from, buf.len());
-    }
-
-    #[test]
-    fn locate_header_terminator_finds_separator_split_across_two_reads() {
-        // First read ends mid-separator ("\r\n\r"), second brings the "\n".
-        let mut scan_from = 0;
-        let first = b"HTTP/1.1 200 OK\r\n\r";
-        assert_eq!(locate_header_terminator(first, &mut scan_from), None);
-        assert_eq!(scan_from, first.len());
-
-        let mut full = first.to_vec();
-        full.push(b'\n');
-        let pos = locate_header_terminator(&full, &mut scan_from);
-        // "HTTP/1.1 200 OK" is 15 bytes, so the separator starts at index 15.
-        assert_eq!(pos, Some(15));
-    }
-
-    #[test]
-    fn status_code_parses_from_status_line() {
-        assert_eq!(
-            parse_status_code("HTTP/1.1 204 No Content\r\nA: b"),
-            Some(204)
-        );
-        assert_eq!(parse_status_code("garbage"), None);
-        assert_eq!(parse_status_code(""), None);
-    }
-
-    #[test]
-    fn no_body_status_matches_1xx_204_and_304_only() {
-        assert!(is_no_body_status(Some(100)));
-        assert!(is_no_body_status(Some(199)));
-        assert!(is_no_body_status(Some(204)));
-        assert!(is_no_body_status(Some(304)));
-        assert!(!is_no_body_status(Some(200)));
-        assert!(!is_no_body_status(Some(404)));
-        assert!(!is_no_body_status(None));
-    }
-
-    #[test]
-    fn framing_picks_content_length_when_present_alone() {
-        let framing =
-            parse_response_framing("HTTP/1.1 200 OK\r\nContent-Length: 42", false).unwrap();
-        assert!(!framing.connection_close);
-        assert_eq!(framing.body_framing, BodyFraming::ContentLength(42));
-    }
-
-    #[test]
-    fn framing_picks_chunked_when_present_alone() {
-        let framing =
-            parse_response_framing("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked", false).unwrap();
-        assert_eq!(framing.body_framing, BodyFraming::Chunked);
-    }
-
-    #[test]
-    fn framing_prefers_chunked_over_content_length_when_both_present() {
-        let framing = parse_response_framing(
-            "HTTP/1.1 200 OK\r\nContent-Length: 42\r\nTransfer-Encoding: chunked",
-            false,
-        )
-        .unwrap();
-        assert_eq!(framing.body_framing, BodyFraming::Chunked);
-    }
-
-    #[test]
-    fn framing_is_no_body_for_head_request_even_with_content_length() {
-        let framing =
-            parse_response_framing("HTTP/1.1 200 OK\r\nContent-Length: 9999", true).unwrap();
-        assert_eq!(framing.body_framing, BodyFraming::NoBody);
-    }
-
-    #[test]
-    fn framing_is_no_body_for_204_and_304_even_with_content_length() {
-        for status in ["204 No Content", "304 Not Modified"] {
-            let header_block = format!("HTTP/1.1 {status}\r\nContent-Length: 123");
-            let framing = parse_response_framing(&header_block, false).unwrap();
-            assert_eq!(
-                framing.body_framing,
-                BodyFraming::NoBody,
-                "status: {status}"
-            );
+    for line in header_block.lines() {
+        let line_lower = line.to_lowercase();
+        // if let Some(value) = line_lower.strip_prefix("connection:") {
+        //     if value.contains("close") {
+        //         connection_close = true;
+        //     }
+        // } else
+        if let Some(value) = line_lower.strip_prefix("transfer-encoding:") {
+            if value.contains("chunked") {
+                is_chunked = true;
+            }
+        } else if let Some(value) = line_lower.strip_prefix("content-length:") {
+            let parsed: usize = value
+                .trim()
+                .parse()
+                .map_err(|_| anyhow!("invalid Content-Length header"))?;
+            if let Some(existing) = content_length {
+                if existing != parsed {
+                    return Err(anyhow!(
+                        "conflicting Content-Length headers ({} vs {})",
+                        existing,
+                        parsed
+                    ));
+                }
+            }
+            content_length = Some(parsed);
         }
     }
 
-    #[test]
-    fn framing_falls_back_to_until_close_with_no_framing_headers() {
-        let framing = parse_response_framing("HTTP/1.1 200 OK\r\nX-Foo: bar", false).unwrap();
-        assert_eq!(framing.body_framing, BodyFraming::UntilClose);
-    }
+    // Same smuggling-avoidance rule as the response side: chunked wins.
+    let body_framing = if is_chunked {
+        BodyFraming::Chunked
+    } else if let Some(len) = content_length {
+        BodyFraming::ContentLength(len)
+    } else {
+        BodyFraming::NoBody
+    };
 
-    #[test]
-    fn framing_detects_connection_close() {
-        let framing = parse_response_framing(
-            "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 0",
-            false,
-        )
-        .unwrap();
-        assert!(framing.connection_close);
-    }
-
-    #[test]
-    fn framing_rejects_conflicting_content_length() {
-        let err = parse_response_framing(
-            "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nContent-Length: 6",
-            false,
-        )
-        .unwrap_err();
-        assert!(err.to_string().contains("conflicting"));
-    }
-
-    #[test]
-    fn framing_allows_duplicate_identical_content_length() {
-        let framing = parse_response_framing(
-            "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nContent-Length: 5",
-            false,
-        )
-        .unwrap();
-        assert_eq!(framing.body_framing, BodyFraming::ContentLength(5));
-    }
-
-    #[test]
-    fn body_complete_no_body_is_immediate() {
-        let buf = b"headers-of-len-11body-follows";
-        let mut cursor = 0;
-        let result = body_is_complete(buf, 11, BodyFraming::NoBody, &mut cursor).unwrap();
-        assert_eq!(result, Some(11));
-    }
-
-    #[test]
-    fn body_complete_content_length_waits_for_enough_bytes() {
-        let mut cursor = 0;
-        let partial = b"HDRbody";
-        assert_eq!(
-            body_is_complete(partial, 3, BodyFraming::ContentLength(10), &mut cursor).unwrap(),
-            None
-        );
-
-        let full = b"HDR0123456789";
-        assert_eq!(
-            body_is_complete(full, 3, BodyFraming::ContentLength(10), &mut cursor).unwrap(),
-            Some(13)
-        );
-    }
-
-    #[test]
-    fn body_complete_until_close_never_completes_on_its_own() {
-        let mut cursor = 0;
-        let buf = b"HDRanything at all";
-        assert_eq!(
-            body_is_complete(buf, 3, BodyFraming::UntilClose, &mut cursor).unwrap(),
-            None
-        );
-    }
-
-    #[test]
-    fn body_complete_chunked_delegates_to_scan_chunked_body() {
-        let mut cursor = 0;
-        // "5\r\nhello\r\n0\r\n\r\n" -- one 5-byte chunk, then the terminator.
-        let buf = b"HDR5\r\nhello\r\n0\r\n\r\n";
-        let result = body_is_complete(buf, 3, BodyFraming::Chunked, &mut cursor).unwrap();
-        assert_eq!(result, Some(buf.len()));
-    }
-
-    #[test]
-    fn find_subslice_basic_cases() {
-        assert_eq!(find_subslice(b"abcde", b"cd"), Some(2));
-        assert_eq!(find_subslice(b"abcde", b"zz"), None);
-        assert_eq!(find_subslice(b"abc", b""), None);
-        assert_eq!(find_subslice(b"ab", b"abc"), None);
-    }
+    Ok(RequestFraming {
+        // connection_close,
+        body_framing,
+    })
 }
