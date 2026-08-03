@@ -69,35 +69,35 @@ export function adaptFromReqRes(items: HttpHistory[]): HttpTransaction[] {
 }
 
 function methodColor(method: string, selected: boolean) {
-    if (selected) return 'bg-white/15 text-white';
+    if (selected) return 'bg-primary-foreground/15 text-primary-foreground';
     const colors: Record<string, string> = {
-        GET: 'bg-[#F4E4DE] text-[#8F2E24]',
-        POST: 'bg-[#E7EFEA] text-[#3C7A5A]',
-        PUT: 'bg-[#F6EEDD] text-[#8A6A2E]',
-        DELETE: 'bg-[#F4E4DE] text-[#C0392B]',
-        PATCH: 'bg-[#EFEAE6] text-[#6E4A3E]',
+        GET: 'bg-amber-500/15 text-amber-700 dark:text-amber-400',
+        POST: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400',
+        PUT: 'bg-yellow-500/15 text-yellow-700 dark:text-yellow-400',
+        DELETE: 'bg-rose-500/15 text-rose-700 dark:text-rose-400',
+        PATCH: 'bg-stone-500/15 text-stone-700 dark:text-stone-400',
     };
-    return colors[method] ?? 'bg-[#F0EDE6] text-[#5C6360]';
+    return colors[method] ?? 'bg-muted text-muted-foreground';
 }
 
 function codeColor(code: number | null, selected: boolean) {
-    if (selected) return 'text-white';
-    if (code === null) return 'text-[#9A9A90]';
-    if (code < 300) return 'text-[#3C7A5A]';
-    if (code < 400) return 'text-[#8A6A2E]';
-    if (code < 500) return 'text-[#B23A2E]';
-    return 'text-[#C0392B]';
+    if (selected) return 'text-primary-foreground';
+    if (code === null) return 'text-muted-foreground';
+    if (code < 300) return 'text-emerald-600 dark:text-emerald-400';
+    if (code < 400) return 'text-amber-600 dark:text-amber-400';
+    if (code < 500) return 'text-rose-600 dark:text-rose-400';
+    return 'text-red-600 dark:text-red-400';
 }
 
 function stateDotColor(state: RequestState) {
     const colors: Record<RequestState, string> = {
-        Pending: 'bg-[#C9C2B2]',
-        Info: 'bg-[#8A6A2E]',
-        Success: 'bg-[#3C7A5A]',
-        Redirect: 'bg-[#B27A3E]',
-        'Client Error': 'bg-[#B23A2E]',
-        'Server Error': 'bg-[#C0392B]',
-        Failed: 'bg-[#7A2A1E]',
+        Pending: 'bg-muted-foreground/40',
+        Info: 'bg-amber-500',
+        Success: 'bg-emerald-500',
+        Redirect: 'bg-amber-600',
+        'Client Error': 'bg-rose-500',
+        'Server Error': 'bg-red-500',
+        Failed: 'bg-red-700',
     };
     return colors[state];
 }
@@ -111,7 +111,7 @@ export const httpColumns: ColumnDef<HttpTransaction, any>[] = [
         size: 56,
         cell: (info) => {
             const selected = isRowSelected(info);
-            return <span className={`font-mono text-[11px] ${selected ? 'text-white/80' : 'text-[#9A9A90]'}`}>{info.getValue()}</span>;
+            return <span className={`font-mono text-[11px] ${selected ? 'text-primary-foreground/80' : 'text-muted-foreground'}`}>{info.getValue()}</span>;
         },
     }),
     columnHelper.accessor('method', {
@@ -133,7 +133,7 @@ export const httpColumns: ColumnDef<HttpTransaction, any>[] = [
         size: 200,
         cell: (info) => {
             const selected = isRowSelected(info);
-            return <span className={`truncate font-mono text-[12px] ${selected ? 'text-white' : 'text-[#1B211E]'}`}>{info.getValue()}</span>;
+            return <span className={`truncate font-mono text-[12px] ${selected ? 'text-primary-foreground' : 'text-foreground'}`}>{info.getValue()}</span>;
         },
     }),
     columnHelper.accessor('url', {
@@ -142,7 +142,7 @@ export const httpColumns: ColumnDef<HttpTransaction, any>[] = [
         size: 320,
         cell: (info) => {
             const selected = isRowSelected(info);
-            return <span className={`truncate font-mono text-[12px] ${selected ? 'text-white/90' : 'text-[#5C6360]'}`}>{info.getValue()}</span>;
+            return <span className={`truncate font-mono text-[12px] ${selected ? 'text-primary-foreground/90' : 'text-muted-foreground'}`}>{info.getValue()}</span>;
         },
     }),
     columnHelper.accessor('code', {
@@ -161,7 +161,7 @@ export const httpColumns: ColumnDef<HttpTransaction, any>[] = [
         size: 84,
         cell: (info) => {
             const selected = isRowSelected(info);
-            return <span className={`text-[12px] tabular-nums ${selected ? 'text-white/80' : 'text-[#5C6360]'}`}>{info.getValue()}ms</span>;
+            return <span className={`text-[12px] tabular-nums ${selected ? 'text-primary-foreground/80' : 'text-muted-foreground'}`}>{info.getValue()}ms</span>;
         },
     }),
     columnHelper.accessor('time', {
@@ -171,7 +171,7 @@ export const httpColumns: ColumnDef<HttpTransaction, any>[] = [
         cell: (info) => {
             const selected = isRowSelected(info);
             return (
-                <span className={`text-[12px] tabular-nums ${selected ? 'text-white/80' : 'text-[#5C6360]'}`}>
+                <span className={`text-[12px] tabular-nums ${selected ? 'text-primary-foreground/80' : 'text-muted-foreground'}`}>
                     {new Date(info.getValue()).toLocaleTimeString()}
                 </span>
             );
@@ -184,7 +184,7 @@ export const httpColumns: ColumnDef<HttpTransaction, any>[] = [
         cell: (info) => {
             const selected = isRowSelected(info);
             return (
-                <span className={`inline-flex items-center gap-1.5 text-[12px] ${selected ? 'text-white/90' : 'text-[#5C6360]'}`}>
+                <span className={`inline-flex items-center gap-1.5 text-[12px] ${selected ? 'text-primary-foreground/90' : 'text-muted-foreground'}`}>
                     <span className={`h-1.5 w-1.5 rounded-full ${stateDotColor(info.getValue())}`} />
                     {info.getValue()}
                 </span>

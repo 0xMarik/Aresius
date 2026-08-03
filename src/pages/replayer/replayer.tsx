@@ -217,7 +217,8 @@ function Replayer() {
             <ResizablePanel defaultSize={13} minSize={13} maxSize={20}>
                 <div className='h-full'>
                     <ButtonGroup>
-                        <Button className='mb-2 w-full' onClick={() => dispatch(addSessionToCollection({ collectionIndex: Number((selectedIds[0] ?? "0-0").split('-')[0]) }))}><Plus /> New Session</Button>
+                        <Button className='mb-2 w-full' onClick={
+                            () => dispatch(addSessionToCollection({ collectionIndex: Number((selectedIds[0] ?? "0-0").split('-')[0]) }))}><Plus /> New Session</Button>
                         <DropdownMenu>
                             <DropdownMenuTrigger asChild>
                                 <Button variant="default" className="pl-2!">

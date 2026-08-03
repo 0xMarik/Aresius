@@ -36,8 +36,9 @@ function TableRowInner<TData extends BaseRow>({ row, selected, onRowClick }: Tab
     return (
         <div
             onClick={() => onRowClick(row.original.id)}
-            className={`flex h-full cursor-pointer items-center border-b border-[#F0EDE6] ${selected ? 'bg-[#B23A2E] text-white' : 'hover:bg-[#FAF7F2]'
-                }`}
+            className={`flex h-full cursor-pointer items-center border-b border-border/40 ${
+                selected ? 'bg-primary text-primary-foreground' : 'hover:bg-accent/50 text-foreground'
+            }`}
         >
             {row.getVisibleCells().map((cell) => (
                 <div key={cell.id} className="truncate px-2 py-1" style={{ width: cell.column.getSize() }}>
@@ -130,24 +131,24 @@ export default function LightDataTable<TData extends BaseRow>({
     const virtualItems = rowVirtualizer.getVirtualItems();
 
     return (
-        <div className={fillHeight ? 'flex h-full min-h-0 w-full flex-col bg-[#FAF7F2] p-2' : 'mx-auto max-w-7xl bg-[#FAF7F2] p-2'}>
+        <div className={fillHeight ? 'flex h-full min-h-0 w-full flex-col bg-background' : 'w-full flex flex-col bg-background'}>
             {/* Toolbar */}
-            <div className="mb-2 flex items-center gap-1.5">
-                <div className="flex items-center gap-1.5 rounded-md border border-[#E3DCCC] bg-white px-2 py-1">
-                    <Search className="h-3.5 w-3.5 text-[#9A9A90]" />
+            <div className="flex items-center gap-1.5 p-2 border-b border-border bg-background">
+                <div className="flex items-center gap-1.5 rounded-md border border-border bg-card px-2 py-1">
+                    <Search className="h-3.5 w-3.5 text-muted-foreground" />
                     <input
                         value={search}
                         onChange={(e) => setSearch(e.target.value)}
                         placeholder={searchPlaceholder}
-                        className="w-56 border-none bg-transparent text-[12px] text-[#1B211E] outline-none placeholder:text-[#9A9A90]"
+                        className="w-56 border-none bg-transparent text-[12px] text-foreground outline-none placeholder:text-muted-foreground"
                     />
                     {search && (
-                        <button onClick={() => setSearch('')} className="text-[#C9C2B2] hover:text-[#5C6360]">
+                        <button onClick={() => setSearch('')} className="text-muted-foreground/70 hover:text-foreground">
                             <X className="h-3.5 w-3.5" />
                         </button>
                     )}
                 </div>
-                <div className="ml-auto text-[12px] text-[#9A9A90]">
+                <div className="ml-auto text-[12px] text-muted-foreground">
                     {filteredData.length} of {data.length} rows
                 </div>
             </div>
@@ -156,13 +157,13 @@ export default function LightDataTable<TData extends BaseRow>({
             <div
                 className={
                     fillHeight
-                        ? 'flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-[#E3DCCC] bg-white'
-                        : 'overflow-hidden rounded-md border border-[#E3DCCC] bg-white'
+                        ? 'flex min-h-0 flex-1 flex-col overflow-hidden bg-card'
+                        : 'overflow-hidden bg-card'
                 }
             >
                 {/* Header */}
                 <div className={fillHeight ? 'shrink-0' : undefined}>
-                    <div className="border-b border-[#E3DCCC] bg-[#FAF7F2]">
+                    <div className="border-b border-border bg-muted/50 text-muted-foreground">
                         {table.getHeaderGroups().map((hg) => (
                             <div key={hg.id} className="flex items-center">
                                 {hg.headers.map((header) => (
@@ -170,12 +171,12 @@ export default function LightDataTable<TData extends BaseRow>({
                                         key={header.id}
                                         onClick={header.column.getToggleSortingHandler()}
                                         style={{ width: header.getSize() }}
-                                        className="flex cursor-pointer select-none items-center justify-between gap-1 px-2 py-1.5 hover:bg-[#F4EEE3]"
+                                        className="flex cursor-pointer select-none items-center justify-between gap-1 px-2 py-1.5 hover:bg-accent/60"
                                     >
-                                        <span className="text-[10.5px] font-semibold uppercase tracking-wide text-[#5C6360]">
+                                        <span className="text-[10.5px] font-semibold uppercase tracking-wide text-muted-foreground">
                                             {flexRender(header.column.columnDef.header, header.getContext())}
                                         </span>
-                                        <span className="text-[#C9C2B2]">
+                                        <span className="text-muted-foreground/60">
                                             {header.column.getIsSorted() === 'asc' && <ChevronUp className="h-3 w-3" />}
                                             {header.column.getIsSorted() === 'desc' && <ChevronDown className="h-3 w-3" />}
                                             {!header.column.getIsSorted() && <ChevronsUpDown className="h-3 w-3" />}
@@ -192,8 +193,8 @@ export default function LightDataTable<TData extends BaseRow>({
                     <div
                         className={
                             fillHeight
-                                ? 'flex min-h-0 flex-1 items-center justify-center py-12 text-center text-[#9A9A90]'
-                                : 'py-12 text-center text-[#9A9A90]'
+                                ? 'flex min-h-0 flex-1 items-center justify-center py-12 text-center text-muted-foreground'
+                                : 'py-12 text-center text-muted-foreground'
                         }
                     >
                         <p className="text-[13px]">{data.length === 0 ? emptyLabel : 'No rows match your search'}</p>

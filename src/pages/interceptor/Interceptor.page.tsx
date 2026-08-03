@@ -85,7 +85,8 @@ const RawMessageEditor: React.FC<RawMessageEditorProps> = ({
 
         if (!viewRef.current) {
             const extensions = [
-                EditorState.lineSeparator.of("\r\n"),
+                // EditorState.lineSeparator.of("\r\n"),
+                // no need
                 basicSetup,
                 http(),
                 oneDark,

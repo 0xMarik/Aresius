@@ -156,14 +156,13 @@ function DraggableHeaderCell({
             style={{
                 width,
                 opacity: isDragging ? 0.4 : 1,
-                backgroundColor: isOver ? '#F4E4DE' : undefined,
             }}
-            className="flex items-center gap-1 px-2 py-1.5 hover:bg-[#F4EEE3]"
+            className={`flex items-center gap-1 px-2 py-1.5 hover:bg-accent/60 ${isOver ? 'bg-accent' : ''}`}
         >
             <span
                 {...attributes}
                 {...listeners}
-                className="cursor-grab text-[#C9C2B2] hover:text-[#9A9A90] active:cursor-grabbing"
+                className="cursor-grab text-muted-foreground/50 hover:text-muted-foreground active:cursor-grabbing"
                 title="Drag to reorder"
             >
                 <GripVertical className="h-3 w-3" />
@@ -203,17 +202,20 @@ function Dropdown({
         <div className="relative" ref={ref}>
             <button
                 onClick={() => setOpen((o) => !o)}
-                className={`flex items-center gap-1.5 rounded-md border px-2 py-1 text-[12px]  ${open ? 'border-[#E3DCCC] bg-[#FAF7F2]' : 'border-[#E3DCCC] bg-white hover:bg-[#FAF7F2]'
-                    }`}
+                className={`flex items-center gap-1.5 rounded-md border px-2 py-1 text-[12px] ${
+                    open
+                        ? 'border-border bg-accent text-accent-foreground'
+                        : 'border-border bg-card text-foreground hover:bg-accent hover:text-accent-foreground'
+                }`}
             >
                 {icon}
-                <span className="text-[#5C6360]">{label}</span>
+                <span className="text-muted-foreground">{label}</span>
                 {!!badge && (
-                    <span className="rounded-full bg-[#B23A2E] px-1.5 text-[10px] font-semibold text-white">{badge}</span>
+                    <span className="rounded-full bg-primary px-1.5 text-[10px] font-semibold text-primary-foreground">{badge}</span>
                 )}
             </button>
             {open && (
-                <div className="absolute left-0 z-20 mt-1 min-w-[180px] rounded-md border border-[#E3DCCC] bg-white p-1 shadow-lg">
+                <div className="absolute left-0 z-20 mt-1 min-w-[180px] rounded-md border border-border bg-popover text-popover-foreground p-1 shadow-lg">
                     {children}
                 </div>
             )}
@@ -225,11 +227,11 @@ function DropdownCheckboxItem({ label, checked, onToggle }: { label: string; che
     return (
         <button
             onClick={onToggle}
-            className="flex w-full items-center justify-between rounded px-2 py-1 text-left text-[12px] text-[#1B211E] hover:bg-[#FAF7F2]"
+            className="flex w-full items-center justify-between rounded px-2 py-1 text-left text-[12px] text-popover-foreground hover:bg-accent hover:text-accent-foreground"
         >
             <span className="truncate">{label}</span>
-            <span className={`flex h-3.5 w-3.5 items-center justify-center rounded-sm border ${checked ? 'border-[#B23A2E] bg-[#B23A2E]' : 'border-[#E3DCCC]'}`}>
-                {checked && <Check className="h-2.5 w-2.5 text-white" />}
+            <span className={`flex h-3.5 w-3.5 items-center justify-center rounded-sm border ${checked ? 'border-primary bg-primary text-primary-foreground' : 'border-border'}`}>
+                {checked && <Check className="h-2.5 w-2.5 text-primary-foreground" />}
             </span>
         </button>
     );
@@ -280,8 +282,9 @@ function TableRowInner<TData extends BaseRow>({
         <div
             onClick={(e) => onRowClick(e, rowId)}
             onContextMenu={() => onContextMenu(rowId)}
-            className={`flex h-full cursor-pointer items-center border-b border-[#F0EDE6] border-l-[3px]  ${selected ? 'bg-[#B23A2E]' : 'hover:bg-[#FAF7F2]'
-                }`}
+            className={`flex h-full cursor-pointer items-center border-b border-border/40 border-l-[3px] ${
+                selected ? 'bg-primary text-primary-foreground' : 'hover:bg-accent/50 text-foreground'
+            }`}
             style={{ borderLeftColor: group?.color ?? 'transparent' }}
         >
             {row.getVisibleCells().map((cell) => (
@@ -385,17 +388,17 @@ function TableToolbarInner<TData extends BaseRow>({
     const hiddenCount = Object.values(columnVisibility).filter((v) => v === false).length;
 
     return (
-        <div className="mb-2 flex flex-wrap items-center gap-1.5">
-            <div className="flex items-center gap-1.5 rounded-md border border-[#E3DCCC] bg-white px-2 py-1">
-                <Search className="h-3.5 w-3.5 text-[#9A9A90]" />
+        <div className="flex flex-wrap items-center gap-1.5 p-2 border-b border-border bg-background">
+            <div className="flex items-center gap-1.5 rounded-md border border-border bg-card px-2 py-1">
+                <Search className="h-3.5 w-3.5 text-muted-foreground" />
                 <input
                     value={search}
                     onChange={(e) => onSearchChange(e.target.value)}
                     placeholder={searchPlaceholder}
-                    className="w-56 border-none bg-transparent text-[12px] text-[#1B211E] outline-none placeholder:text-[#9A9A90]"
+                    className="w-56 border-none bg-transparent text-[12px] text-foreground outline-none placeholder:text-muted-foreground"
                 />
                 {search && (
-                    <button onClick={onClearSearch} className="text-[#C9C2B2] hover:text-[#5C6360]">
+                    <button onClick={onClearSearch} className="text-muted-foreground/70 hover:text-foreground">
                         <X className="h-3.5 w-3.5" />
                     </button>
                 )}
@@ -405,7 +408,7 @@ function TableToolbarInner<TData extends BaseRow>({
                 <Dropdown
                     key={f.id}
                     label={f.label}
-                    icon={<SlidersHorizontal className="h-3.5 w-3.5 text-[#9A9A90]" />}
+                    icon={<SlidersHorizontal className="h-3.5 w-3.5 text-muted-foreground" />}
                     badge={facetState[f.id]?.size}
                 >
                     {(facetOptions[f.id] ?? []).map((value) => (
@@ -421,7 +424,7 @@ function TableToolbarInner<TData extends BaseRow>({
 
             <Dropdown
                 label="Columns"
-                icon={<SlidersHorizontal className="h-3.5 w-3.5 text-[#9A9A90]" />}
+                icon={<SlidersHorizontal className="h-3.5 w-3.5 text-muted-foreground" />}
                 badge={hiddenCount || undefined}
             >
                 {table.getAllLeafColumns().map((col) => (
@@ -437,14 +440,14 @@ function TableToolbarInner<TData extends BaseRow>({
             {hasActiveFilters && (
                 <button
                     onClick={onClearFilters}
-                    className="flex items-center gap-1 rounded-md px-2 py-1 text-[12px] text-[#9A9A90] hover:text-[#5C6360]"
+                    className="flex items-center gap-1 rounded-md px-2 py-1 text-[12px] text-muted-foreground hover:text-foreground"
                 >
                     <RotateCcw className="h-3.5 w-3.5" />
                     Reset
                 </button>
             )}
 
-            <div className="ml-auto text-[12px] text-[#9A9A90]">
+            <div className="ml-auto text-[12px] text-muted-foreground">
                 {filteredCount} of {totalCount} rows
             </div>
         </div>
@@ -482,7 +485,7 @@ function TableHeaderRowInner<TData extends BaseRow>({
 
     return (
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onColumnDragEnd}>
-            <div className="border-b border-[#E3DCCC] bg-[#FAF7F2]">
+            <div className="border-b border-border bg-muted/50 text-muted-foreground">
                 {table.getHeaderGroups().map((hg) => (
                     <div key={hg.id} className="flex items-center">
                         {hg.headers.map((header) => (
@@ -491,10 +494,10 @@ function TableHeaderRowInner<TData extends BaseRow>({
                                     onClick={header.column.getToggleSortingHandler()}
                                     className="flex flex-1 cursor-pointer select-none items-center justify-between gap-1"
                                 >
-                                    <span className="text-[10.5px] font-semibold uppercase tracking-wide text-[#5C6360]">
+                                    <span className="text-[10.5px] font-semibold uppercase tracking-wide text-muted-foreground">
                                         {flexRender(header.column.columnDef.header, header.getContext())}
                                     </span>
-                                    <span className="text-[#C9C2B2]">
+                                    <span className="text-muted-foreground/60">
                                         {header.column.getIsSorted() === 'asc' && <ChevronUp className="h-3 w-3" />}
                                         {header.column.getIsSorted() === 'desc' && <ChevronDown className="h-3 w-3" />}
                                         {!header.column.getIsSorted() && <ChevronsUpDown className="h-3 w-3" />}
@@ -712,7 +715,7 @@ function RowsViewportInner<TData extends BaseRow>({
 
     if (visibleRows.length === 0) {
         return (
-            <div className={fillHeight ? 'flex min-h-0 flex-1 items-center justify-center py-12 text-center text-[#9A9A90]' : 'py-12 text-center text-[#9A9A90]'}>
+            <div className={fillHeight ? 'flex min-h-0 flex-1 items-center justify-center py-12 text-center text-muted-foreground' : 'py-12 text-center text-muted-foreground'}>
                 <p className="text-[13px]">{totalRowsCount === 0 ? emptyLabel : 'No rows match the current filters'}</p>
                 {emptyHint && (
                     <p className="mt-1 text-[11px]">{totalRowsCount === 0 ? emptyHint : 'Try clearing search or filters'}</p>
@@ -1081,7 +1084,7 @@ export default function DataTable<TData extends BaseRow>({
 
             return (
                 <>
-                    <ContextMenuLabel className="text-[11px] text-[#9A9A90]">
+                    <ContextMenuLabel className="text-[11px] text-muted-foreground">
                         {isMultiple ? `${actionIds.length} rows` : `Row #${actionIds[0]}`}
                     </ContextMenuLabel>
                     <ContextMenuSeparator />
@@ -1118,7 +1121,7 @@ export default function DataTable<TData extends BaseRow>({
 
                     <ContextMenuItem
                         onSelect={() => onRemove(actionIds)}
-                        className="text-[#C0392B] focus:text-[#C0392B]"
+                        className="text-destructive focus:text-destructive focus:bg-destructive/10"
                     >
                         <Trash2 className="mr-2 h-3.5 w-3.5" />
                         Remove
@@ -1132,7 +1135,7 @@ export default function DataTable<TData extends BaseRow>({
     const resolvedRenderContextMenu = renderRowContextMenu ?? defaultRenderContextMenu;
 
     return (
-        <div className={fillHeight ? 'flex h-full min-h-0 w-full flex-col bg-[#FAF7F2] p-2' : 'mx-auto max-w-7xl bg-[#FAF7F2] p-2'}>
+        <div className={fillHeight ? 'flex h-full min-h-0 w-full flex-col bg-background' : 'w-full flex flex-col bg-background'}>
             <div className={fillHeight ? 'shrink-0' : undefined}>
                 <TableToolbar
                     search={search}
@@ -1154,8 +1157,8 @@ export default function DataTable<TData extends BaseRow>({
             </div>
 
             <div className={fillHeight
-                ? 'flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-[#E3DCCC] bg-white'
-                : 'overflow-hidden rounded-md border border-[#E3DCCC] bg-white'
+                ? 'flex min-h-0 flex-1 flex-col overflow-hidden bg-card'
+                : 'overflow-hidden bg-card'
             }>
                 <div className={fillHeight ? 'shrink-0' : undefined}>
                     <TableHeaderRow

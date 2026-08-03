@@ -42,7 +42,7 @@ export function SendToRepeaterSubmenu({ row }: { row: RepeaterSendable }) {
                     <Layers className="mr-2 h-3.5 w-3.5" />
                     Collection {index + 1}
                     {collection.sessions.length > 0 && (
-                        <span className="ml-auto text-[11px] text-[#9A9A90]">
+                        <span className="ml-auto text-[11px] text-muted-foreground">
                             {collection.sessions.length} session{collection.sessions.length !== 1 ? 's' : ''}
                         </span>
                     )}
@@ -91,7 +91,7 @@ export function renderHttpHistoryTableContextMenu(
 
     return (
         <>
-            <ContextMenuLabel className="text-[11px] text-[#9A9A90]">
+            <ContextMenuLabel className="text-[11px] text-muted-foreground">
                 {isMultiple ? `${actionIds.length} requests` : `Request #${actionIds[0]}`}
             </ContextMenuLabel>
             <ContextMenuSeparator />
@@ -162,7 +162,7 @@ export function renderHttpHistoryTableContextMenu(
 
             <ContextMenuItem
                 onSelect={() => onRemove(actionIds)}
-                className="text-[#C0392B] focus:text-[#C0392B]"
+                className="text-destructive focus:text-destructive focus:bg-destructive/10"
             >
                 <Trash2 className="mr-2 h-3.5 w-3.5" />
                 Remove
