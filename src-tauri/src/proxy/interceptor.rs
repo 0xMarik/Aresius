@@ -67,17 +67,11 @@ impl InterceptState {
         }
     }
 
-    pub async fn add_and_await(
-        &self,
-        item: InterceptItem,
-    ) -> Option<InterceptDecision> {
+    pub async fn add_and_await(&self, item: InterceptItem) -> Option<InterceptDecision> {
         let (tx, rx) = oneshot::channel();
         {
             let mut pending = self.pending.lock().await;
-            pending.push(PendingEntry {
-                item,
-                sender: tx,
-            });
+            pending.push(PendingEntry { item, sender: tx });
         }
 
         // Wait indefinitely while held pending user action.
@@ -105,12 +99,16 @@ pub fn validate_http_message(raw_msg: &str, is_request: bool) -> Result<(), Stri
     if is_request {
         let parts: Vec<&str> = first_line.split_whitespace().collect();
         if parts.len() < 2 {
-            return Err("Malformed HTTP request line (e.g. GET /path HTTP/1.1 expected)".to_string());
+            return Err(
+                "Malformed HTTP request line (e.g. GET /path HTTP/1.1 expected)".to_string(),
+            );
         }
     } else {
         let parts: Vec<&str> = first_line.split_whitespace().collect();
         if parts.len() < 2 || !parts[0].starts_with("HTTP/") {
-            return Err("Malformed HTTP response status line (e.g. HTTP/1.1 200 OK expected)".to_string());
+            return Err(
+                "Malformed HTTP response status line (e.g. HTTP/1.1 200 OK expected)".to_string(),
+            );
         }
     }
 
@@ -224,14 +222,18 @@ mod tests {
 
     #[test]
     fn test_validate_http_request() {
-        assert!(validate_http_message("GET /test HTTP/1.1\r\nHost: example.com\r\n\r\n", true).is_ok());
+        assert!(
+            validate_http_message("GET /test HTTP/1.1\r\nHost: example.com\r\n\r\n", true).is_ok()
+        );
         assert!(validate_http_message("INVALID", true).is_err());
         assert!(validate_http_message("", true).is_err());
     }
 
     #[test]
     fn test_validate_http_response() {
-        assert!(validate_http_message("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n", false).is_ok());
+        assert!(
+            validate_http_message("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n", false).is_ok()
+        );
         assert!(validate_http_message("200 OK", false).is_err());
     }
 }

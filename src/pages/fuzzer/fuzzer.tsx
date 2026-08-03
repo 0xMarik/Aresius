@@ -47,4 +47,4 @@ const Fuzzer: React.FC = () => {
     );
 };
 
-export default Fuzzer;
+export default Fuzzer;

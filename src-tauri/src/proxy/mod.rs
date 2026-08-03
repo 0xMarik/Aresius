@@ -124,6 +124,50 @@ fn decode_for_display(headers: &str, body: &[u8], options: &ConnectionOptions) -
     )
 }
 
+/// Rewrites a user-edited HTTP message (request or response) so its framing
+/// headers match the body that's actually about to go on the wire.
+///
+/// The intercept UI shows a *decoded* body (see `decode_for_display`), so
+/// once the user edits that text, whatever `Content-Encoding`,
+/// `Transfer-Encoding`, or `Content-Length` the *original* message declared
+/// no longer describes it. Forwarding those stale headers verbatim either
+/// desyncs the peer's decompressor (wrong Content-Encoding) or its framing
+/// (wrong Content-Length/Transfer-Encoding) -- the latter is especially bad
+/// on a keep-alive connection, where it corrupts the read of whatever comes
+/// next. We drop all three and recompute Content-Length from the edited
+/// body, which is always truthful for a message we're about to send as one
+/// unencoded, unchunked blob.
+fn resync_edited_message(modified_message: &str) -> Vec<u8> {
+    let (head, body) = modified_message
+        .split_once("\r\n\r\n")
+        .or_else(|| modified_message.split_once("\n\n"))
+        .unwrap_or((modified_message, ""));
+
+    let mut lines = head.lines();
+    let start_line = lines.next().unwrap_or("").to_string();
+
+    let mut out_headers: Vec<String> = lines
+        .filter(|l| {
+            let lower = l.to_ascii_lowercase();
+            !(lower.starts_with("content-encoding:")
+                || lower.starts_with("transfer-encoding:")
+                || lower.starts_with("content-length:"))
+        })
+        .map(|l| l.to_string())
+        .collect();
+    out_headers.push(format!("Content-Length: {}", body.as_bytes().len()));
+
+    let mut bytes = start_line.into_bytes();
+    bytes.extend_from_slice(b"\r\n");
+    for h in &out_headers {
+        bytes.extend_from_slice(h.as_bytes());
+        bytes.extend_from_slice(b"\r\n");
+    }
+    bytes.extend_from_slice(b"\r\n");
+    bytes.extend_from_slice(body.as_bytes());
+    bytes
+}
+
 // Main client handler
 async fn handle_client(
     app_handle: AppHandle,
@@ -250,12 +294,14 @@ async fn handle_connect(
             match intercept_state.add_and_await(item).await {
                 Some(InterceptDecision::Forward { modified_message }) => {
                     if let Some(mod_msg) = modified_message {
-                        // User actually edited it in the UI -- accept the
-                        // re-encode. This is the one case where lossiness
-                        // is inherent (same caveat already flagged below
-                        // for response editing), since the intercept UI
-                        // edits text, not raw bytes.
-                        outgoing_request_bytes = mod_msg.into_bytes();
+                        // User actually edited it in the UI -- resync the
+                        // framing headers (Content-Length in particular)
+                        // to the edited body before it goes on the wire.
+                        // A fuzzing edit that changes body length but
+                        // leaves a stale Content-Length would otherwise
+                        // truncate/hang the request or desync the next
+                        // request on this same keep-alive connection.
+                        outgoing_request_bytes = resync_edited_message(&mod_msg);
                     }
                     // else: untouched by the user -- forward the original
                     // bytes unchanged.
@@ -326,12 +372,14 @@ async fn handle_connect(
             match intercept_state.add_and_await(item).await {
                 Some(InterceptDecision::Forward { modified_message }) => {
                     if let Some(mod_msg) = modified_message {
-                        // NOTE: if the user edited the *decoded* body here,
-                        // forwarding it raw under the original
-                        // Content-Encoding header will desync the client.
-                        // Flagging as a known follow-up, not fixed here.
-                        final_response_text = mod_msg.clone();
-                        outgoing_response_bytes = mod_msg.into_bytes();
+                        // The displayed body was decoded for readability,
+                        // so the original Content-Encoding/Content-Length
+                        // no longer describe it once edited. Resync both
+                        // the wire bytes and the history/UI copy so what
+                        // the client receives and what gets logged agree.
+                        outgoing_response_bytes = resync_edited_message(&mod_msg);
+                        final_response_text =
+                            String::from_utf8_lossy(&outgoing_response_bytes).to_string();
                     }
                 }
                 Some(InterceptDecision::Drop) | None => {
@@ -467,7 +515,9 @@ async fn handle_http_request(
             match intercept_state.add_and_await(item).await {
                 Some(InterceptDecision::Forward { modified_message }) => {
                     if let Some(mod_msg) = modified_message {
-                        outgoing_request_bytes = mod_msg.into_bytes();
+                        // See identical note in `handle_connect` -- resync
+                        // Content-Length to the edited body.
+                        outgoing_request_bytes = resync_edited_message(&mod_msg);
                     }
                 }
                 Some(InterceptDecision::Drop) | None => {
@@ -529,8 +579,11 @@ async fn handle_http_request(
             match intercept_state.add_and_await(item).await {
                 Some(InterceptDecision::Forward { modified_message }) => {
                     if let Some(mod_msg) = modified_message {
-                        final_response_text = mod_msg.clone();
-                        outgoing_response_bytes = mod_msg.into_bytes();
+                        // See identical note in `handle_connect` -- resync
+                        // both the wire bytes and the history/UI copy.
+                        outgoing_response_bytes = resync_edited_message(&mod_msg);
+                        final_response_text =
+                            String::from_utf8_lossy(&outgoing_response_bytes).to_string();
                     }
                 }
                 Some(InterceptDecision::Drop) | None => {

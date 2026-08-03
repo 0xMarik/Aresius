@@ -291,6 +291,15 @@ impl HttpConnection {
             raw_body.to_vec()
         };
 
+        // If the response body was chunked or framed until connection close,
+        // rewrite headers to drop Transfer-Encoding and enforce Content-Length matching body.len().
+        // Content-Encoding is left intact if auto_decode is false.
+        let headers = if matches!(framing, Some(BodyFraming::Chunked | BodyFraming::UntilClose)) {
+            body_decoder::rewrite_headers(&headers, body.len(), false)
+        } else {
+            headers
+        };
+
         Ok((headers, body))
     }
 

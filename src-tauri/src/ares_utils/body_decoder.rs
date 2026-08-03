@@ -30,8 +30,10 @@ impl Default for DecodeLimits {
 /// target just gets passed through as-is.
 pub fn decode_response(headers: &str, body: Vec<u8>, limits: &DecodeLimits) -> DecodedHttp {
     let Some(raw_encodings) = find_header(headers, "content-encoding") else {
+        // No Content-Encoding, but `body` is already fully buffered --
+        // Transfer-Encoding is stale regardless.
         return DecodedHttp {
-            headers: headers.to_string(),
+            headers: rewrite_headers(headers, body.len(), false),
             body,
         };
     };
@@ -44,7 +46,7 @@ pub fn decode_response(headers: &str, body: Vec<u8>, limits: &DecodeLimits) -> D
 
     if codings.is_empty() {
         return DecodedHttp {
-            headers: headers.to_string(),
+            headers: rewrite_headers(headers, body.len(), false),
             body,
         };
     }
@@ -54,16 +56,20 @@ pub fn decode_response(headers: &str, body: Vec<u8>, limits: &DecodeLimits) -> D
         match decode_one(coding, &current, limits) {
             Ok(next) => current = next,
             Err(_) => {
+                // Give up, pass through the still-encoded body -- keep
+                // Content-Encoding (client needs it to decode), but
+                // Transfer-Encoding is still stale and Content-Length
+                // must match what we're actually sending (`body`).
                 return DecodedHttp {
-                    headers: headers.to_string(),
+                    headers: rewrite_headers(headers, body.len(), false),
                     body,
-                }
-            } // give up, return original
+                };
+            }
         }
     }
 
     DecodedHttp {
-        headers: rewrite_headers(headers, current.len()),
+        headers: rewrite_headers(headers, current.len(), true),
         body: current,
     }
 }
@@ -121,22 +127,66 @@ fn find_header<'a>(headers: &'a str, name: &str) -> Option<&'a str> {
     })
 }
 
-/// Drops Content-Encoding and fixes up Content-Length to the decoded size.
-fn rewrite_headers(original: &str, new_body_len: usize) -> String {
-    original
-        .split("\r\n")
+/// Fixes up Content-Length to `new_body_len` and always drops
+/// Transfer-Encoding (the body is always fully buffered by the time it
+/// reaches this module, so chunked framing is never valid going back out).
+/// Content-Encoding is dropped only when `drop_content_encoding` is true --
+/// if we're passing an undecoded body through, it has to stay.
+pub fn rewrite_headers(original: &str, new_body_len: usize, drop_content_encoding: bool) -> String {
+    let mut has_content_length = false;
+
+    let mut lines: Vec<String> = original
+        .lines()
         .enumerate()
-        .filter_map(|(i, line)| {
-            if i == 0 || line.is_empty() {
+        .filter_map(|(i, raw_line)| {
+            let line = raw_line.trim_end_matches('\r');
+            if line.is_empty() {
+                return None;
+            }
+            if i == 0 {
                 return Some(line.to_string());
             }
             let (name, _) = line.split_once(':')?;
             match name.trim().to_ascii_lowercase().as_str() {
-                "content-encoding" => None,
-                "content-length" => Some(format!("Content-Length: {new_body_len}")),
+                "content-encoding" if drop_content_encoding => None,
+                "transfer-encoding" => None, // body is always fully buffered by now
+                "content-length" => {
+                    has_content_length = true;
+                    Some(format!("Content-Length: {new_body_len}"))
+                }
                 _ => Some(line.to_string()),
             }
         })
-        .collect::<Vec<_>>()
-        .join("\r\n")
+        .collect();
+
+    if !has_content_length {
+        lines.push(format!("Content-Length: {new_body_len}"));
+    }
+
+    let mut result = lines.join("\r\n");
+    result.push_str("\r\n\r\n");
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_rewrite_headers_preserves_content_encoding_when_not_dropped() {
+        let headers = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nTransfer-Encoding: chunked\r\nContent-Encoding: gzip\r\n\r\n";
+        let rewritten = rewrite_headers(headers, 1234, false);
+        assert!(!rewritten.contains("Transfer-Encoding:"));
+        assert!(rewritten.contains("Content-Encoding: gzip"));
+        assert!(rewritten.contains("Content-Length: 1234"));
+    }
+
+    #[test]
+    fn test_rewrite_headers_drops_content_encoding_when_requested() {
+        let headers = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nTransfer-Encoding: chunked\r\nContent-Encoding: gzip\r\n\r\n";
+        let rewritten = rewrite_headers(headers, 5678, true);
+        assert!(!rewritten.contains("Transfer-Encoding:"));
+        assert!(!rewritten.contains("Content-Encoding:"));
+        assert!(rewritten.contains("Content-Length: 5678"));
+    }
 }
