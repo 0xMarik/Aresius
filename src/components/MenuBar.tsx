@@ -17,14 +17,16 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from "./ui/avatar"
 import { useEffect, useState } from "react"
 import { getCurrentWindow } from "@tauri-apps/api/window"
-import { Minus, Square, Copy, X } from "lucide-react"
+import { Minus, Square, Copy, X, Sun, Moon, Laptop, Check } from "lucide-react"
 import InstallCertificateDialog from "./InstallCert"
 import { open } from "@tauri-apps/plugin-shell";
+import { useTheme } from "./theme-provider";
 
 const appWindow = getCurrentWindow()
 
 export default function MenubarDemo() {
     const [isMaximized, setIsMaximized] = useState(false)
+    const { theme, setTheme } = useTheme()
 
     useEffect(() => {
         // Set initial state
@@ -54,7 +56,7 @@ export default function MenubarDemo() {
 
     return (
         <div
-            className="flex w-full items-center gap-2 border-b bg-background px-2 py-1.5"
+            className="flex h-10 w-full shrink-0 items-center gap-2 border-b border-border bg-background px-2 py-1 select-none z-30"
             data-tauri-drag-region
         >
             <Avatar className="h-6 w-6 rounded-md shrink-0">
@@ -139,7 +141,45 @@ export default function MenubarDemo() {
 
                 <MenubarMenu>
                     <MenubarTrigger>View</MenubarTrigger>
-                    <MenubarContent className="w-44">
+                    <MenubarContent className="w-48">
+                        <MenubarGroup>
+                            <MenubarSub>
+                                <MenubarSubTrigger className="gap-2">
+                                    {theme === 'light' ? (
+                                        <Sun className="h-4 w-4 text-amber-500" />
+                                    ) : theme === 'dark' ? (
+                                        <Moon className="h-4 w-4 text-primary" />
+                                    ) : (
+                                        <Laptop className="h-4 w-4 text-muted-foreground" />
+                                    )}
+                                    Theme
+                                </MenubarSubTrigger>
+                                <MenubarSubContent className="w-36">
+                                    <MenubarItem onClick={() => setTheme("light")} className="flex items-center justify-between">
+                                        <span className="flex items-center gap-2">
+                                            <Sun className="h-3.5 w-3.5 text-amber-500" />
+                                            Light
+                                        </span>
+                                        {theme === "light" && <Check className="h-3.5 w-3.5" />}
+                                    </MenubarItem>
+                                    <MenubarItem onClick={() => setTheme("dark")} className="flex items-center justify-between">
+                                        <span className="flex items-center gap-2">
+                                            <Moon className="h-3.5 w-3.5 text-primary" />
+                                            Dark
+                                        </span>
+                                        {theme === "dark" && <Check className="h-3.5 w-3.5" />}
+                                    </MenubarItem>
+                                    <MenubarItem onClick={() => setTheme("system")} className="flex items-center justify-between">
+                                        <span className="flex items-center gap-2">
+                                            <Laptop className="h-3.5 w-3.5 text-muted-foreground" />
+                                            System
+                                        </span>
+                                        {theme === "system" && <Check className="h-3.5 w-3.5" />}
+                                    </MenubarItem>
+                                </MenubarSubContent>
+                            </MenubarSub>
+                        </MenubarGroup>
+                        <MenubarSeparator />
                         <MenubarGroup>
                             <MenubarCheckboxItem>Bookmarks Bar</MenubarCheckboxItem>
                             <MenubarCheckboxItem checked>Full URLs</MenubarCheckboxItem>
@@ -156,10 +196,6 @@ export default function MenubarDemo() {
                         <MenubarSeparator />
                         <MenubarGroup>
                             <MenubarItem inset>Toggle Fullscreen</MenubarItem>
-                        </MenubarGroup>
-                        <MenubarSeparator />
-                        <MenubarGroup>
-                            <MenubarItem inset>Hide Sidebar</MenubarItem>
                         </MenubarGroup>
                     </MenubarContent>
                 </MenubarMenu>

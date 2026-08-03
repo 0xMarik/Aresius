@@ -37,6 +37,8 @@ import {
 import { parseRequest, parseResponse } from '@/components/utils';
 import { formatHttpMessage } from './http-pretty';
 import LightDataTable from '@/components/LightDataTable';
+import { EmptyState } from '@/components/ui/empty-state';
+
 
 /* -------------------------------------------------------------------------- */
 /*  Row Interfaces for TanStack Table (extends BaseRow with numeric `id`)     */
@@ -572,11 +574,13 @@ const InterceptorPage: React.FC = () => {
             </div>
 
             <div className="flex-1 min-h-0 relative">
-                {!(settings.requestsEnabled || settings.responsesEnabled) &&
-                    <div className='h-full w-full flex justify-center items-center'>
-                        <h1>Intercept page</h1>
-                        <p>Click on Intercept Request or Intercept Responses</p>
-                    </div>}
+                {!(settings.requestsEnabled || settings.responsesEnabled) && (
+                    <EmptyState
+                        icon={Shield}
+                        title="Traffic Interceptor Standby"
+                        description="Enable Intercept Request or Intercept Response in the top bar to begin capturing and editing HTTP traffic in real time."
+                    />
+                )}
                 <ResizablePanelGroup direction="horizontal">
                     {/* -------------------------------------------------------------- */}
                     {/* Left Pane: Requests Side                                       */}
@@ -594,21 +598,20 @@ const InterceptorPage: React.FC = () => {
                                     </div>
                                     <div className="flex-1 min-h-0 relative">
                                         {
-                                            requestItems.length === 0 ? <div className="flex flex-col items-center justify-center h-full p-6 text-center text-muted-foreground gap-2">
-                                                <p className="text-sm font-semibold text-foreground/80">
-                                                    You don't have any requests queued up
-                                                </p>
-                                                <p className="text-xs max-w-sm text-muted-foreground/80 leading-relaxed">
-                                                    Click the{' '}
-                                                    <span className="font-semibold text-primary">Intercept Request</span> switch on the top right of the page to begin queuing.
-                                                </p>
-                                            </div> :
+                                            requestItems.length === 0 ? (
+                                                <EmptyState
+                                                    icon={Globe}
+                                                    title="No requests queued"
+                                                    description="Queuing allows you to inspect and modify outgoing requests before they reach the server."
+                                                />
+                                            ) : (
                                                 <LightDataTable
                                                     data={requestRows}
                                                     columns={requestColumns}
                                                     fillHeight
                                                     onSelectRow={handleSelectRequestRow}
                                                 />
+                                            )
                                         }
                                     </div>
                                 </div>
@@ -683,10 +686,11 @@ const InterceptorPage: React.FC = () => {
                                             </div>
                                         </>
                                     ) : (
-                                        <div className="flex-1 flex flex-col items-center justify-center p-4 text-center text-muted-foreground gap-2">
-                                            <Shield className="w-8 h-8 opacity-20" />
-                                            <p className="text-xs">No request selected</p>
-                                        </div>
+                                        <EmptyState
+                                            icon={Shield}
+                                            title="No request selected"
+                                            description="Select an intercepted request from the queue above to inspect or edit its headers and body."
+                                        />
                                     )}
                                 </div>
                             </ResizablePanel>
@@ -705,19 +709,13 @@ const InterceptorPage: React.FC = () => {
                                             <Inbox className="w-3.5 h-3.5 text-primary" />
                                             Response Queue ({responseItems.length})
                                         </span>
-                                    </div>
-
-                                    <div className="flex-1 min-h-0 relative">
+                                    </div>                                     <div className="flex-1 min-h-0 relative">
                                         {responseItems.length === 0 ? (
-                                            <div className="flex flex-col items-center justify-center h-full p-6 text-center text-muted-foreground gap-2">
-                                                <p className="text-sm font-semibold text-foreground/80">
-                                                    You don't have any responses queued up
-                                                </p>
-                                                <p className="text-xs max-w-sm text-muted-foreground/80 leading-relaxed">
-                                                    Queuing allows you to edit responses as they come in. Click the{' '}
-                                                    <span className="font-semibold text-primary">Intercept Res</span> switch on the top right of the page to begin queuing.
-                                                </p>
-                                            </div>
+                                            <EmptyState
+                                                icon={Inbox}
+                                                title="No responses queued"
+                                                description="Queuing responses allows you to inspect and modify server responses before they reach your browser."
+                                            />
                                         ) : (
 
                                             <LightDataTable
@@ -790,18 +788,11 @@ const InterceptorPage: React.FC = () => {
                                             </div>
                                         </>
                                     ) : (
-                                        /* Empty state when no response is queued / selected */
-                                        <div className="flex flex-col items-center justify-center h-full p-6 text-center text-muted-foreground gap-3">
-                                            <Files className="w-10 h-10 opacity-20 text-muted-foreground" />
-                                            <div className="space-y-1">
-                                                <p className="text-sm font-medium text-foreground/80">
-                                                    No response to display
-                                                </p>
-                                                <p className="text-xs text-muted-foreground/70">
-                                                    Select a request with a response to view it here.
-                                                </p>
-                                            </div>
-                                        </div>
+                                        <EmptyState
+                                            icon={Files}
+                                            title="No response selected"
+                                            description="Select a queued response from above to inspect or edit its body and headers."
+                                        />
                                     )}
                                 </div>
                             </ResizablePanel>

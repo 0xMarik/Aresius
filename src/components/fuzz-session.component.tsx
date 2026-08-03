@@ -82,12 +82,12 @@ const FuzzSession = () => {
 
     return (
         <div className='flex flex-col gap-1 h-full'>
-            <div className='bg-muted/50 flex w-full items-center h-13 p-2'>
+            <div className='flex w-full items-center h-13 p-2'>
                 <Button onClick={handleCreateFuzzSession}>
                     <Plus /> Create a session
                 </Button>
             </div>
-            <div className='bg-muted/50 h-full p-2'>
+            <div className='h-full p-2'>
                 <RsTree
                     className='!h-full bg-transparent'
                     data={data}

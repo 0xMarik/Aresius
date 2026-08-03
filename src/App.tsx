@@ -114,18 +114,16 @@ export default function App() {
 
     return (
         <Router>
-            <div className="flex flex-col h-svh [&_*]:text-[12px] w-full">
-                <div className="h-10 shrink-0 relative">
-                    <MenubarDemo />
-                </div>
-                <div className="flex-1 min-h-0 ">
+            <div className="flex flex-col h-svh [&_*]:text-[12px] w-full overflow-hidden">
+                <MenubarDemo />
+                <div className="flex-1 min-h-0 relative">
                     {/* <Headers/> */}
                     <SidebarProvider className="h-full min-h-0" style={{
                         "--sidebar-width": "13rem",
                         "--sidebar-width-icon": "3rem",
                     } as React.CSSProperties} >
                         <AppSidebar />
-                        <SidebarInset className="min-h-0 overflow-auto">
+                        <SidebarInset className="min-h-0 overflow-auto pt-2">
 
                             <Routes >
                                 <Route path="/" element={<Navigate to="/projects" replace />} />

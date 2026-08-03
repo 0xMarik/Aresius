@@ -12,7 +12,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { ReplayerHistoryItem } from '@/types/replayer.type';
 import React from 'react';
 import { RsTree, TreeNode } from 'rstree-ui';
-import { ChevronDown, ChevronDownIcon, ChevronLeft, ChevronRight, Plus, } from 'lucide-react';
+import { ChevronDown, ChevronDownIcon, ChevronLeft, ChevronRight, Plus, Repeat, Play, Loader2 } from 'lucide-react';
 import { ButtonGroup } from '@/components/ui/button-group';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 
@@ -20,6 +20,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { parseRequest } from '@/components/utils';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
+import { EmptyState } from '@/components/ui/empty-state';
 
 const fullHeightTheme = EditorView.theme({
     '&': {
@@ -232,7 +233,7 @@ function Replayer() {
                             </DropdownMenuContent>
                         </DropdownMenu>
                     </ButtonGroup>
-                    <div className="bg-muted/50 rounded-lg p-1 w-full h-full ">
+                    <div className="rounded-lg p-1 w-full h-full ">
                         <Input value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
                             placeholder="Search..."
@@ -252,37 +253,43 @@ function Replayer() {
             <ResizableHandle withHandle />
             <ResizablePanel defaultSize={70} minSize={20}>
                 {noSessionSelected ? (
-                    <div className="h-full flex items-center justify-center text-muted-foreground text-sm">
-                        Select or create a session to get started
-                    </div>
+                    <EmptyState
+                        icon={Repeat}
+                        title="No Replayer Session Selected"
+                        description="Select an existing session from the collection tree or click 'New Session' to start replaying HTTP requests."
+                    />
                 ) : (
-                    <div className='h-full flex flex-col gap-1'>
-                        <div className=' flex  items-center h-10 bg-muted/50 aspect-video rounded-lg p-1 gap-5'>
-                            <Input placeholder='Enter URL to replay...' className='w-64 bg-transparent border-0 focus:ring-0'
+                    <div className='h-full flex flex-col gap-2 p-1'>
+                        <div className='flex items-center h-12 bg-card/40 border border-border/60 rounded-lg p-2 gap-3 shrink-0'>
+                            <Input placeholder='Enter URL to replay... (e.g. https://example.com/api)' className='flex-1 font-mono text-xs h-8 bg-background'
                                 value={url}
                                 onChange={(event) => dispatch(setReaplayerURL({ url: event.target.value }))}
                             />
                             <Button
                                 onClick={triggerRequest}
-                                className="p-4  text-white rounded disabled:bg-gray-400"
+                                size="sm"
+                                disabled={responseLoading}
+                                className="h-8 px-4 font-semibold gap-1.5 shrink-0"
                             >
-                                RUN
+                                {responseLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5 fill-current" />}
+                                SEND
                             </Button>
 
                             <ButtonGroup>
                                 <Button
                                     disabled={selectedHistoryIndex === null || history.length - 1 === selectedHistoryIndex}
                                     variant="outline"
-                                    className="pl-2!"
+                                    size="sm"
+                                    className="h-8 px-2"
                                     onClick={goOlder}
                                 >
-                                    <ChevronLeft />
+                                    <ChevronLeft className="w-4 h-4" />
                                 </Button>
 
                                 <Popover>
                                     <PopoverTrigger asChild>
-                                        <Button variant="outline">
-                                            History <ChevronDown />
+                                        <Button variant="outline" size="sm" className="h-8 text-xs gap-1">
+                                            History <ChevronDown className="w-3.5 h-3.5" />
                                         </Button>
                                     </PopoverTrigger>
                                     <PopoverContent className="w-[520px] p-0" align="start">
@@ -300,7 +307,7 @@ function Replayer() {
                                                     {history.length === 0 && (
                                                         <TableRow>
                                                             <TableCell colSpan={4} className="text-center text-muted-foreground">
-                                                                No requests yet
+                                                                No requests replayed yet
                                                             </TableCell>
                                                         </TableRow>
                                                     )}
@@ -313,10 +320,10 @@ function Replayer() {
                                                                 className={`cursor-pointer ${selectedHistoryIndex === index ? 'bg-muted' : ''
                                                                     }`}
                                                             >
-                                                                <TableCell className="font-mono">{req.method}</TableCell>
-                                                                <TableCell>{"item.host"}</TableCell>
-                                                                <TableCell className="truncate max-w-[160px]">{req.path}</TableCell>
-                                                                <TableCell className="whitespace-nowrap">
+                                                                <TableCell className="font-mono text-xs font-semibold">{req.method}</TableCell>
+                                                                <TableCell className="text-xs">{"item.host"}</TableCell>
+                                                                <TableCell className="truncate max-w-[160px] font-mono text-xs">{req.path}</TableCell>
+                                                                <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
                                                                     {new Date(item.requestTime).toLocaleTimeString()}
                                                                 </TableCell>
                                                             </TableRow>
@@ -331,23 +338,31 @@ function Replayer() {
                                 <Button
                                     disabled={selectedHistoryIndex === null || selectedHistoryIndex === 0}
                                     variant="outline"
-                                    className="pl-2!"
+                                    size="sm"
+                                    className="h-8 px-2"
                                     onClick={goNewer}
                                 >
-                                    <ChevronRight />
+                                    <ChevronRight className="w-4 h-4" />
                                 </Button>
                             </ButtonGroup>
                         </div>
-                        <ResizablePanelGroup direction='horizontal' autoSaveId="repeater-req-res">
-                            <ResizablePanel >
-                                <div className="bg-muted/50 min-w-0 rounded-lg p-1 w-full h-full">
+                        <ResizablePanelGroup direction='horizontal' autoSaveId="repeater-req-res" className="flex-1 min-h-0">
+                            <ResizablePanel>
+                                <div className="bg-background border border-border/60 min-w-0 rounded-lg p-1 w-full h-full">
                                     <RequestCodeEditor />
                                 </div>
                             </ResizablePanel>
                             <ResizableHandle withHandle />
                             <ResizablePanel>
-                                <div className="bg-muted/50 min-w-0 rounded-lg p-1 w-full h-full">
-                                    {responseLoading ? "Response is loading..." : <ResponseCodeEditor />}
+                                <div className="bg-background border border-border/60 min-w-0 rounded-lg p-1 w-full h-full">
+                                    {responseLoading ? (
+                                        <div className="flex flex-col items-center justify-center h-full text-muted-foreground text-xs gap-2">
+                                            <Loader2 className="w-6 h-6 animate-spin text-primary" />
+                                            <span>Replaying HTTP Request...</span>
+                                        </div>
+                                    ) : (
+                                        <ResponseCodeEditor />
+                                    )}
                                 </div>
                             </ResizablePanel>
                         </ResizablePanelGroup>

@@ -11,6 +11,8 @@ import { invoke } from '@tauri-apps/api/core';
 import { useStore } from 'react-redux';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Button } from './ui/button';
+import { Play } from 'lucide-react';
+
 
 // Shape of what this component actually renders for the active session.
 // Deliberately excludes `requests` — that's what applyFuzzUpdates mutates
@@ -121,13 +123,12 @@ const FuzzRequestPayload: React.FC = () => {
 
   return (
     <div className='flex flex-col gap-1 h-full'>
-
-
-      <div className='bg-muted/50 gap-2 flex w-full items-center h-14 p-2'>
+      <div className='bg-card/40 border border-border/60 rounded-md gap-2 flex w-full items-center h-12 p-2 shrink-0'>
         <Input
           onChange={(e) => dispatch(setTargerUrl({ targetUrl: e.target.value }))}
           value={activeSession?.targetUrl ?? ''}
           placeholder="https://example.com"
+          className="h-8 font-mono text-xs"
         />
 
         <Select
@@ -135,7 +136,7 @@ const FuzzRequestPayload: React.FC = () => {
           value={activeSession?.fuzzingAttackType}
           onValueChange={(value) => dispatch(setFuzzingAttackType({ fuzzingAttackingType: value as FuzzingAttackType }))}
         >
-          <SelectTrigger className="w-[180px]">
+          <SelectTrigger className="w-[180px] h-8 text-xs shrink-0">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -148,12 +149,14 @@ const FuzzRequestPayload: React.FC = () => {
 
         <Button
           onClick={triggerFuzzing}
-          className="p-4 text-white rounded disabled:bg-gray-400"
+          size="sm"
+          className="h-8 px-4 font-semibold gap-1.5 shrink-0"
         >
-          RUN
+          <Play className="w-3.5 h-3.5 fill-current" />
+          START FUZZ
         </Button>
       </div>
-      <ResizablePanelGroup direction='horizontal' autoSaveId="fuzzing-payload-layout" >
+      <ResizablePanelGroup direction='horizontal' autoSaveId="fuzzing-payload-layout" className="flex-1 min-h-0">
         <ResizablePanel defaultSize={50} minSize={15}>
           <RequestEditor />
         </ResizablePanel>
