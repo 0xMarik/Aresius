@@ -38,7 +38,7 @@ async fn replay_request(url: String, request_tmp: String) -> Result<ReplayerResp
         .await
         .map_err(|e| format!("Connection failed: {e}"))?;
 
-    let result = conn.send_request(&req).await;
+    let result = conn.send_request(&req.as_bytes()).await;
 
     // Always attempt a clean shutdown, whether or not the request
     // succeeded. A target that's slow or hostile shouldn't be able to make

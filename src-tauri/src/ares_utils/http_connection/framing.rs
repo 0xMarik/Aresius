@@ -4,17 +4,6 @@
 
 use anyhow::{anyhow, Result};
 
-/// True if `http_request`'s request line starts with the HEAD method.
-/// A HEAD response, per RFC 7230 §3.3.3, never carries a body no matter
-/// what Content-Length/Transfer-Encoding say.
-pub(super) fn is_head_method(http_request: &str) -> bool {
-    http_request
-        .split_whitespace()
-        .next()
-        .map(|method| method.eq_ignore_ascii_case("HEAD"))
-        .unwrap_or(false)
-}
-
 /// Incrementally looks for the header/body separator (`"\r\n\r\n"`) in
 /// `buffer`. Only scans the region from `scan_from` onward (with a small
 /// overlap in case the separator straddled a read boundary) rather than

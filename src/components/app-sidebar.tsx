@@ -1,12 +1,8 @@
 import * as React from "react"
 import {
-  AudioWaveform,
   BookOpen,
   Bot,
-  Command,
-  // Frame,
   PanelsTopLeft,
-  GalleryVerticalEnd,
   Waves,
   Settings2,
   Repeat2,
@@ -19,41 +15,16 @@ import {
 
 // import { NavMain } from '@/components/nav-main'
 import { NavProjects } from '@/components/nav-projects'
-import { TeamSwitcher } from '@/components/team-switcher'
 import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
-  SidebarHeader,
   SidebarTrigger,
   // SidebarRail,
 } from '@/components/ui/sidebar'
-// import { IconSatellite } from "@tabler/icons-react"
 
 // This is sample data.
 const data = {
-  // user: {
-  //   name: "shadcn",
-  //   email: "m@example.com",
-  //   avatar: "/avatars/shadcn.jpg",
-  // },
-  // teams: [
-  //   {
-  //     name: "Acme Inc",
-  //     logo: GalleryVerticalEnd,
-  //     plan: "Ares",
-  //   },
-  //   {
-  //     name: "Acme Corp.",
-  //     logo: AudioWaveform,
-  //     plan: "Startup",
-  //   },
-  //   {
-  //     name: "Evil Corp.",
-  //     logo: Command,
-  //     plan: "Free",
-  //   },
-  // ],
   navMain: [
     {
       title: "Playground",
@@ -152,11 +123,7 @@ const data = {
       url: "/fuzzer",
       icon: Waves,
     },
-    // {
-    //   name: "Travel",
-    //   url: "#",
-    //   icon: Map,
-    // },
+
   ],
   discovery: [{
     name: "Sitemap",

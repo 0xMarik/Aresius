@@ -304,7 +304,7 @@ async fn process_chunk(
             continue;
         }
 
-        match conn.send_request(&target.request).await {
+        match conn.send_request(&target.request.as_bytes()).await {
             Ok(response) => {
                 let req_res = ReqRes {
                     request: target.request.clone(),
@@ -323,7 +323,7 @@ async fn process_chunk(
                 let is_conn_err = is_connection_error(&msg);
 
                 if is_conn_err && conn.reconnect().await.is_ok() {
-                    match conn.send_request(&target.request).await {
+                    match conn.send_request(&target.request.as_bytes()).await {
                         Ok(response) => {
                             let req_res = ReqRes {
                                 request: target.request.clone(),

@@ -219,11 +219,20 @@ async fn handle_connect(
             }
         };
 
+        // Display/UI copy ONLY. This is a lossy conversion (any byte
+        // sequence in the body that isn't valid UTF-8 -- e.g. HPKE
+        // ciphertext, protobuf, msgpack -- gets replaced with U+FFFD) and
+        // must never be what's actually put on the wire. See
+        // `outgoing_request_bytes` below for the byte-exact copy that is.
         let decrypted_request = String::from_utf8_lossy(&raw_request).to_string();
         let ts_ms = now_ms();
         let request_id = Uuid::new_v4().to_string();
 
-        let mut outgoing_request_text = decrypted_request.clone();
+        // Byte-exact source of truth for what actually gets forwarded
+        // upstream. Stays untouched unless the user edits the request in
+        // the intercept UI, mirroring how `outgoing_response_bytes` is
+        // handled below for responses.
+        let mut outgoing_request_bytes = raw_request.clone();
         if intercept_state
             .should_intercept(InterceptItemType::Request)
             .await
@@ -241,8 +250,15 @@ async fn handle_connect(
             match intercept_state.add_and_await(item).await {
                 Some(InterceptDecision::Forward { modified_message }) => {
                     if let Some(mod_msg) = modified_message {
-                        outgoing_request_text = mod_msg;
+                        // User actually edited it in the UI -- accept the
+                        // re-encode. This is the one case where lossiness
+                        // is inherent (same caveat already flagged below
+                        // for response editing), since the intercept UI
+                        // edits text, not raw bytes.
+                        outgoing_request_bytes = mod_msg.into_bytes();
                     }
+                    // else: untouched by the user -- forward the original
+                    // bytes unchanged.
                 }
                 Some(InterceptDecision::Drop) | None => {
                     tracing::info!(
@@ -274,7 +290,7 @@ async fn handle_connect(
             },
         };
 
-        let response = match conn.send_request(&outgoing_request_text).await {
+        let response = match conn.send_request(&outgoing_request_bytes).await {
             Ok(r) => r,
             Err(e) => {
                 tracing::warn!("Upstream request failed for {}: {}", target, e);
@@ -331,7 +347,9 @@ async fn handle_connect(
                 "http_history",
                 HttpHistoryPayload {
                     id: history_counter.next(),
-                    raw_request: outgoing_request_text,
+                    // Lossy display string derived from whatever actually
+                    // went out (original or user-edited), never the reverse.
+                    raw_request: String::from_utf8_lossy(&outgoing_request_bytes).to_string(),
                     raw_response: final_response_text,
                     host: target.clone(),
                     timestamp: ts_ms,
@@ -424,11 +442,14 @@ async fn handle_http_request(
             },
         };
 
+        // Display/UI copy ONLY -- see identical note in `handle_connect`.
         let decrypted_request = String::from_utf8_lossy(&raw_request).to_string();
         let ts_ms = now_ms();
         let request_id = Uuid::new_v4().to_string();
 
-        let mut outgoing_request_text = decrypted_request.clone();
+        // Byte-exact source of truth for what actually gets forwarded
+        // upstream -- see identical note in `handle_connect`.
+        let mut outgoing_request_bytes = raw_request.clone();
         if intercept_state
             .should_intercept(InterceptItemType::Request)
             .await
@@ -446,7 +467,7 @@ async fn handle_http_request(
             match intercept_state.add_and_await(item).await {
                 Some(InterceptDecision::Forward { modified_message }) => {
                     if let Some(mod_msg) = modified_message {
-                        outgoing_request_text = mod_msg;
+                        outgoing_request_bytes = mod_msg.into_bytes();
                     }
                 }
                 Some(InterceptDecision::Drop) | None => {
@@ -475,7 +496,7 @@ async fn handle_http_request(
             },
         };
 
-        let response = match conn.send_request(&outgoing_request_text).await {
+        let response = match conn.send_request(&outgoing_request_bytes).await {
             Ok(r) => r,
             Err(e) => {
                 tracing::warn!("Upstream request failed for {}: {}", target, e);
@@ -525,7 +546,7 @@ async fn handle_http_request(
                 "http_history",
                 HttpHistoryPayload {
                     id: history_counter.next(),
-                    raw_request: outgoing_request_text,
+                    raw_request: String::from_utf8_lossy(&outgoing_request_bytes).to_string(),
                     raw_response: final_response_text,
                     host: target.clone(),
                     timestamp: ts_ms,

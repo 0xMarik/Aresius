@@ -19,9 +19,7 @@ use crate::ares_utils::{
 };
 use anyhow::{anyhow, Result};
 use chunked::dechunk_or_fallback;
-use framing::{
-    body_is_complete, is_head_method, locate_header_terminator, parse_response_framing, BodyFraming,
-};
+use framing::{body_is_complete, locate_header_terminator, parse_response_framing, BodyFraming};
 use std::time::{Duration, Instant};
 use tokio::time::timeout;
 use transport::{connect_stream, Connection};
@@ -130,7 +128,7 @@ impl HttpConnection {
         Ok(())
     }
 
-    pub async fn send_request(&mut self, http_request: &str) -> Result<HttpResponse> {
+    pub async fn send_request(&mut self, http_request: &[u8]) -> Result<HttpResponse> {
         self.ensure_connected().await?;
 
         let start = Instant::now();
@@ -193,8 +191,8 @@ impl HttpConnection {
     /// (`parse_response_framing`) -> keep reading until `body_is_complete`
     /// says the whole thing has arrived -> split headers from body and,
     /// if chunked, reassemble the payload (`dechunk_or_fallback`).
-    async fn read_response(&mut self, http_request: &str) -> Result<(String, Vec<u8>)> {
-        self.connection.write_all(http_request.as_bytes()).await?;
+    async fn read_response(&mut self, http_request: &[u8]) -> Result<(String, Vec<u8>)> {
+        self.connection.write_all(http_request).await?;
 
         // RFC 7230 §3.3.3: the response to a HEAD request, and any response
         // with a 1xx, 204, or 304 status, is *always* terminated by the
@@ -204,7 +202,7 @@ impl HttpConnection {
         // from the equivalent GET (very common) would make us sit here
         // waiting for body bytes that are never coming, until the idle/
         // total timeout eventually fires.
-        let is_head_request = is_head_method(http_request);
+        let is_head_request = http_request.starts_with(b"HEAD ");
 
         let mut buffer: Vec<u8> = Vec::new();
         let mut chunk = [0u8; 4096];
