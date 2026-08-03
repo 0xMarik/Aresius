@@ -121,7 +121,6 @@ const ResponseCodeEditor = () => {
                 ? history[selectedHistoryIndex].responseRaw
                 : "",
             extensions: [
-                EditorState.lineSeparator.of("\r\n"),
                 basicSetup,
                 http(),
                 oneDark,

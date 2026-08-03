@@ -19,7 +19,8 @@ export const CodeMirrorEditor: React.FC<{ value: string }> = ({ value }) => {
             const state = EditorState.create({
                 doc: value,
                 extensions: [
-                    EditorState.lineSeparator.of("\r\n"),
+                    // EditorState.lineSeparator.of("\r\n"),
+                    // no need cause the response should interprete both \n and \r\n as return to a new line
                     basicSetup,
                     EditorView.lineWrapping,
                     fullHeightTheme,
