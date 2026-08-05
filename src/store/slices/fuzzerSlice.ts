@@ -44,7 +44,7 @@ const fuzzerSlice = createSlice({
           fuzzingAttackType: FuzzingAttackType.ROTATOR,
           rawRequest: rawRequest ||'GET / HTTP/1.1\r\n\r\n',
           metadata : {
-            targetUrl: `https://${targetUrl}` || "https://",
+            targetUrl: `${targetUrl}` || "https://",
             urlIsValid: false,
           },
           parameters: []

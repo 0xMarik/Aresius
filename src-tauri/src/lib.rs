@@ -56,6 +56,7 @@ async fn replay_request(url: String, request_tmp: String) -> Result<ReplayerResp
         response_raw: response.as_text_lossy(),
         response_time: response.elapsed.as_millis(),
         request_raw: req,
+        base_url: url.clone(),
     })
 }
 

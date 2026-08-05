@@ -2,7 +2,8 @@
 export interface ReplayerHistoryItem {
     requestTime: number;
     requestRaw: string
-    responseRaw: string;   
+    responseRaw: string;
+    baseUrl: string;
 }
 
 export interface ReplayerSession {

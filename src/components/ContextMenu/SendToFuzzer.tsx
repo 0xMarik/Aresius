@@ -3,7 +3,7 @@ import { Send } from 'lucide-react'
 import { addFuzzSession } from '@/store/slices/fuzzerSlice';
 import { useAppDispatch } from '@/hooks/redux';
 
-const SendToFuzzer = ({ rawRequest, host }: any) => {
+const SendToFuzzer = ({ rawRequest, host }: { rawRequest: string, host: string }) => {
     const dispatch = useAppDispatch();
 
     const sendToFuzzer = () => {

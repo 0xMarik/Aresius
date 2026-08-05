@@ -10,12 +10,6 @@ const initialState : ReaplyerState  = {
     collections : [
         {
             sessions: [
-                // {
-                //     history: [],
-                //     requestTmp: 'GET / HTTP/1.1\n\n',
-                //     url: 'https://',
-                //     selectedHistoryIndex: null,
-                // }
             ],
             selectedSessionIndex: null,
         },

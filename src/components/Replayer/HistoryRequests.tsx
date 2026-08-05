@@ -1,4 +1,3 @@
-import React from 'react'
 import { ButtonGroup } from '../ui/button-group'
 import { Button } from '../ui/button'
 import { ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react'
@@ -74,7 +73,7 @@ const HistoryRequests = ({ selectedHistoryIndex, history }: { selectedHistoryInd
                                                 }`}
                                         >
                                             <TableCell className="font-mono text-xs font-semibold">{req.method}</TableCell>
-                                            <TableCell className="text-xs">{"item.host"}</TableCell>
+                                            <TableCell className="text-xs">{item.baseUrl}</TableCell>
                                             <TableCell className="truncate max-w-[160px] font-mono text-xs">{req.path}</TableCell>
                                             <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
                                                 {new Date(item.requestTime).toLocaleTimeString()}

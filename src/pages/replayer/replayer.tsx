@@ -20,6 +20,8 @@ import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/componen
 import { EmptyState } from '@/components/ui/empty-state';
 import { ValidateUrlInput } from "@/components/ValidateUrlInput";
 import HistoryRequests from "@/components/Replayer/HistoryRequests";
+import CoreContextMenu from "@/components/ContextMenu/CoreContextMenu";
+import RequestCodeEditor from "@/components/Replayer/RequestCodeEditor";
 
 const fullHeightTheme = EditorView.theme({
     '&': {
@@ -33,67 +35,7 @@ const fullHeightTheme = EditorView.theme({
     },
 });
 
-const RequestCodeEditor = () => {
-    const editorRef = useRef<HTMLDivElement | null>(null);
-    const viewRef = useRef<EditorView | null>(null);
-    const { collections, selectedCollectionIndex } = useAppSelector(state => state.replayerstate);
-    const { selectedSessionIndex } = collections[selectedCollectionIndex];
-    const session = selectedSessionIndex !== null
-        ? collections[selectedCollectionIndex].sessions[selectedSessionIndex]
-        : null;
-    const requestTmp = session?.requestTmp ?? "";
-    const selectedHistoryIndex = session?.selectedHistoryIndex ?? null;
-    const dispatch = useAppDispatch();
 
-    useEffect(() => {
-        if (!editorRef.current) return;
-        if (selectedSessionIndex === null) return; // nothing to edit yet
-
-        if (viewRef.current) {
-            viewRef.current.destroy();
-            viewRef.current = null;
-        }
-
-        const updateListener = EditorView.updateListener.of((update) => {
-            if (update.docChanged) {
-                // line break to specify \r\n that are in the origin request
-                const code = update.state.doc.sliceString(0, update.state.doc.length, state.lineBreak)
-                dispatch(setReaplayerContent({ rawRequest: code }));
-            }
-        });
-
-        const state = EditorState.create({
-            doc: requestTmp,
-            extensions: [
-                EditorState.lineSeparator.of("\r\n"),
-                basicSetup,
-                http(),
-                oneDark,
-                fullHeightTheme,
-                updateListener,
-                EditorView.lineWrapping,
-            ],
-        });
-
-        const view = new EditorView({
-            state,
-            parent: editorRef.current,
-        });
-
-        viewRef.current = view;
-
-        return () => {
-            if (view) {
-                view.destroy();
-            }
-        };
-    }, [selectedHistoryIndex, selectedCollectionIndex, selectedSessionIndex]);
-
-    return (
-        <div ref={editorRef} className="h-full w-full border rounded-lg ">
-        </div>
-    )
-}
 
 const ResponseCodeEditor = () => {
     const editorRef = useRef<HTMLDivElement | null>(null);
@@ -203,7 +145,7 @@ function Replayer() {
 
     return (
         <ResizablePanelGroup direction='horizontal' autoSaveId="aresius-repeater-layout" >
-            <ResizablePanel defaultSize={13} minSize={13} maxSize={50}>
+            <ResizablePanel defaultSize={15} minSize={13} maxSize={50}>
                 <div className='h-full'>
                     <ButtonGroup>
                         <Button className='mb-2 w-full' onClick={
@@ -248,7 +190,7 @@ function Replayer() {
                 </div>
             </ResizablePanel>
             <ResizableHandle withHandle />
-            <ResizablePanel defaultSize={70} minSize={20}>
+            <ResizablePanel defaultSize={85} minSize={20}>
                 {noSessionSelected ? (
                     <EmptyState
                         icon={Repeat}
@@ -278,9 +220,7 @@ function Replayer() {
                         </div>
                         <ResizablePanelGroup direction='horizontal' autoSaveId="repeater-req-res" className="flex-1 min-h-0">
                             <ResizablePanel>
-                                <div className="bg-background border border-border/60 min-w-0 rounded-lg p-1 w-full h-full">
-                                    <RequestCodeEditor />
-                                </div>
+                                <RequestCodeEditor />
                             </ResizablePanel>
                             <ResizableHandle withHandle />
                             <ResizablePanel>
