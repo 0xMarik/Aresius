@@ -38,6 +38,7 @@ import { parseRequest, parseResponse } from '@/components/utils';
 import { formatHttpMessage } from './http-pretty';
 import LightDataTable from '@/components/LightDataTable';
 import { EmptyState } from '@/components/ui/empty-state';
+import { cn } from '@/lib/utils';
 
 
 /* -------------------------------------------------------------------------- */
@@ -151,7 +152,7 @@ const RawMessageEditor: React.FC<RawMessageEditorProps> = ({
         };
     }, []);
 
-    return <div ref={editorRef} className="h-full w-full overflow-hidden" />;
+    return <div ref={editorRef} className="h-full w-full overflow-hidden " />;
 };
 
 /* -------------------------------------------------------------------------- */
@@ -541,7 +542,7 @@ const InterceptorPage: React.FC = () => {
                                 }
                             />
                             <Label htmlFor="top-req-switch" className="cursor-pointer text-[11px] font-medium text-muted-foreground">
-                                Intercept Req
+                                Intercept Request
                             </Label>
                         </div>
                         <div className="h-3 w-px bg-border" />
@@ -554,7 +555,7 @@ const InterceptorPage: React.FC = () => {
                                 }
                             />
                             <Label htmlFor="top-res-switch" className="cursor-pointer text-[11px] font-medium text-muted-foreground">
-                                Intercept Res
+                                Intercept Response
                             </Label>
                         </div>
                     </div>

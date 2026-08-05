@@ -6,56 +6,14 @@ import {
     ContextMenuSubContent,
     ContextMenuSubTrigger,
 } from '@/components/ui/context-menu';
-import { Layers, FolderPlus, Send, Repeat, Copy, Braces, Circle, FolderMinus, Trash2 } from 'lucide-react';
-import { useAppDispatch, useAppSelector } from '@/hooks/redux';
-import { addCollection, addSessionToCollection, selectColSess, setReaplayerContent } from '@/store/slices/replayerSlice';
+import { Layers, FolderPlus, Copy, Braces, Circle, FolderMinus, Trash2 } from 'lucide-react';
+import { useAppDispatch, } from '@/hooks/redux';
 import { RowContextMenuContext } from './Table';
-import { addFuzzSession } from '@/store/slices/fuzzerSlice';
+import SendToFuzzer from './ContextMenu/SendToFuzzer';
+import SendToReplayer from './ContextMenu/SendToReplayer';
 
-/** Anything with a raw request string can be sent to the Repeater. */
-export interface RepeaterSendable {
-    rawRequest?: string;
-}
 
-export function SendToRepeaterSubmenu({ row }: { row: RepeaterSendable }) {
-    const dispatch = useAppDispatch();
-    const collections = useAppSelector((state) => state.replayerstate.collections);
 
-    const sendToExisting = (collectionIndex: number) => {
-        const newSessionIndex = collections[collectionIndex].sessions.length;
-        dispatch(addSessionToCollection({ collectionIndex }));
-        dispatch(selectColSess({ collectionIndex, sessionIndex: newSessionIndex }));
-        dispatch(setReaplayerContent({ rawRequest: row.rawRequest ?? '' }));
-    };
-
-    const sendToNew = () => {
-        const newCollectionIndex = collections.length;
-        dispatch(addCollection());
-        dispatch(selectColSess({ collectionIndex: newCollectionIndex, sessionIndex: 0 }));
-        dispatch(setReaplayerContent({ rawRequest: row.rawRequest ?? '' }));
-    };
-
-    return (
-        <>
-            {collections.map((collection, index) => (
-                <ContextMenuItem key={index} onSelect={() => sendToExisting(index)}>
-                    <Layers className="mr-2 h-3.5 w-3.5" />
-                    Collection {index + 1}
-                    {collection.sessions.length > 0 && (
-                        <span className="ml-auto text-[11px] text-muted-foreground">
-                            {collection.sessions.length} session{collection.sessions.length !== 1 ? 's' : ''}
-                        </span>
-                    )}
-                </ContextMenuItem>
-            ))}
-            {collections.length > 0 && <ContextMenuSeparator />}
-            <ContextMenuItem onSelect={sendToNew}>
-                <FolderPlus className="mr-2 h-3.5 w-3.5" />
-                New collection
-            </ContextMenuItem>
-        </>
-    );
-}
 
 
 export function renderHttpHistoryTableContextMenu(
@@ -73,7 +31,6 @@ export function renderHttpHistoryTableContextMenu(
         onRemove,
     } = ctx;
 
-    const dispatch = useAppDispatch()
 
     const otherGroups = groups.filter((g) => g.id !== group?.id);
 
@@ -85,9 +42,7 @@ export function renderHttpHistoryTableContextMenu(
         navigator.clipboard.writeText(row.rawResponse ?? '');
     };
 
-    const sendToFuzzer = () => {
-        dispatch(addFuzzSession({ name: "From history", rawRequest: row.rawRequest, targetUrl: row.host }))
-    };
+
 
     return (
         <>
@@ -96,20 +51,9 @@ export function renderHttpHistoryTableContextMenu(
             </ContextMenuLabel>
             <ContextMenuSeparator />
 
-            <ContextMenuItem onSelect={sendToFuzzer}>
-                <Send className="mr-2 h-3.5 w-3.5" />
-                Send to Fuzzer
-            </ContextMenuItem>
+            <SendToFuzzer rawRequest={row.rawRequest} host={row.host} />
 
-            <ContextMenuSub>
-                <ContextMenuSubTrigger disabled={isMultiple}>
-                    <Repeat className="mr-2 h-3.5 w-3.5" />
-                    Send to Repeater
-                </ContextMenuSubTrigger>
-                <ContextMenuSubContent>
-                    <SendToRepeaterSubmenu row={row} />
-                </ContextMenuSubContent>
-            </ContextMenuSub>
+            <SendToReplayer rawRequest={row.rawRequest} isMultiple={isMultiple} />
 
             <ContextMenuSub>
                 <ContextMenuSubTrigger>

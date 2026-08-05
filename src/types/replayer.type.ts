@@ -5,10 +5,11 @@ export interface ReplayerHistoryItem {
     responseRaw: string;   
 }
 
-interface ReplayerSession {
+export interface ReplayerSession {
     history: ReplayerHistoryItem[];
     requestTmp: string;
     url: string;
+    urlIsValid: boolean;
     selectedHistoryIndex: number | null;
 }
 export interface ReplayerCollection {

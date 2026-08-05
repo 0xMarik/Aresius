@@ -1,6 +1,6 @@
 import { useCallback, useMemo } from 'react'
 import { Button } from './ui/button'
-import { Plus, SlidersVertical } from 'lucide-react'
+import { Folder, Plus, SlidersVertical } from 'lucide-react'
 import { useAppDispatch, useAppSelector } from '@/hooks/redux'
 import { addFuzzSession, setSelectedFuzz } from '@/store/slices/fuzzerSlice'
 import { RsTree, TreeNode } from 'rstree-ui'
@@ -89,13 +89,23 @@ const FuzzSession = () => {
             </div>
             <div className='h-full p-2'>
                 <RsTree
-                    className='!h-full bg-transparent'
+                    className="!h-full bg-transparent border-none"
                     data={data}
+                    treeLineClassName="!border-border/40"
+                    treeNodeClassName="
+    !bg-transparent
+    !text-muted-foreground
+    hover:!bg-accent/50 hover:!text-foreground
+    aria-selected:!bg-accent aria-selected:!text-accent-foreground
+    rounded-sm text-[13px] font-mono transition-colors
+  "
                     selectedIds={selectedIds}
                     expandedIds={expandedIds}
                     onSelect={handleSelection}
                     showIcons={true}
                     virtualizeEnabled={true}
+
+                    folderIcon={<Folder className="w-3.5 h-3.5 text-accent" />}
                 />
             </div>
         </div>

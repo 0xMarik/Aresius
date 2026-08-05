@@ -4,7 +4,6 @@ import { useAppDispatch, useAppSelector } from '@/hooks/redux';
 import RequestEditor from './fuzzer/request-editor/request-editor.component';
 import FuzzConfig from './fuzzer/FuzzConfig';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from './ui/resizable';
-import { Input } from './ui/input';
 import { addFuzzingHistory, setFuzzingAttackType, setFuzzRunTargets, setTargerUrl } from '@/store/slices/fuzzerSlice';
 import { FuzzingAttackType, initialFuzzRunState } from '@/types/fuzzer.type';
 import { invoke } from '@tauri-apps/api/core';
@@ -12,6 +11,7 @@ import { useStore } from 'react-redux';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Button } from './ui/button';
 import { Play } from 'lucide-react';
+import { ValidateUrlInput } from './ValidateUrlInput';
 
 
 // Shape of what this component actually renders for the active session.
@@ -124,11 +124,10 @@ const FuzzRequestPayload: React.FC = () => {
   return (
     <div className='flex flex-col gap-1 h-full'>
       <div className='bg-card/40 border border-border/60 rounded-md gap-2 flex w-full items-center h-12 p-2 shrink-0'>
-        <Input
-          onChange={(e) => dispatch(setTargerUrl({ targetUrl: e.target.value }))}
-          value={activeSession?.targetUrl ?? ''}
-          placeholder="https://example.com"
-          className="h-8 font-mono text-xs"
+
+        <ValidateUrlInput
+          url={activeSession?.targetUrl ?? ''}
+          onChange={(url, urlIsValid) => dispatch(setTargerUrl({ targetUrl: url, urlIsValid }))}
         />
 
         <Select

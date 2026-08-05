@@ -96,6 +96,14 @@ const SitemapTreePane = React.memo<SitemapTreePaneProps>(function SitemapTreePan
             renderNode={renderSitemapNode as any}
             virtualizeEnabled
             className="bg-transparent !h-full"
+            treeLineClassName="!border-border/40"
+            treeNodeClassName="
+    !bg-transparent
+    !text-muted-foreground
+    hover:!bg-accent/50 hover:!text-foreground
+    aria-selected:!bg-accent aria-selected:!text-accent-foreground
+    rounded-sm text-[13px] font-mono transition-colors
+  "
         />
     );
 });

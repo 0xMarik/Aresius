@@ -14,7 +14,8 @@ const initialState : FuzzerState = {
             rawRequest: 'GET / HTTP/1.1\r\nHost: www.google.com\r\n\r\n',
             parameters: [],
             metadata: {
-                targetUrl: 'https://google.com'
+                targetUrl: 'https://google.com',
+                urlIsValid: true,
             }
         },
         selectedHighlightId: null,
@@ -43,7 +44,8 @@ const fuzzerSlice = createSlice({
           fuzzingAttackType: FuzzingAttackType.ROTATOR,
           rawRequest: rawRequest ||'GET / HTTP/1.1\r\n\r\n',
           metadata : {
-            targetUrl: `https://${targetUrl}` || "https://"
+            targetUrl: `https://${targetUrl}` || "https://",
+            urlIsValid: false,
           },
           parameters: []
         },
@@ -452,10 +454,11 @@ setSelectedFuzz: (state, action: PayloadAction<{ sessionIndex: number | null, hi
     },
 
 
-    setTargerUrl :(state, action: PayloadAction<{targetUrl: string}>) => {
+    setTargerUrl :(state, action: PayloadAction<{targetUrl: string, urlIsValid: boolean}>) => {
       if(state.activeSessionIndex !== null) {
         const currentSession = state.fuzzerSessions[state.activeSessionIndex]
         currentSession.fuzzConfig.metadata.targetUrl = action.payload.targetUrl;
+        currentSession.fuzzConfig.metadata.urlIsValid = action.payload.urlIsValid;
       }else{
          console.error("Their is no active session!!");
       }

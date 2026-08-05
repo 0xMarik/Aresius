@@ -60,5 +60,5 @@ export const CodeMirrorEditor: React.FC<{ value: string }> = ({ value }) => {
         }
     }, [value]);
 
-    return <div ref={editorRef} className="h-full overflow-auto" />;
+    return <div ref={editorRef} className="h-full overflow-auto " />;
 };

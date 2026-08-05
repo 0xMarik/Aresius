@@ -39,12 +39,13 @@ const replayerSlice = createSlice({
         }
         console.error("Their is no replayer session selected")
     },
-    setReaplayerURL: (state, action: PayloadAction<{ url: string }>) => {
-        const { url } = action.payload;
+    setReaplayerURL: (state, action: PayloadAction<{ url: string; urlIsValid: boolean }>) => {
+        const { url, urlIsValid } = action.payload;
         const collection = state.collections[state.selectedCollectionIndex];
         if(collection.selectedSessionIndex !== null){
             const session = collection.sessions[collection.selectedSessionIndex];
             session.url = url;
+            session.urlIsValid = urlIsValid;
             return;
         }
         console.error("Their is no replayer session selected")
@@ -80,6 +81,7 @@ const replayerSlice = createSlice({
                     requestTmp: 'GET / HTTP/1.1\r\n\r\n',
                     url: 'https://',
                     selectedHistoryIndex: null,
+                    urlIsValid: false,
                 }
             ],
             selectedSessionIndex: 0,
@@ -99,6 +101,7 @@ const replayerSlice = createSlice({
             requestTmp: 'GET / HTTP/1.1\r\n\r\n',
             url: 'https://',
             selectedHistoryIndex: null,
+            urlIsValid: false,
         });
     }
 

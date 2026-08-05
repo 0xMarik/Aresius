@@ -74,6 +74,7 @@ export interface FuzzConfig {
     delayMs: number;
     metadata: {
         targetUrl: string;
+        urlIsValid: boolean;
     };
 }
 

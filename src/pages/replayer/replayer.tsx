@@ -21,6 +21,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { parseRequest } from '@/components/utils';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { EmptyState } from '@/components/ui/empty-state';
+import { ValidateUrlInput } from "@/components/ValidateUrlInput";
 
 const fullHeightTheme = EditorView.theme({
     '&': {
@@ -91,7 +92,7 @@ const RequestCodeEditor = () => {
     }, [selectedHistoryIndex, selectedCollectionIndex, selectedSessionIndex]);
 
     return (
-        <div ref={editorRef} className="h-full w-full border rounded-lg">
+        <div ref={editorRef} className="h-full w-full border rounded-lg ">
         </div>
     )
 }
@@ -146,7 +147,7 @@ const ResponseCodeEditor = () => {
     }, [history, selectedHistoryIndex, selectedCollectionIndex, selectedSessionIndex]);
 
     return (
-        <div ref={editorRef} className="h-full w-full border rounded-lg">
+        <div ref={editorRef} className="h-full w-full border rounded-lg ">
         </div>
     )
 }
@@ -239,11 +240,19 @@ function Replayer() {
                             placeholder="Search..."
                         />
                         <RsTree
-                            className='!h-full bg-transparent'
+                            searchTerm={searchTerm}
+                            className="!h-full bg-transparent border-none"
                             data={data}
+                            treeLineClassName="!border-border/40"
+                            treeNodeClassName="
+    !bg-transparent
+    !text-muted-foreground
+    hover:!bg-accent/50 hover:!text-foreground
+    aria-selected:!bg-accent aria-selected:!text-accent-foreground
+    rounded-sm text-[13px] font-mono transition-colors
+  "
                             selectedIds={selectedIds}
                             onSelect={handleSelection}
-                            searchTerm={searchTerm}
                             showIcons={true}
                             virtualizeEnabled={true}
                         />
@@ -261,15 +270,17 @@ function Replayer() {
                 ) : (
                     <div className='h-full flex flex-col gap-2 p-1'>
                         <div className='flex items-center h-12 bg-card/40 border border-border/60 rounded-lg p-2 gap-3 shrink-0'>
-                            <Input placeholder='Enter URL to replay... (e.g. https://example.com/api)' className='flex-1 font-mono text-xs h-8 bg-background'
+                            {/* <Input placeholder='Enter URL to replay...' className='flex-1 font-mono text-xs h-8 bg-background'
                                 value={url}
                                 onChange={(event) => dispatch(setReaplayerURL({ url: event.target.value }))}
-                            />
+                            /> */}
+                            <ValidateUrlInput url={session?.url || ""} onChange={(url, urlIsValid) => dispatch(setReaplayerURL({ url, urlIsValid }))} />
                             <Button
                                 onClick={triggerRequest}
                                 size="sm"
-                                disabled={responseLoading}
+                                disabled={responseLoading || session?.urlIsValid === false}
                                 className="h-8 px-4 font-semibold gap-1.5 shrink-0"
+
                             >
                                 {responseLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5 fill-current" />}
                                 SEND

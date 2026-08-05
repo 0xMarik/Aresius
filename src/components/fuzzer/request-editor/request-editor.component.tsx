@@ -24,6 +24,7 @@ export const fullHeightTheme = EditorView.theme({
         flex: 1,
         overflow: 'auto',
     },
+
 });
 
 
@@ -425,7 +426,7 @@ const RequestEditor: React.FC = () => {
     return (
         <>
             <div className="h-full flex flex-col gap-1 ">
-                <div className="flex items-center h-12 border rounded gap-2 px-2">
+                <div className="flex items-center h-12 gap-2 px-2">
                     <Badge variant="secondary" className="text-xs">
                         Session {activeSessionIndex + 1}
                     </Badge>
@@ -469,7 +470,8 @@ const RequestEditor: React.FC = () => {
                 </div>
                 <div
                     ref={editorRef}
-                    className="h-full max-h-full border rounded overflow-auto" />
+                    className="h-full  overflow-auto" />
+
             </div>
         </>
     );

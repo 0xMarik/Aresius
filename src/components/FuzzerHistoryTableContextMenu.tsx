@@ -20,6 +20,7 @@ import { RowContextMenuContext } from './Table';
 import { EnrichedFuzzerRow } from './FuzzerHistory';
 import { useAppDispatch, useAppSelector } from '@/hooks/redux';
 import { addCollection, addSessionToCollection, selectColSess, setReaplayerContent } from '@/store/slices/replayerSlice';
+import SendToReplayer from './ContextMenu/SendToReplayer';
 
 export function renderFuzzerHistoryTableContextMenu(
     ctx: RowContextMenuContext<EnrichedFuzzerRow>
@@ -46,7 +47,6 @@ export function renderFuzzerHistoryTableContextMenu(
         navigator.clipboard.writeText(row.response?.rawResponse ?? '');
     };
 
-
     return (
         <>
             <ContextMenuLabel className="text-[11px] text-muted-foreground">
@@ -54,15 +54,7 @@ export function renderFuzzerHistoryTableContextMenu(
             </ContextMenuLabel>
             <ContextMenuSeparator />
 
-            <ContextMenuSub>
-                <ContextMenuSubTrigger disabled={isMultiple}>
-                    <Repeat className="mr-2 h-3.5 w-3.5" />
-                    Send to Repeater
-                </ContextMenuSubTrigger>
-                <ContextMenuSubContent>
-                    <SendToRepeaterSubmenu row={row} />
-                </ContextMenuSubContent>
-            </ContextMenuSub>
+            <SendToReplayer rawRequest={row.rawRequest} isMultiple={isMultiple} />
 
             <ContextMenuSub>
                 <ContextMenuSubTrigger>
