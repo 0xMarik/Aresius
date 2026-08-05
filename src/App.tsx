@@ -119,8 +119,8 @@ export default function App() {
                 <div className="flex-1 min-h-0 relative">
                     {/* <Headers/> */}
                     <SidebarProvider className="h-full min-h-0" style={{
-                        "--sidebar-width": "13rem",
-                        "--sidebar-width-icon": "3rem",
+                        "--sidebar-width": "10rem",
+                        "--sidebar-width-icon": "2rem",
                     } as React.CSSProperties} >
                         <AppSidebar />
                         <SidebarInset className="min-h-0 overflow-auto pt-2">

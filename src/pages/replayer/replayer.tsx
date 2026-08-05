@@ -12,16 +12,14 @@ import { invoke } from '@tauri-apps/api/core';
 import { ReplayerHistoryItem } from '@/types/replayer.type';
 import React from 'react';
 import { RsTree, TreeNode } from 'rstree-ui';
-import { ChevronDown, ChevronDownIcon, ChevronLeft, ChevronRight, Plus, Repeat, Play, Loader2 } from 'lucide-react';
+import { ChevronDownIcon, Plus, Repeat, Play, Loader2 } from 'lucide-react';
 import { ButtonGroup } from '@/components/ui/button-group';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { parseRequest } from '@/components/utils';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ValidateUrlInput } from "@/components/ValidateUrlInput";
+import HistoryRequests from "@/components/Replayer/HistoryRequests";
 
 const fullHeightTheme = EditorView.theme({
     '&': {
@@ -168,15 +166,7 @@ function Replayer() {
     const dispatch = useAppDispatch();
     const [selectedIds, setSelectedIds] = React.useState<string[]>([]);
 
-    const goNewer = () => {
-        if (selectedHistoryIndex === null || selectedHistoryIndex === 0) return;
-        dispatch(selectedHisotryIndex({ historyIndex: selectedHistoryIndex - 1 }));
-    };
 
-    const goOlder = () => {
-        if (selectedHistoryIndex === null || selectedHistoryIndex >= history.length - 1) return;
-        dispatch(selectedHisotryIndex({ historyIndex: selectedHistoryIndex + 1 }));
-    };
 
     const handleSelection = (value: string[]) => {
         if (value !== undefined && value.length === 1 && value[0].includes("-")) {
@@ -198,9 +188,7 @@ function Replayer() {
 
     const [searchTerm, setSearchTerm] = useState('')
 
-    const handleSelectedHisotry = (value: string) => {
-        dispatch(selectedHisotryIndex({ historyIndex: parseInt(value) }));
-    }
+
 
     const data: TreeNode<unknown>[] = collections.map((collection, colIndex) => ({
         id: `${colIndex}`,
@@ -215,7 +203,7 @@ function Replayer() {
 
     return (
         <ResizablePanelGroup direction='horizontal' autoSaveId="aresius-repeater-layout" >
-            <ResizablePanel defaultSize={13} minSize={13} maxSize={20}>
+            <ResizablePanel defaultSize={13} minSize={13} maxSize={50}>
                 <div className='h-full'>
                     <ButtonGroup>
                         <Button className='mb-2 w-full' onClick={
@@ -286,76 +274,7 @@ function Replayer() {
                                 SEND
                             </Button>
 
-                            <ButtonGroup>
-                                <Button
-                                    disabled={selectedHistoryIndex === null || history.length - 1 === selectedHistoryIndex}
-                                    variant="outline"
-                                    size="sm"
-                                    className="h-8 px-2"
-                                    onClick={goOlder}
-                                >
-                                    <ChevronLeft className="w-4 h-4" />
-                                </Button>
-
-                                <Popover>
-                                    <PopoverTrigger asChild>
-                                        <Button variant="outline" size="sm" className="h-8 text-xs gap-1">
-                                            History <ChevronDown className="w-3.5 h-3.5" />
-                                        </Button>
-                                    </PopoverTrigger>
-                                    <PopoverContent className="w-[520px] p-0" align="start">
-                                        <div className="max-h-80 overflow-auto">
-                                            <Table>
-                                                <TableHeader className="sticky top-0 bg-muted">
-                                                    <TableRow>
-                                                        <TableHead>Method</TableHead>
-                                                        <TableHead>Host</TableHead>
-                                                        <TableHead>Path</TableHead>
-                                                        <TableHead>Time</TableHead>
-                                                    </TableRow>
-                                                </TableHeader>
-                                                <TableBody>
-                                                    {history.length === 0 && (
-                                                        <TableRow>
-                                                            <TableCell colSpan={4} className="text-center text-muted-foreground">
-                                                                No requests replayed yet
-                                                            </TableCell>
-                                                        </TableRow>
-                                                    )}
-                                                    {history.map((item, index) => {
-                                                        const req = parseRequest(item.requestRaw)
-                                                        return (
-                                                            <TableRow
-                                                                key={index}
-                                                                onClick={() => handleSelectedHisotry(index.toString())}
-                                                                className={`cursor-pointer ${selectedHistoryIndex === index ? 'bg-muted' : ''
-                                                                    }`}
-                                                            >
-                                                                <TableCell className="font-mono text-xs font-semibold">{req.method}</TableCell>
-                                                                <TableCell className="text-xs">{"item.host"}</TableCell>
-                                                                <TableCell className="truncate max-w-[160px] font-mono text-xs">{req.path}</TableCell>
-                                                                <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
-                                                                    {new Date(item.requestTime).toLocaleTimeString()}
-                                                                </TableCell>
-                                                            </TableRow>
-                                                        )
-                                                    })}
-                                                </TableBody>
-                                            </Table>
-                                        </div>
-                                    </PopoverContent>
-                                </Popover>
-
-                                <Button
-                                    disabled={selectedHistoryIndex === null || selectedHistoryIndex === 0}
-                                    variant="outline"
-                                    size="sm"
-                                    className="h-8 px-2"
-                                    onClick={goNewer}
-                                >
-                                    <ChevronRight className="w-4 h-4" />
-                                </Button>
-                            </ButtonGroup>
+                            <HistoryRequests history={history} selectedHistoryIndex={selectedHistoryIndex} />
                         </div>
                         <ResizablePanelGroup direction='horizontal' autoSaveId="repeater-req-res" className="flex-1 min-h-0">
                             <ResizablePanel>
