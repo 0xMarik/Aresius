@@ -22,6 +22,7 @@ interface NavItem {
   url: string
   icon: LucideIcon
   isActive?: boolean
+  badge?: number
 }
 
 interface NavProjectsProps {
@@ -50,9 +51,17 @@ export function NavProjects({ name, items, defaultOpen = true }: NavProjectsProp
               return (
                 <SidebarMenuItem key={item.name}>
                   <SidebarMenuButton asChild isActive={isActive} tooltip={item.name}>
-                    <Link to={item.url}>
+                    <Link to={item.url} className="flex items-center">
                       <item.icon />
-                      <span>{item.name}</span>
+                      <span className="flex-1">{item.name}</span>
+                      {!!item.badge && item.badge > 0 && (
+                        <span
+                          className="ml-auto flex h-4.5 min-w-4.5 items-center justify-center rounded-full bg-sidebar-primary px-1 text-[10px] font-medium leading-none text-sidebar-primary-foreground"
+                          aria-label={`${item.badge} new`}
+                        >
+                          {item.badge > 99 ? "99+" : item.badge}
+                        </span>
+                      )}
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>

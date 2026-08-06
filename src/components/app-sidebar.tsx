@@ -22,6 +22,7 @@ import {
   SidebarTrigger,
   // SidebarRail,
 } from '@/components/ui/sidebar'
+import { useAppSelector } from "@/hooks/redux"
 
 // This is sample data.
 const data = {
@@ -151,17 +152,29 @@ const data = {
       name: "Projects",
       url: "/projects",
       icon: PanelsTopLeft,
+
     },
   ],
 }
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
+
+  const receivedSession = useAppSelector((state) => state.fuzzerstate.receivedSession)
+
+  const testingItems = React.useMemo(
+    () =>
+      data.projects.map((item) =>
+        item.name === "Fuzzer" ? { ...item, badge: receivedSession } : item
+      ),
+    [receivedSession]
+  )
+
   return (
     <Sidebar collapsible="icon" variant="sidebar" {...props}>
       <SidebarContent>
         <NavProjects name="Discovery" items={data.discovery} />
         <NavProjects name="Proxy" items={data.proxy} />
-        <NavProjects name="Testing" items={data.projects} />
+        <NavProjects name="Testing" items={testingItems} />
         <NavProjects name="Workspace" items={data.workspace} />
       </SidebarContent>
       <SidebarFooter>

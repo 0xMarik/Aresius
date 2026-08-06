@@ -1,5 +1,5 @@
 import { useCallback, useMemo } from 'react'
-import { Button } from './ui/button'
+import { Button } from '../ui/button'
 import { Folder, Plus, SlidersVertical } from 'lucide-react'
 import { useAppDispatch, useAppSelector } from '@/hooks/redux'
 import { addFuzzSession, setSelectedFuzz } from '@/store/slices/fuzzerSlice'
@@ -64,7 +64,7 @@ const FuzzSession = () => {
     }, [activeSessionIndex])
 
     const handleCreateFuzzSession = useCallback(() => {
-        dispatch(addFuzzSession({ name: "Session", targetUrl: "" }))
+        dispatch(addFuzzSession({ name: "Session", targetUrl: "", isItFuzzerPage: true }))
     }, [dispatch])
 
     const handleSelection = useCallback((value: string[]) => {
@@ -82,12 +82,12 @@ const FuzzSession = () => {
 
     return (
         <div className='flex flex-col gap-1 h-full'>
-            <div className='flex w-full items-center h-13 p-2'>
-                <Button onClick={handleCreateFuzzSession}>
+            <div className='flex w-full items-center'>
+                <Button className='my-2 mx-auto' onClick={handleCreateFuzzSession}>
                     <Plus /> Create a session
                 </Button>
             </div>
-            <div className='h-full p-2'>
+            <div className='h-full'>
                 <RsTree
                     className="!h-full bg-transparent border-none"
                     data={data}
@@ -104,7 +104,6 @@ const FuzzSession = () => {
                     onSelect={handleSelection}
                     showIcons={true}
                     virtualizeEnabled={true}
-
                     folderIcon={<Folder className="w-3.5 h-3.5 text-accent" />}
                 />
             </div>

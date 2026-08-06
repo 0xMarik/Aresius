@@ -7,7 +7,7 @@ const SendToFuzzer = ({ rawRequest, host }: { rawRequest: string, host: string }
     const dispatch = useAppDispatch();
 
     const sendToFuzzer = () => {
-        dispatch(addFuzzSession({ name: "From history", rawRequest: rawRequest, targetUrl: host }))
+        dispatch(addFuzzSession({ name: "From history", rawRequest: rawRequest, targetUrl: host, isItFuzzerPage: false }))
     };
     return (
         <ContextMenuItem onSelect={sendToFuzzer}>

@@ -1,19 +1,27 @@
-import { useAppSelector } from '@/hooks/redux';
-import FuzzSession from '@/components/fuzz-session.component';
+import { useAppDispatch, useAppSelector } from '@/hooks/redux';
+import FuzzSession from '@/components/Fuzzer/FuzzerSession';
 import FuzzerHistoryCompo from '@/components/FuzzerHistory';
 import FuzzRequestPayload, { selectActiveSessionShape, shallowEqualActiveSession } from '@/components/FuzzerRequestPayload';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { EmptyState } from '@/components/ui/empty-state';
 import { Target } from 'lucide-react';
+import { useEffect } from 'react';
+import { resetFuzzReceivedSession } from '@/store/slices/fuzzerSlice';
 
 const Fuzzer: React.FC = () => {
     const activeSessionIndex = useAppSelector(state => state.fuzzerstate.activeSessionIndex)
     const activeSession = useAppSelector(selectActiveSessionShape, shallowEqualActiveSession)
 
+    const dispatch = useAppDispatch()
+
+    useEffect(() => {
+        dispatch(resetFuzzReceivedSession())
+    }, [dispatch])
+
     return (
-        <div className="p-1 h-full min-h-0">
+        <div className="h-full min-h-0">
             <ResizablePanelGroup direction='horizontal' autoSaveId="fuzzing-layout">
-                <ResizablePanel defaultSize={15} minSize={13} maxSize={22}>
+                <ResizablePanel defaultSize={15} minSize={13} maxSize={50}>
                     <FuzzSession />
                 </ResizablePanel>
                 <ResizableHandle withHandle />
@@ -48,3 +56,5 @@ const Fuzzer: React.FC = () => {
 };
 
 export default Fuzzer;
+
+

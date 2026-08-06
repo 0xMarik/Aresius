@@ -21,6 +21,7 @@ const initialState : FuzzerState = {
         selectedHighlightId: null,
     }],
     activeSessionIndex: 0,
+    receivedSession: 0,
 };
 
 
@@ -32,8 +33,8 @@ const fuzzerSlice = createSlice({
       const {sessions} = action.payload
       state.fuzzerSessions = sessions;
     },
-    addFuzzSession: (state, action : PayloadAction<{ name: string, rawRequest? : string, targetUrl: string}>) => {
-      const {name, rawRequest , targetUrl} = action.payload;
+    addFuzzSession: (state, action : PayloadAction<{ name: string, rawRequest? : string, targetUrl: string, isItFuzzerPage: boolean}>) => {
+      const {name, rawRequest , targetUrl, isItFuzzerPage} = action.payload;
       state.fuzzerSessions.push({
         name: name + ` ${state.fuzzerSessions.length + 1}`,
         fuzzingHistory: [],
@@ -50,9 +51,13 @@ const fuzzerSlice = createSlice({
           parameters: []
         },
         selectedHighlightId: null,
+        
       });
+      state.receivedSession = !isItFuzzerPage ? state.receivedSession + 1 : state.receivedSession;
     },
-    
+    resetFuzzReceivedSession: (state) => {
+      state.receivedSession = 0;
+    },
 
     setActiveSession: (state, action : PayloadAction<{sessionIndex: number}>) => {
       const {sessionIndex} = action.payload;
@@ -486,6 +491,7 @@ export const {
   markFailedRequestsPending,
   setFuzzRunTargets,
   addFuzzSession,
+  resetFuzzReceivedSession,
   addFuzzingHistory,
   activeFuzzSession,
   setSessions,

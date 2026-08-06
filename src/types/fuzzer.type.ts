@@ -95,6 +95,7 @@ export interface FuzzerSession {
 
 export interface FuzzerState {
     fuzzerSessions: FuzzerSession[];
+    receivedSession: number;
     activeSessionIndex: number | null;
 }
 
