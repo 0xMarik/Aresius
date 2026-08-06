@@ -122,7 +122,7 @@ function SendToRepeaterSubmenu({ row }: { row: EnrichedFuzzerRow }) {
 
     const sendToExisting = (collectionIndex: number) => {
         const newSessionIndex = collections[collectionIndex].sessions.length;
-        dispatch(addSessionToCollection({ collectionIndex }));
+        dispatch(addSessionToCollection({ collectionIndex, isItReplayerPage: false }));
         dispatch(selectColSess({ collectionIndex, sessionIndex: newSessionIndex }));
         dispatch(setReaplayerContent({ rawRequest: row.rawRequest ?? '' }));
     };

@@ -9,7 +9,7 @@ import {
 
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import Fuzzer from "./pages/fuzzer/fuzzer";
-import Tweaker from "./pages/replayer/replayer";
+import Replayer from "./pages/replayer/replayer";
 import Projects from "./pages/projects.page";
 import HTTPHisotry from "./pages/HttpHistory";
 import { useDispatch } from "react-redux";
@@ -131,7 +131,7 @@ export default function App() {
                                     <div>Under Construction</div>
                                 } />
                                 <Route path="/interceptor" element={<Interceptor />} />
-                                <Route path="/replayer" element={<Tweaker />} />
+                                <Route path="/replayer" element={<Replayer />} />
                                 <Route path="/http-history" element={<HTTPHisotry />} />
                                 <Route path="/fuzzer" element={<Fuzzer />} />
                                 <Route path="/projects" element={<Projects />} />

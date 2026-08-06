@@ -1,7 +1,7 @@
 import React from 'react';
 import { useAppDispatch, useAppSelector } from '@/hooks/redux';
 
-import RequestEditor from './fuzzer/request-editor/request-editor.component';
+import RequestEditor from './Fuzzer/request-editor/RequestEditor';
 import FuzzConfig from './fuzzer/FuzzConfig';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from './ui/resizable';
 import { addFuzzingHistory, setFuzzingAttackType, setFuzzRunTargets, setTargerUrl } from '@/store/slices/fuzzerSlice';

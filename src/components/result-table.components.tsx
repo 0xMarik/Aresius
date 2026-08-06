@@ -7,7 +7,7 @@ import { EditorState } from '@codemirror/state';
 // import { http } from '@codemirror/legacy-modes/mode/http';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { http } from './http-parser.component';
-import { fullHeightTheme } from './fuzzer/request-editor/request-editor.component';
+import { fullHeightTheme } from './Fuzzer/request-editor/RequestEditor';
 
 
 export const CodeMirrorEditor: React.FC<{ value: string }> = ({ value }) => {

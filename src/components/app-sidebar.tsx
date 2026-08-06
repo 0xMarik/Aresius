@@ -159,14 +159,22 @@ const data = {
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 
-  const receivedSession = useAppSelector((state) => state.fuzzerstate.receivedSession)
+  const fuzzerReceivedSession = useAppSelector((state) => state.fuzzerstate.receivedSession)
+  const replayerReceivedSession = useAppSelector((state) => state.replayerstate.receivedSession);
 
   const testingItems = React.useMemo(
     () =>
-      data.projects.map((item) =>
-        item.name === "Fuzzer" ? { ...item, badge: receivedSession } : item
+      data.projects.map((item) => {
+        if (item.name === "Fuzzer") {
+          return { ...item, badge: fuzzerReceivedSession }
+        }
+        if (item.name === "Replayer") {
+          return { ...item, badge: replayerReceivedSession }
+        }
+        return item;
+      }
       ),
-    [receivedSession]
+    [fuzzerReceivedSession, replayerReceivedSession]
   )
 
   return (

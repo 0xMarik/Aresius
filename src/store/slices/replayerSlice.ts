@@ -4,6 +4,7 @@ import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 interface ReaplyerState {
     collections: ReplayerCollection[];
     selectedCollectionIndex: number;
+    receivedSession: number;
 }
 
 const initialState : ReaplyerState  = {
@@ -14,7 +15,8 @@ const initialState : ReaplyerState  = {
             selectedSessionIndex: null,
         },
     ],
-    selectedCollectionIndex: 0
+    selectedCollectionIndex: 0,
+    receivedSession: 0,
 }
 
 
@@ -87,8 +89,8 @@ const replayerSlice = createSlice({
         const collection = state.collections[collectionIndex];
         collection.selectedSessionIndex = sessionIndex;
     },
-    addSessionToCollection: (state, action: PayloadAction<{ collectionIndex: number }>) => {
-        const { collectionIndex } = action.payload;
+    addSessionToCollection: (state, action: PayloadAction<{ collectionIndex: number, isItReplayerPage : boolean }>) => {
+        const { collectionIndex,isItReplayerPage } = action.payload;
         const collection = state.collections[collectionIndex];
         collection.sessions.push({
             history: [],
@@ -97,10 +99,14 @@ const replayerSlice = createSlice({
             selectedHistoryIndex: null,
             urlIsValid: false,
         });
-    }
+        state.receivedSession = !isItReplayerPage ? state.receivedSession + 1 : state.receivedSession;
+    },
+    resetReplayerReceivedSession: (state) => {
+        state.receivedSession = 0;
+    },
 
 }})
 
-export const {setReaplayerContent,setReaplayerURL,addReplayerHistory,selectedHisotryIndex,addCollection,selectColSess, addSessionToCollection} = replayerSlice.actions;
+export const {setReaplayerContent,setReaplayerURL,addReplayerHistory,selectedHisotryIndex,addCollection,selectColSess, addSessionToCollection, resetReplayerReceivedSession} = replayerSlice.actions;
 
 export default replayerSlice.reducer;

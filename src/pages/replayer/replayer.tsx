@@ -5,7 +5,7 @@ import { useEffect, useRef } from 'react'
 import { http } from '@/components/http-parser.component';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { useAppDispatch, useAppSelector } from '@/hooks/redux';
-import { addReplayerHistory, selectedHisotryIndex, setReaplayerURL } from '@/store/slices/replayerSlice';
+import { addReplayerHistory, resetReplayerReceivedSession, selectedHisotryIndex, setReaplayerURL } from '@/store/slices/replayerSlice';
 import { Button } from '@/components/ui/button';
 import { invoke } from '@tauri-apps/api/core';
 import { ReplayerHistoryItem } from '@/types/replayer.type';
@@ -89,6 +89,7 @@ const ResponseCodeEditor = () => {
 }
 
 function Replayer() {
+
     const { collections, selectedCollectionIndex } = useAppSelector(state => state.replayerstate);
     const { selectedSessionIndex } = collections[selectedCollectionIndex];
     const session = selectedSessionIndex !== null
@@ -102,6 +103,10 @@ function Replayer() {
 
     const [responseLoading, setResponseLoading] = React.useState<boolean>(false);
     const dispatch = useAppDispatch();
+
+    useEffect(() => {
+        dispatch(resetReplayerReceivedSession())
+    }, [dispatch])
 
     const triggerRequest = async () => {
         if (selectedSessionIndex === null) return; // no active session, nothing to run

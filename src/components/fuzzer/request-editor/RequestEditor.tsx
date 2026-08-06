@@ -13,6 +13,8 @@ import { useAppDispatch, useAppSelector } from "@/hooks/redux";
 import { addParameter, removeParameter, setParameters, setSelectedParameter, setContent } from '@/store/slices/fuzzerSlice'
 import { FuzzerParameter, HighlightRange } from "@/types/fuzzer.type";
 import { oneDark } from '@codemirror/theme-one-dark';
+import CoreContextMenu from "@/components/ContextMenu/CoreContextMenu";
+import RequestEditorContextMenu from "./RequestEditorContextMenu";
 
 export const fullHeightTheme = EditorView.theme({
     '&': {
@@ -468,10 +470,12 @@ const RequestEditor: React.FC = () => {
                         <Plus />
                     </Button>
                 </div>
-                <div
-                    ref={editorRef}
-                    className="h-full  overflow-auto" />
-
+                <CoreContextMenu triggerClassName="bg-background w-full h-full"
+                    renderContextMenu={() => (<RequestEditorContextMenu viewRef={viewRef} />)}>
+                    <div
+                        ref={editorRef}
+                        className="h-full  overflow-auto" />
+                </CoreContextMenu>
             </div>
         </>
     );
