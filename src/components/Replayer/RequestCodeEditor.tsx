@@ -80,9 +80,9 @@ const RequestCodeEditor = () => {
 
 
     return (
-        <div className="bg-background border border-border/60 min-w-0 rounded-lg p-1 w-full h-full">
+        <div className="bg-background w-full h-full">
             <CoreContextMenu renderContextMenu={() => <RequestContextMenu viewRef={viewRef} />}>
-                <div ref={editorRef} className="h-full w-full border rounded-lg ">
+                <div ref={editorRef} className="h-full w-full ">
                 </div>
             </CoreContextMenu>
         </div>

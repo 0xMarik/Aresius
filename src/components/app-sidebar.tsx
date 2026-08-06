@@ -122,6 +122,7 @@ const data = {
       name: "Fuzzer",
       url: "/fuzzer",
       icon: Waves,
+
     },
 
   ],
@@ -129,6 +130,8 @@ const data = {
     name: "Sitemap",
     url: "/site-map",
     icon: ListTree,
+    isActive: true,
+
   }, {
     name: "Scope",
     url: "/scope",
@@ -154,23 +157,16 @@ const data = {
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   return (
-    <Sidebar collapsible="icon" variant="sidebar" {...props} >
-      {/* <SidebarHeader>
-        <TeamSwitcher teams={data.teams} />
-      </SidebarHeader> */}
+    <Sidebar collapsible="icon" variant="sidebar" {...props}>
       <SidebarContent>
-        {/* <NavMain items={data.navMain} /> */}
         <NavProjects name="Discovery" items={data.discovery} />
         <NavProjects name="Proxy" items={data.proxy} />
         <NavProjects name="Testing" items={data.projects} />
         <NavProjects name="Workspace" items={data.workspace} />
       </SidebarContent>
       <SidebarFooter>
-        {/* <NavUser user={data.user} /> */}
         <SidebarTrigger />
       </SidebarFooter>
-
-      {/* <SidebarRail /> */}
     </Sidebar>
   )
 }

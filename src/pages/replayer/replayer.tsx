@@ -86,7 +86,7 @@ const ResponseCodeEditor = () => {
     }, [history, selectedHistoryIndex, selectedCollectionIndex, selectedSessionIndex]);
 
     return (
-        <div ref={editorRef} className="h-full w-full border rounded-lg ">
+        <div ref={editorRef} className="h-full w-full ">
         </div>
     )
 }
@@ -190,7 +190,12 @@ function Replayer() {
                     </div>
                 </div>
             </ResizablePanel>
+
             <ResizableHandle withHandle />
+            {/* <ResizableHandle
+                withHandle
+                className="hover:bg-primary [&:hover>div]:bg-primary [&:hover>div]:border-primary [&:hover>div>svg]:text-primary-foreground"
+            /> */}
             <ResizablePanel defaultSize={85} minSize={20}>
                 {noSessionSelected ? (
                     <EmptyState
@@ -199,8 +204,8 @@ function Replayer() {
                         description="Select an existing session from the collection tree or click 'New Session' to start replaying HTTP requests."
                     />
                 ) : (
-                    <div className='h-full flex flex-col gap-2 p-1'>
-                        <div className='flex items-center h-12 bg-card/40 border border-border/60 rounded-lg p-2 gap-3 shrink-0'>
+                    <div className='h-full flex flex-col'>
+                        <div className='flex items-center h-12 bg-card/40 gap-3 shrink-0'>
                             {/* <Input placeholder='Enter URL to replay...' className='flex-1 font-mono text-xs h-8 bg-background'
                                 value={url}
                                 onChange={(event) => dispatch(setReaplayerURL({ url: event.target.value }))}
@@ -210,7 +215,7 @@ function Replayer() {
                                 onClick={triggerRequest}
                                 size="sm"
                                 disabled={responseLoading || session?.urlIsValid === false}
-                                className="h-8 px-4 font-semibold gap-1.5 shrink-0"
+                                className="h-8 font-semibold gap-1.5 shrink-0"
 
                             >
                                 {responseLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5 fill-current" />}
@@ -225,7 +230,7 @@ function Replayer() {
                             </ResizablePanel>
                             <ResizableHandle withHandle />
                             <ResizablePanel>
-                                <div className="bg-background border border-border/60 min-w-0 rounded-lg p-1 w-full h-full">
+                                <div className="bg-background min-w-0 w-full h-full">
                                     {responseLoading ? (
                                         <div className="flex flex-col items-center justify-center h-full text-muted-foreground text-xs gap-2">
                                             <Loader2 className="w-6 h-6 animate-spin text-primary" />
