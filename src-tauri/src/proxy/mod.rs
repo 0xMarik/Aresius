@@ -3,6 +3,7 @@ use crate::ares_utils::certs::*;
 use crate::ares_utils::http_connection::read_request_message;
 use crate::ares_utils::http_connection::ConnectionOptions;
 use crate::ares_utils::http_connection::HttpConnection;
+use crate::proxy::utils::build_error_response;
 use crate::proxy::utils::HistoryIdCounter;
 use rcgen::KeyPair;
 use std::collections::HashMap;
@@ -327,10 +328,12 @@ async fn handle_connect(
                 }
                 Err(e) => {
                     tracing::warn!("Failed to connect upstream {}: {}", target, e);
-                    client_tls
-                        .write_all(b"HTTP/1.1 502 Bad Gateway\r\n\r\n")
-                        .await
-                        .ok();
+                    // client_tls
+                    //     .write_all(b"HTTP/1.1 502 Bad Gateway\r\n\r\n")
+                    //     .await
+                    //     .ok();
+                    let error_response = build_error_response(&target, &e);
+                    client_tls.write_all(&error_response).await.ok();
                     break;
                 }
             },
@@ -541,6 +544,7 @@ async fn handle_http_request(
                 }
                 Err(e) => {
                     tracing::warn!("Failed to connect upstream {}: {}", target, e);
+
                     break;
                 }
             },
