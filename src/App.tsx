@@ -120,11 +120,10 @@ export default function App() {
                     {/* <Headers/> */}
                     <SidebarProvider className="h-full min-h-0" style={{
                         "--sidebar-width": "10rem",
-                        "--sidebar-width-icon": "2rem",
+                        "--sidebar-width-icon": "3rem",
                     } as React.CSSProperties} >
                         <AppSidebar />
-                        <SidebarInset className="min-h-0 overflow-auto pt-2">
-
+                        <SidebarInset className="min-h-0 overflow-auto">
                             <Routes >
                                 <Route path="/" element={<Navigate to="/projects" replace />} />
                                 <Route path="/site-map" element={<SitemapTree />} />

@@ -5,14 +5,14 @@ import { useEffect, useRef, useState } from 'react'
 import { http } from '@/components/http-parser.component';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { useAppDispatch, useAppSelector } from '@/hooks/redux';
-import { addCollection, addReplayerHistory, addSessionToCollection, selectColSess, selectedHisotryIndex, setReaplayerContent, setReaplayerURL } from '@/store/slices/replayerSlice';
+import { addCollection, addReplayerHistory, addSessionToCollection, selectColSess, selectedHisotryIndex, setReaplayerURL } from '@/store/slices/replayerSlice';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { invoke } from '@tauri-apps/api/core';
 import { ReplayerHistoryItem } from '@/types/replayer.type';
 import React from 'react';
 import { RsTree, TreeNode } from 'rstree-ui';
-import { ChevronDownIcon, Plus, Repeat, Play, Loader2 } from 'lucide-react';
+import { ChevronDownIcon, Plus, Repeat, Play, Loader2, Folder, File } from 'lucide-react';
 import { ButtonGroup } from '@/components/ui/button-group';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 
@@ -20,7 +20,6 @@ import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/componen
 import { EmptyState } from '@/components/ui/empty-state';
 import { ValidateUrlInput } from "@/components/ValidateUrlInput";
 import HistoryRequests from "@/components/Replayer/HistoryRequests";
-import CoreContextMenu from "@/components/ContextMenu/CoreContextMenu";
 import RequestCodeEditor from "@/components/Replayer/RequestCodeEditor";
 
 const fullHeightTheme = EditorView.theme({
@@ -135,9 +134,11 @@ function Replayer() {
     const data: TreeNode<unknown>[] = collections.map((collection, colIndex) => ({
         id: `${colIndex}`,
         label: `Collection ${colIndex + 1}`,
+        icon: <Folder size={16} />,
         children: collection.sessions.map((session, sessIndex) => ({
             id: `${colIndex}-${sessIndex}`,
             label: `Session ${sessIndex + 1} - ${session.url}`,
+            icon: <File size={16} />
         }))
     }))
 

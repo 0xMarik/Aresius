@@ -25,6 +25,7 @@ import {
     Files,
     Inbox,
     Send,
+    Antenna,
 } from 'lucide-react';
 import { useAppDispatch, useAppSelector } from '@/hooks/redux';
 import { useInterceptSettings } from '@/hooks/useInterceptPoller';
@@ -38,7 +39,6 @@ import { parseRequest, parseResponse } from '@/components/utils';
 import { formatHttpMessage } from './http-pretty';
 import LightDataTable from '@/components/LightDataTable';
 import { EmptyState } from '@/components/ui/empty-state';
-import { cn } from '@/lib/utils';
 
 
 /* -------------------------------------------------------------------------- */
@@ -578,7 +578,7 @@ const InterceptorPage: React.FC = () => {
             <div className="flex-1 min-h-0 relative">
                 {!(settings.requestsEnabled || settings.responsesEnabled) && (
                     <EmptyState
-                        icon={Shield}
+                        icon={Antenna}
                         title="Traffic Interceptor Standby"
                         description="Enable Intercept Request or Intercept Response in the top bar to begin capturing and editing HTTP traffic in real time."
                     />

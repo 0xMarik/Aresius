@@ -7,7 +7,6 @@ import {
     ContextMenuSubTrigger,
 } from '@/components/ui/context-menu';
 import { Layers, FolderPlus, Copy, Braces, Circle, FolderMinus, Trash2 } from 'lucide-react';
-import { useAppDispatch, } from '@/hooks/redux';
 import { RowContextMenuContext } from './Table';
 import SendToFuzzer from './ContextMenu/SendToFuzzer';
 import SendToReplayer from './ContextMenu/SendToReplayer';

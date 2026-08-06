@@ -9,8 +9,8 @@ import {
   SquareTerminal,
   Antenna,
   Logs,
-  Network,
-  Crosshair
+  Crosshair,
+  ListTree
 } from "lucide-react"
 
 // import { NavMain } from '@/components/nav-main'
@@ -128,7 +128,7 @@ const data = {
   discovery: [{
     name: "Sitemap",
     url: "/site-map",
-    icon: Network,
+    icon: ListTree,
   }, {
     name: "Scope",
     url: "/scope",

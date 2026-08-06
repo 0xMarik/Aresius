@@ -10,7 +10,8 @@ import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/componen
 import { renderHttpHistoryTableContextMenu } from '@/components/HttpHistoryTableContextMenu';
 import { HttpHistory } from '@/types/http.type';
 import { historySelectors } from '@/store/slices/http-historySlice'; // adjust path to match your alias
-
+import { EmptyState } from '@/components/ui/empty-state';
+import { Clipboard } from 'lucide-react'
 
 export type RequestState = 'Pending' | 'Info' | 'Success' | 'Redirect' | 'Client Error' | 'Server Error' | 'Failed';
 
@@ -233,7 +234,11 @@ const HTTPHisotry = () => {
                             <ResizablePanel defaultSize={50} minSize={15}>
                                 <div className=' h-full'>
                                     {
-                                        !selectedEntity ? "select a request" : <CodeMirrorEditor value={selectedEntity.rawRequest} />
+                                        !selectedEntity ? <EmptyState
+                                            icon={Clipboard}
+                                            title="Nothing Selected"
+                                            description="Choose a request from the history list to view its details."
+                                        /> : <CodeMirrorEditor value={selectedEntity.rawRequest} />
                                     }
                                 </div>
                             </ResizablePanel>
@@ -241,7 +246,11 @@ const HTTPHisotry = () => {
                             <ResizablePanel defaultSize={50} minSize={15}>
                                 <div className=' h-full'>
                                     {
-                                        !selectedEntity ? "select a request" : <CodeMirrorEditor value={selectedEntity.rawResponse} />
+                                        !selectedEntity ? <EmptyState
+                                            icon={Clipboard}
+                                            title="Nothing Selected"
+                                            description="Choose a request from the history list to view its details."
+                                        /> : <CodeMirrorEditor value={selectedEntity.rawResponse} />
                                     }
                                 </div>
                             </ResizablePanel>

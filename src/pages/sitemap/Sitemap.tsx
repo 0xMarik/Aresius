@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { RsTree } from 'rstree-ui';
 import type { ReactNode } from 'react';
-import { Globe, Server, Folder, Route, Braces } from 'lucide-react';
+import { Globe, Server, Folder, Route, Braces, ListTree } from 'lucide-react';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { SitemapKind, TreeNode } from '@/types/sitemap.type';
 import { useAppSelector } from '@/hooks/redux';
@@ -13,6 +13,7 @@ import { historySelectors } from '@/store/slices/http-historySlice';
 import { buildSitemapNodeIndex, collectRequestIdsDeduped } from './utils';
 import type { EntityId } from '@reduxjs/toolkit';
 import type { HttpHistory } from '@/types/http.type';
+import { EmptyState } from '@/components/ui/empty-state';
 
 const kindIcon: Record<SitemapKind, ReactNode> = {
     domain: <Globe className="w-2.5 h-2.5 text-[--color-terracotta]" />,
@@ -250,7 +251,11 @@ export default function SitemapTree() {
                 <ResizablePanel defaultSize={80} minSize={20} className="min-h-0 overflow-hidden">
                     {!selectedNode ? (
                         <div className="flex h-full items-center justify-center text-sm text-[--color-charcoal]/50">
-                            Select a sitemap node to view its requests
+                            <EmptyState
+                                icon={ListTree}
+                                title="Sitemap Node Not Selected"
+                                description="Pick any host, folder, or endpoint on the left to inspect the requests captured for it."
+                            />
                         </div>
                     ) : (
                         <ResizablePanelGroup direction="vertical" autoSaveId="aresius-sitemap-requests-layout" className="h-full min-h-0">

@@ -35,6 +35,7 @@ const RequestContextMenu = ({ viewRef }: { viewRef: React.MutableRefObject<Edito
             </ContextMenuItem>
             <SendToFuzzer rawRequest={session?.requestTmp ?? ""} host={session?.url ?? ""} />
             <ContextMenuItem>
+                
             </ContextMenuItem>
         </>
     );
