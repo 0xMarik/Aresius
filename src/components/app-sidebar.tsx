@@ -14,7 +14,7 @@ import {
 } from "lucide-react"
 
 // import { NavMain } from '@/components/nav-main'
-import { NavProjects } from '@/components/nav-projects'
+import { NavProjects } from '@/components/NavProjects'
 import {
   Sidebar,
   SidebarContent,

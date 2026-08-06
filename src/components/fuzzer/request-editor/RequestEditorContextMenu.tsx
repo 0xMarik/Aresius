@@ -33,9 +33,6 @@ const RequestEditorContextMenu = ({ viewRef }: { viewRef: React.MutableRefObject
                 <ContextMenuShortcut>Ctrl+C</ContextMenuShortcut>
             </ContextMenuItem>
             <SendToReplayer isMultiple={false} rawRequest={fuzzConfig.rawRequest} />
-            <ContextMenuItem>
-
-            </ContextMenuItem>
         </>
     );
 };

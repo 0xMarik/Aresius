@@ -7,7 +7,6 @@ import {
     ContextMenuSubTrigger,
 } from '@/components/ui/context-menu';
 import {
-    Repeat,
     Copy,
     FolderPlus,
     Layers,
@@ -16,11 +15,9 @@ import {
     Circle,
     Braces,
 } from 'lucide-react';
-import { RowContextMenuContext } from './Table';
+import { RowContextMenuContext } from '../Table';
 import { EnrichedFuzzerRow } from './FuzzerHistory';
-import { useAppDispatch, useAppSelector } from '@/hooks/redux';
-import { addCollection, addSessionToCollection, selectColSess, setReaplayerContent } from '@/store/slices/replayerSlice';
-import SendToReplayer from './ContextMenu/SendToReplayer';
+import SendToReplayer from '../ContextMenu/SendToReplayer';
 
 export function renderFuzzerHistoryTableContextMenu(
     ctx: RowContextMenuContext<EnrichedFuzzerRow>
@@ -111,46 +108,6 @@ export function renderFuzzerHistoryTableContextMenu(
             >
                 <Trash2 className="mr-2 h-3.5 w-3.5" />
                 Remove
-            </ContextMenuItem>
-        </>
-    );
-}
-
-function SendToRepeaterSubmenu({ row }: { row: EnrichedFuzzerRow }) {
-    const dispatch = useAppDispatch();
-    const collections = useAppSelector(state => state.replayerstate.collections);
-
-    const sendToExisting = (collectionIndex: number) => {
-        const newSessionIndex = collections[collectionIndex].sessions.length;
-        dispatch(addSessionToCollection({ collectionIndex, isItReplayerPage: false }));
-        dispatch(selectColSess({ collectionIndex, sessionIndex: newSessionIndex }));
-        dispatch(setReaplayerContent({ rawRequest: row.rawRequest ?? '' }));
-    };
-
-    const sendToNew = () => {
-        const newCollectionIndex = collections.length;
-        dispatch(addCollection());
-        dispatch(selectColSess({ collectionIndex: newCollectionIndex, sessionIndex: 0 }));
-        dispatch(setReaplayerContent({ rawRequest: row.rawRequest ?? '' }));
-    };
-
-    return (
-        <>
-            {collections.map((collection, index) => (
-                <ContextMenuItem key={index} onSelect={() => sendToExisting(index)}>
-                    <Layers className="mr-2 h-3.5 w-3.5" />
-                    Collection {index + 1}
-                    {collection.sessions.length > 0 && (
-                        <span className="ml-auto text-[11px] text-muted-foreground">
-                            {collection.sessions.length} session{collection.sessions.length !== 1 ? 's' : ''}
-                        </span>
-                    )}
-                </ContextMenuItem>
-            ))}
-            {collections.length > 0 && <ContextMenuSeparator />}
-            <ContextMenuItem onSelect={sendToNew}>
-                <FolderPlus className="mr-2 h-3.5 w-3.5" />
-                New collection
             </ContextMenuItem>
         </>
     );

@@ -1,15 +1,15 @@
 import { useAppDispatch, useAppSelector } from '@/hooks/redux';
-import { CodeMirrorEditor } from './result-table.components';
+import { CodeMirrorEditor } from '../result-table.components';
 import { createColumnHelper, ColumnDef } from '@tanstack/react-table';
 import Table, { isRowSelected, FacetFilter, BaseRow } from '@/components/Table';
 import { FuzzerRequest, FuzzerParameter, FuzzConfig } from '@/types/fuzzer.type';
 import { useMemo, useState } from 'react';
-import { parseRequest, parseResponse } from './utils';
-import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from './ui/resizable';
+import { parseRequest, parseResponse } from '../utils';
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '../ui/resizable';
 import { renderFuzzerHistoryTableContextMenu } from './FuzzerHistoryTableContextMenu';
-import { FuzzerRunToolbar, resendSingleFuzzRequest } from './fuzzer/FuzzerRunToolbar';
+import { FuzzerRunToolbar, resendSingleFuzzRequest } from './FuzzerRunToolbar';
 import { initialFuzzRunState } from '@/types/fuzzer.type';
-import { Button } from './ui/button';
+import { Button } from '../ui/button';
 import { RotateCcw } from 'lucide-react';
 
 /**

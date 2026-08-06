@@ -1,7 +1,7 @@
 import { useAppDispatch, useAppSelector } from '@/hooks/redux';
 import FuzzSession from '@/components/Fuzzer/FuzzerSession';
-import FuzzerHistoryCompo from '@/components/FuzzerHistory';
-import FuzzRequestPayload, { selectActiveSessionShape, shallowEqualActiveSession } from '@/components/FuzzerRequestPayload';
+import FuzzerHistoryCompo from '@/components/Fuzzer/FuzzerHistory';
+import FuzzRequestPayload, { selectActiveSessionShape, shallowEqualActiveSession } from '@/components/Fuzzer/FuzzerRequestPayload';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { EmptyState } from '@/components/ui/empty-state';
 import { Target } from 'lucide-react';

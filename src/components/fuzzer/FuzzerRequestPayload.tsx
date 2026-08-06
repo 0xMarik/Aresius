@@ -1,17 +1,17 @@
 import React from 'react';
 import { useAppDispatch, useAppSelector } from '@/hooks/redux';
 
-import RequestEditor from './Fuzzer/request-editor/RequestEditor';
-import FuzzConfig from './fuzzer/FuzzConfig';
-import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from './ui/resizable';
+import RequestEditor from './request-editor/RequestEditor';
+import FuzzConfig from './FuzzConfig';
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '../ui/resizable';
 import { addFuzzingHistory, setFuzzingAttackType, setFuzzRunTargets, setTargerUrl } from '@/store/slices/fuzzerSlice';
 import { FuzzingAttackType, initialFuzzRunState } from '@/types/fuzzer.type';
 import { invoke } from '@tauri-apps/api/core';
 import { useStore } from 'react-redux';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
-import { Button } from './ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
+import { Button } from '../ui/button';
 import { Play } from 'lucide-react';
-import { ValidateUrlInput } from './ValidateUrlInput';
+import { ValidateUrlInput } from '../ValidateUrlInput';
 
 
 // Shape of what this component actually renders for the active session.
