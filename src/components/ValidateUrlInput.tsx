@@ -15,17 +15,17 @@ import { cn } from '@/lib/utils'
 // - host: required (hostname or IP)
 // - port: optional, defaults to 443
 // - path: optional
-const URL_PATTERN =
-    /^(?:(?<scheme>[a-zA-Z][a-zA-Z0-9+.-]*):\/\/)?(?<host>[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)*|\[[0-9a-fA-F:]+\])(?::(?<port>\d{1,5}))?(?<path>\/[^\s]*)?$/
+export const URL_PATTERN =
+    /^(?<scheme>https?:\/\/)?(?<host>(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}|(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}|localhost)(?<port>:\d{1,5})?(?:\/.*)?$/
 
-function isValidPort(port?: string) {
+export function isValidPort(port?: string) {
     if (!port) return true
-    const n = Number(port)
+    const n = Number(port.replace(':', ''))
     return n >= 1 && n <= 65535
 }
 
-function validateUrl(value: string): string | null {
-    if (!value.trim()) return null // empty: no error, just don't submit
+export function validateUrl(value: string): string | null {
+    if (!value.trim()) return null
 
     const match = value.match(URL_PATTERN)
     if (!match || !match.groups?.host) {
@@ -37,12 +37,21 @@ function validateUrl(value: string): string | null {
     return null
 }
 
+export function stripPath(url: string): string {
+    const match = url.match(URL_PATTERN)
+    if (!match || !match.groups?.host) return url
+
+    const { scheme = '', host, port = '' } = match.groups
+    return `${scheme}${host}${port}`
+}
+
 
 export function ValidateUrlInput({ url, onChange }: { url: string; onChange: (url: string, urlIsValid: boolean) => void }) {
     const [touched, setTouched] = useState(false)
 
 
     const error = useMemo(() => validateUrl(url), [url])
+    console.error('ValidateUrlInput error:', error)
     const showError = touched && error
 
     return (
@@ -82,7 +91,7 @@ export function ValidateUrlInput({ url, onChange }: { url: string; onChange: (ur
                     value={url}
                     onChange={(event) => {
                         if (!touched) setTouched(true)
-                        onChange(event.target.value, !error)
+                        onChange(event.target.value, !validateUrl(event.target.value))
                     }}
                     onBlur={() => setTouched(true)}
                     aria-invalid={!!showError}

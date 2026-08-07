@@ -13,7 +13,7 @@ import React from 'react';
 
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { EmptyState } from '@/components/ui/empty-state';
-import { ValidateUrlInput } from "@/components/ValidateUrlInput";
+import { stripPath, ValidateUrlInput } from "@/components/ValidateUrlInput";
 import HistoryRequests from "@/components/Replayer/HistoryRequests";
 import RequestCodeEditor from "@/components/Replayer/RequestCodeEditor";
 import { Loader2, Play, Repeat } from "lucide-react";
@@ -110,9 +110,11 @@ function Replayer() {
 
     const triggerRequest = async () => {
         if (selectedSessionIndex === null) return; // no active session, nothing to run
-        console.log("Triggering request with:", { requestTmp, url });
+
         setResponseLoading(true)
-        const response = await invoke<ReplayerHistoryItem>('replay_request', { requestTmp: requestTmp, url: url });
+        const stripedUrl = stripPath(url);
+        dispatch(setReaplayerURL({ url: stripedUrl, urlIsValid: true })); // update the url in the store to be stripped of path
+        const response = await invoke<ReplayerHistoryItem>('replay_request', { requestTmp: requestTmp, url: stripedUrl });
         setResponseLoading(false)
         dispatch(addReplayerHistory({ historyItem: response }));
         dispatch(selectedHisotryIndex({ historyIndex: 0 }));
@@ -151,7 +153,6 @@ function Replayer() {
                                 size="sm"
                                 disabled={responseLoading || session?.urlIsValid === false}
                                 className="h-8 font-semibold gap-1.5 shrink-0"
-
                             >
                                 {responseLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5 fill-current" />}
                                 SEND

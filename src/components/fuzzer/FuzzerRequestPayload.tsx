@@ -123,7 +123,7 @@ const FuzzRequestPayload: React.FC = () => {
 
   return (
     <div className='flex flex-col gap-1 h-full'>
-      <div className='bg-card/40 border border-border/60 rounded-md gap-2 flex w-full items-center h-12 p-2 shrink-0'>
+      <div className='bg-card/40  gap-2 flex w-full items-center h-12 p-2 shrink-0'>
 
         <ValidateUrlInput
           url={activeSession?.targetUrl ?? ''}

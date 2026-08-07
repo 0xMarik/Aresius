@@ -793,6 +793,12 @@ interface DataTableProps<TData extends BaseRow> {
     /** Fill the parent height and scroll rows within the remaining space.
      *  Parent must be a bounded container (`h-full` + `min-h-0` flex chain). */
     fillHeight?: boolean;
+    /** Caps how many rows are kept for a live-streaming table. When set,
+     *  the oldest rows (by position in `data`) beyond this count are
+     *  dropped during the merge tick — bounding filter/sort/facet cost for
+     *  long-running capture sessions instead of letting it grow forever.
+     *  Omit for a static/bounded dataset. */
+    maxBufferRows?: number;
     /** Customize (or fully replace) the row context menu. Receives a
      *  RowContextMenuContext with the clicked row, the current
      *  multi-selection, and DataTable's built-in group/remove actions
@@ -816,40 +822,117 @@ export default function DataTable<TData extends BaseRow>({
     emptyHint,
     maxHeight = 600,
     fillHeight = false,
+    maxBufferRows,
     renderRowContextMenu,
 }: DataTableProps<TData>) {
     const [rows, setRows] = useState<TData[]>(data);
 
     // ------------------------------------------------------------------
-    // FIX #1 — rAF-batched sync of the incoming `data` prop into local
-    // `rows` state.
+    // FIX #1 — local-only edits (grouping, removal) no longer get
+    // stomped by the next streamed update.
     //
-    // Previously: `useEffect(() => setRows(data), [data])` re-ran on every
-    // single reference change of `data`. Under a live-capture workload
-    // pushing ~8 updates/100ms (~80/sec) from the parent, that meant ~80
-    // *extra* renders per second just to mirror the prop into state,
-    // on top of whatever render `data` changing already caused upstream —
-    // before any sorting/filtering/virtualization work even starts.
+    // Previously the rAF sync loop did:
+    //   setRows(prev => prev === latestDataRef.current ? prev : latestDataRef.current)
+    // i.e. it *replaced* `rows` outright with the incoming `data` prop
+    // whenever they differed by reference. But grouping/removal mutate
+    // the local `rows` copy only (they have nowhere else to write to —
+    // `data` is owned by the parent/Redux). Under a live stream pushing
+    // 60-80 updates/sec, `data` changes reference almost every frame, so
+    // the very next tick after a user grouped or removed rows would
+    // overwrite `rows` back to the raw, group-less, un-removed `data` —
+    // the action visibly reverted within ~16ms.
     //
-    // Now: the latest `data` reference is stashed in a ref synchronously
-    // (cheap, no render), and a single rAF loop copies it into `rows` at
-    // most once per animation frame (~60/sec on most displays). Multiple
-    // `data` changes that land within the same frame collapse into one
-    // `setRows` call. This trades a small (<16ms) worst-case latency for
-    // new rows appearing, in exchange for capping render frequency at the
-    // screen's actual refresh rate instead of the producer's emit rate.
+    // Fix: `rows` is now a *merge* of the incoming `data` with two
+    // local-only overlays tracked in refs (so mutating them doesn't
+    // itself trigger renders — only marking the merge dirty does):
+    //   - `groupOverridesRef`: id -> groupId | null (null = explicitly
+    //     ungrouped). Applied on top of whatever `group` value (if any)
+    //     the incoming row carries.
+    //   - `removedIdsRef`: ids locally removed, filtered out of every
+    //     incoming `data` even if the upstream stream still includes them.
+    // The rAF loop still runs at most once per frame, but now recomputes
+    // the merge (instead of blindly copying) whenever either the
+    // incoming `data` reference changed OR a local action marked the
+    // merge dirty.
     const latestDataRef = useRef(data);
     latestDataRef.current = data;
+
+    const removedIdsRef = useRef<Set<number>>(new Set());
+    const groupOverridesRef = useRef<Map<number, string | null>>(new Map());
+    const mergeDirtyRef = useRef(false);
+    const lastMergedDataRef = useRef<TData[]>(data);
+
+    const computeMergedRows = useCallback(
+        (incoming: TData[]): TData[] => {
+            const removed = removedIdsRef.current;
+            const overrides = groupOverridesRef.current;
+
+            let merged: TData[];
+            if (removed.size === 0 && overrides.size === 0) {
+                merged = incoming;
+            } else {
+                merged = [];
+                for (let i = 0; i < incoming.length; i++) {
+                    const r = incoming[i];
+                    if (removed.has(r.id)) continue;
+                    if (overrides.has(r.id)) {
+                        const ov = overrides.get(r.id);
+                        const nextGroup = ov === null ? undefined : ov;
+                        merged.push(r.group === nextGroup ? r : { ...r, group: nextGroup });
+                    } else {
+                        merged.push(r);
+                    }
+                }
+            }
+
+            // FIX #4 — bound memory/CPU growth for long-running capture
+            // sessions. Without a cap, `rows` (and therefore every sort/
+            // filter/facet scan derived from it) grows for as long as the
+            // session runs, so the same operation gets slower over time.
+            // Dropping the oldest rows once the buffer is full keeps every
+            // per-update pass O(maxBufferRows) instead of O(session length).
+            if (maxBufferRows && merged.length > maxBufferRows) {
+                const dropCount = merged.length - maxBufferRows;
+                for (let i = 0; i < dropCount; i++) {
+                    const droppedId = merged[i].id;
+                    // Clean up the overlays too, or they'd accumulate
+                    // forever for rows that have scrolled out of the buffer.
+                    removedIdsRef.current.delete(droppedId);
+                    groupOverridesRef.current.delete(droppedId);
+                }
+                merged = merged.slice(dropCount);
+            }
+
+            return merged;
+        },
+        [maxBufferRows]
+    );
 
     useEffect(() => {
         let rafId: number;
         const tick = () => {
-            setRows((prev) => (prev === latestDataRef.current ? prev : latestDataRef.current));
+            if (mergeDirtyRef.current || lastMergedDataRef.current !== latestDataRef.current) {
+                mergeDirtyRef.current = false;
+                lastMergedDataRef.current = latestDataRef.current;
+                setRows((prev) => {
+                    const merged = computeMergedRows(latestDataRef.current);
+                    return merged === prev ? prev : merged;
+                });
+            }
             rafId = requestAnimationFrame(tick);
         };
         rafId = requestAnimationFrame(tick);
         return () => cancelAnimationFrame(rafId);
-    }, []);
+    }, [computeMergedRows]);
+
+    // Read-only mirror of `rows`, kept for callbacks (group/remove actions)
+    // that need to see current row content without depending on `rows`
+    // directly — depending on it would make those callbacks' identities
+    // churn every frame during streaming, defeating TableRow's memo.
+    const rowsRef = useRef<TData[]>(rows);
+    useEffect(() => {
+        rowsRef.current = rows;
+    }, [rows]);
 
     const [sorting, setSorting] = useState<SortingState>([]);
     const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
@@ -918,7 +1001,16 @@ export default function DataTable<TData extends BaseRow>({
         []
     );
 
+    const hasActiveFilters = !!search || Object.values(facetState).some((s) => s.size > 0);
+
+    // FIX #3 — skip the O(n) filter pass (and the array allocation that
+    // comes with it) when there's nothing to filter by. Every streamed
+    // update was previously rebuilding `filteredData` via `.filter()` even
+    // with zero active filters, which on its own forces TanStack Table to
+    // rebuild the entire row model (see FIX #2 below) instead of just
+    // extending it.
     const filteredData = useMemo(() => {
+        if (!hasActiveFilters) return rows;
         const q = search.trim().toLowerCase();
         return rows.filter((r) => {
             for (const f of facetFilters) {
@@ -928,11 +1020,20 @@ export default function DataTable<TData extends BaseRow>({
             if (!q) return true;
             return (searchFn ?? defaultSearch)(r, q);
         });
-    }, [rows, search, facetFilters, facetState, searchFn, defaultSearch]);
+    }, [rows, search, facetFilters, facetState, searchFn, defaultSearch, hasActiveFilters]);
 
     const table = useReactTable({
         data: filteredData,
         columns,
+        // FIX #2 — stable row identity. Without this, TanStack Table
+        // defaults `row.id` to array index, so after any sort/filter/
+        // insert the row that *used to* sit at index N and the row that
+        // *now* sits at index N share the same `row.id` even though
+        // they're different underlying requests. That breaks `key={row.id}`
+        // in RowsViewport (React reconciles the wrong DOM node against the
+        // wrong data) and anything downstream that assumes row identity
+        // tracks the request it came from.
+        getRowId: (row) => String(row.id),
         state: { sorting, columnVisibility, columnOrder },
         onSortingChange: setSorting,
         onColumnVisibilityChange: setColumnVisibility,
@@ -957,31 +1058,11 @@ export default function DataTable<TData extends BaseRow>({
         }
     }, [selectedIds, setSelectedRequest]);
 
-    // ------------------------------------------------------------------
-    // FIX #2 — stop doing an O(n) full-array rebuild of selection/group
-    // validity on *every* `rows` change.
-    //
-    // Previously these two effects ran on every rows change — including
-    // pure appends from the live stream — rebuilding a `Set` over the
-    // entire row array each time just to check whether previously
-    // selected ids / used group ids were still present. At 80 appends/sec
-    // (now ~60/sec post rAF-batching) with a growing dataset, that's an
-    // O(n) scan, tens of times a second, that gets more expensive the
-    // longer the session runs — even though an append can never
-    // invalidate an existing selection or group membership.
-    //
-    // Fix: skip the expensive check unless the row count actually
-    // *shrank* (rows can only be removed via `removeIds`, which already
-    // prunes `selectedIds` directly for exactly the ids it removed — see
-    // below — but this remains as a safety net for `data` shrinking via
-    // the external prop, e.g. a parent-driven reset/filter). Growing or
-    // same-size updates skip the scan entirely.
-    //
-    // Note: this assumes a same-or-larger-length update never *replaces*
-    // an existing id with a different one while keeping length constant.
-    // That holds for an append-only stream; if your `data` source can
-    // swap ids in place without changing length, tell me and I'll add an
-    // id-diff check instead of the length heuristic.
+    // Safety net for `data` shrinking via the external prop (e.g. a
+    // parent-driven reset/clear-session), as opposed to a local removal
+    // (which is handled immediately and precisely by `removeIds` below).
+    // Only runs when row count actually drops, so it stays out of the way
+    // of the streaming append path.
     const prevRowsLengthRef = useRef(rows.length);
     useEffect(() => {
         const prevLength = prevRowsLengthRef.current;
@@ -1001,6 +1082,35 @@ export default function DataTable<TData extends BaseRow>({
         });
     }, [rows]);
 
+    // FIX #5 — group pruning no longer nests setState calls inside
+    // setState updaters (setGroups(prev => { setRows(cur => { setGroups...
+    // }) })), which is fragile and can double-fire under StrictMode.
+    // Instead it reads current row content from `rowsRef` (a plain ref,
+    // not reactive state) and folds in the not-yet-merged overrides
+    // directly, so it can run as an ordinary function call from within
+    // the action that triggered it. This only runs on user-driven group/
+    // remove actions (human-paced), never on every streamed update, so
+    // the O(n) scan here is not a performance concern.
+    const pruneUnusedGroups = useCallback(() => {
+        setGroups((prev) => {
+            if (prev.length === 0) return prev;
+            const used = new Set<string>();
+            for (const r of rowsRef.current) {
+                if (removedIdsRef.current.has(r.id)) continue;
+                let g: string | undefined;
+                if (groupOverridesRef.current.has(r.id)) {
+                    const ov = groupOverridesRef.current.get(r.id);
+                    g = ov === null ? undefined : ov;
+                } else {
+                    g = r.group;
+                }
+                if (g) used.add(g);
+            }
+            const next = prev.filter((grp) => used.has(grp.id));
+            return next.length === prev.length ? prev : next;
+        });
+    }, []);
+
     const createGroupAndAssign = useCallback((ids: number[]) => {
         groupCounter.current += 1;
         const color = GROUP_PALETTE[colorCursor.current % GROUP_PALETTE.length];
@@ -1011,56 +1121,38 @@ export default function DataTable<TData extends BaseRow>({
             color,
         };
         setGroups((prev) => [...prev, newGroup]);
-        const idSet = new Set(ids);
-        setRows((prev) => prev.map((r) => (idSet.has(r.id) ? { ...r, group: newGroup.id } : r)));
+        ids.forEach((id) => groupOverridesRef.current.set(id, newGroup.id));
+        mergeDirtyRef.current = true;
     }, []);
 
     const assignToGroup = useCallback((ids: number[], groupId: string) => {
-        const idSet = new Set(ids);
-        setRows((prev) => prev.map((r) => (idSet.has(r.id) ? { ...r, group: groupId } : r)));
-    }, []);
+        ids.forEach((id) => groupOverridesRef.current.set(id, groupId));
+        mergeDirtyRef.current = true;
+        // Reassigning can empty out the group these ids used to belong to.
+        pruneUnusedGroups();
+    }, [pruneUnusedGroups]);
 
     const ungroupIds = useCallback((ids: number[]) => {
-        const idSet = new Set(ids);
-        setRows((prev) => prev.map((r) => (idSet.has(r.id) ? { ...r, group: undefined } : r)));
-
-        // Targeted prune: a group can only have become unused by *this*
-        // ungroup call, so check just the groupIds that were touched
-        // instead of rescanning every row (handled generically above,
-        // but doing it here too means this specific action doesn't have
-        // to wait for the `rows`-shrink check to notice — ungrouping
-        // doesn't change `rows.length` at all, so the effect above would
-        // never catch it).
-        setGroups((prev) => {
-            if (prev.length === 0) return prev;
-            setRows((currentRows) => {
-                const usedIds = new Set(currentRows.map((r) => r.group).filter(Boolean));
-                setGroups((g) => {
-                    const next = g.filter((grp) => usedIds.has(grp.id));
-                    return next.length === g.length ? g : next;
-                });
-                return currentRows;
-            });
-            return prev;
-        });
-    }, []);
+        ids.forEach((id) => groupOverridesRef.current.set(id, null));
+        mergeDirtyRef.current = true;
+        pruneUnusedGroups();
+    }, [pruneUnusedGroups]);
 
     const removeIds = useCallback((ids: number[]) => {
-        const idSet = new Set(ids);
-        setRows((prev) => prev.filter((r) => !idSet.has(r.id)));
+        ids.forEach((id) => removedIdsRef.current.add(id));
+        mergeDirtyRef.current = true;
 
-        // Targeted prune — we already know exactly which ids were removed,
-        // so there's no need to rebuild a Set over the whole row array
-        // (the generic shrink-triggered effect above still runs too, but
-        // this makes selection consistent immediately rather than waiting
-        // a render cycle, and is O(ids.length) instead of O(rows.length)).
+        // Immediate, O(ids.length) prune — no need to wait for the merge
+        // tick or the shrink-detecting effect above.
         setSelectedIds((prev) => {
             if (!ids.some((id) => prev.has(id))) return prev;
             const next = new Set(prev);
             ids.forEach((id) => next.delete(id));
             return next;
         });
-    }, []);
+
+        pruneUnusedGroups();
+    }, [pruneUnusedGroups]);
 
     const clearFilters = useCallback(() => {
         setSearch('');
@@ -1068,8 +1160,6 @@ export default function DataTable<TData extends BaseRow>({
     }, []);
 
     const clearSearch = useCallback(() => setSearch(''), []);
-
-    const hasActiveFilters = !!search || Object.values(facetState).some((s) => s.size > 0);
 
     // Default context menu — reproduces the original hardcoded behavior
     // (New group / Add to group / Ungroup / Remove) so DataTable still
