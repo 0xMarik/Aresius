@@ -9,6 +9,7 @@ dependencies = [
  "anyhow",
  "brotli",
  "flate2",
+ "httparse",
  "rcgen",
  "rustls",
  "rustls-native-certs",

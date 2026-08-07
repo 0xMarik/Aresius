@@ -3,6 +3,9 @@ use crate::ares_utils::certs::*;
 use crate::ares_utils::http_connection::read_request_message;
 use crate::ares_utils::http_connection::ConnectionOptions;
 use crate::ares_utils::http_connection::HttpConnection;
+use crate::ares_utils::parse::parse_request_line;
+use crate::ares_utils::parse::parse_status_code;
+use crate::ares_utils::parse::split_message;
 use crate::proxy::utils::build_error_response;
 use crate::proxy::utils::HistoryIdCounter;
 use rcgen::KeyPair;
@@ -37,8 +40,14 @@ struct HttpHistoryPayload {
     raw_request: String,
     raw_response: String,
     host: String,
-    timestamp: u128,
-    duration: Option<u64>,
+    method: String,
+    path: String,
+    query: Option<String>,
+    extension: Option<String>,
+    status_code: u16,
+    response_length: usize,
+    response_time_ms: u64,
+    sent_at_ts_ms: u128,
 }
 
 pub struct CertCache {
@@ -270,7 +279,7 @@ async fn handle_connect(
         // must never be what's actually put on the wire. See
         // `outgoing_request_bytes` below for the byte-exact copy that is.
         let decrypted_request = String::from_utf8_lossy(&raw_request).to_string();
-        let ts_ms = now_ms();
+        let sent_at_ts_ms = now_ms();
         let request_id = Uuid::new_v4().to_string();
 
         // Byte-exact source of truth for what actually gets forwarded
@@ -288,7 +297,7 @@ async fn handle_connect(
                 host: target.clone(),
                 method_or_status: extract_method_or_status(&decrypted_request, true),
                 raw_message: decrypted_request.clone(),
-                timestamp: ts_ms,
+                timestamp: sent_at_ts_ms,
                 is_https: true,
             };
 
@@ -328,10 +337,6 @@ async fn handle_connect(
                 }
                 Err(e) => {
                     tracing::warn!("Failed to connect upstream {}: {}", target, e);
-                    // client_tls
-                    //     .write_all(b"HTTP/1.1 502 Bad Gateway\r\n\r\n")
-                    //     .await
-                    //     .ok();
                     let error_response = build_error_response(&target, &e);
                     client_tls.write_all(&error_response).await.ok();
                     break;
@@ -392,19 +397,28 @@ async fn handle_connect(
             }
         }
 
+        let req_meta = parse_request_line(&outgoing_request_bytes);
+        let (response_head, response_body) = split_message(&final_response_text);
+        let status = parse_status_code(response_head);
+        let response_length = response_body.as_bytes().len();
+
         let history_counter: tauri::State<HistoryIdCounter> = app_handle.state();
         app_handle
             .emit(
                 "http_history",
                 HttpHistoryPayload {
                     id: history_counter.next(),
-                    // Lossy display string derived from whatever actually
-                    // went out (original or user-edited), never the reverse.
                     raw_request: String::from_utf8_lossy(&outgoing_request_bytes).to_string(),
                     raw_response: final_response_text,
                     host: target.clone(),
-                    timestamp: ts_ms,
-                    duration: Some(response.elapsed.as_millis() as u64),
+                    method: req_meta.method,
+                    path: req_meta.path,
+                    query: req_meta.query,
+                    extension: req_meta.extension,
+                    status_code: status,
+                    response_length,
+                    response_time_ms: response.elapsed.as_millis() as u64,
+                    sent_at_ts_ms: sent_at_ts_ms,
                 },
             )
             .ok();
@@ -495,7 +509,7 @@ async fn handle_http_request(
 
         // Display/UI copy ONLY -- see identical note in `handle_connect`.
         let decrypted_request = String::from_utf8_lossy(&raw_request).to_string();
-        let ts_ms = now_ms();
+        let sent_at_ts_ms = now_ms();
         let request_id = Uuid::new_v4().to_string();
 
         // Byte-exact source of truth for what actually gets forwarded
@@ -511,7 +525,7 @@ async fn handle_http_request(
                 host: target.clone(),
                 method_or_status: extract_method_or_status(&decrypted_request, true),
                 raw_message: decrypted_request.clone(),
-                timestamp: ts_ms,
+                timestamp: sent_at_ts_ms,
                 is_https: false,
             };
 
@@ -597,6 +611,11 @@ async fn handle_http_request(
             }
         }
 
+        let req_meta = parse_request_line(&outgoing_request_bytes);
+        let (response_head, response_body) = split_message(&final_response_text);
+        let status_code = parse_status_code(response_head);
+        let response_length = response_body.as_bytes().len();
+
         let history_counter: tauri::State<HistoryIdCounter> = app_handle.state();
         app_handle
             .emit(
@@ -606,8 +625,14 @@ async fn handle_http_request(
                     raw_request: String::from_utf8_lossy(&outgoing_request_bytes).to_string(),
                     raw_response: final_response_text,
                     host: target.clone(),
-                    timestamp: ts_ms,
-                    duration: Some(response.elapsed.as_millis() as u64),
+                    method: req_meta.method,
+                    path: req_meta.path,
+                    query: req_meta.query,
+                    extension: req_meta.extension,
+                    status_code: status_code,
+                    response_length,
+                    response_time_ms: response.elapsed.as_millis() as u64,
+                    sent_at_ts_ms: sent_at_ts_ms,
                 },
             )
             .ok();

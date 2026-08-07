@@ -51,7 +51,7 @@ export function ValidateUrlInput({ url, onChange }: { url: string; onChange: (ur
 
 
     const error = useMemo(() => validateUrl(url), [url])
-    console.error('ValidateUrlInput error:', error)
+
     const showError = touched && error
 
     return (

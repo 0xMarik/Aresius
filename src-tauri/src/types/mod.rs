@@ -11,30 +11,6 @@ pub struct FuzzerSession {
     pub selected_highlight_id: Option<String>,
 }
 
-// #[derive(Debug, Clone, Serialize, Deserialize)]
-// #[serde(rename_all = "camelCase")]
-// pub struct FuzzingHistory {
-//     pub date: String, // or use chrono::DateTime if you want proper dates
-//     pub requests: Vec<FuzzerRequest>,
-// }
-
-// #[derive(Debug, Clone, Serialize, Deserialize)]
-// #[serde(rename_all = "camelCase")]
-// pub struct FuzzerRequest {
-//     pub target_url: String,
-//     pub request: String,
-//     pub response: String,
-//     pub request_date: String,
-//     pub status: RequestStatus,
-// }
-
-// #[derive(Debug, Clone, Serialize, Deserialize)]
-// #[serde(rename_all = "lowercase")]
-// pub enum RequestStatus {
-//     Pending,
-//     Completed,
-//     Error,
-// }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

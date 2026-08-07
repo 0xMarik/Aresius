@@ -114,10 +114,15 @@ function Replayer() {
         setResponseLoading(true)
         const stripedUrl = stripPath(url);
         dispatch(setReaplayerURL({ url: stripedUrl, urlIsValid: true })); // update the url in the store to be stripped of path
-        const response = await invoke<ReplayerHistoryItem>('replay_request', { requestTmp: requestTmp, url: stripedUrl });
-        setResponseLoading(false)
-        dispatch(addReplayerHistory({ historyItem: response }));
-        dispatch(selectedHisotryIndex({ historyIndex: 0 }));
+        try {
+            const response = await invoke<ReplayerHistoryItem>('replay_request', { requestTmp: requestTmp, url: stripedUrl });
+            setResponseLoading(false)
+            dispatch(addReplayerHistory({ historyItem: response }));
+            dispatch(selectedHisotryIndex({ historyIndex: 0 }));
+        } catch (error) {
+            console.error('Error replaying request:', error);
+            setResponseLoading(false);
+        }
     }
 
     const noSessionSelected = selectedSessionIndex === null;
