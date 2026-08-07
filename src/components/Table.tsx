@@ -16,13 +16,10 @@ import {
     ChevronUp,
     ChevronDown,
     ChevronsUpDown,
-    Search,
     SlidersHorizontal,
     Trash2,
     Layers,
-    X,
     Check,
-    RotateCcw,
     FolderPlus,
     FolderMinus,
     Circle,
@@ -115,15 +112,14 @@ const GROUP_PALETTE = ['#B23A2E', '#8F2E24', '#C08A3E', '#3C7A5A', '#5C6360', '#
  *  row's vertical padding/font-size, update this. */
 const ROW_HEIGHT = 30;
 
-/* ================================================================== */
-/*  Facet filters — replaces the hardcoded Method/State dropdowns      */
-/* ================================================================== */
-
-export type FacetFilter<TData> = {
-    id: string;
-    label: string;
-    getValue: (row: TData) => string;
-};
+/** CSS custom-property name that drives a given column's width. Defined
+ *  once per leaf column, on the table's root element (see
+ *  `columnWidthVars` in DataTable below), and referenced — never
+ *  recomputed per-cell — by that column's header cell AND by that
+ *  column's cell in every rendered row, virtualized or not. Resizing a
+ *  column is then just one CSSOM write to this property; the browser
+ *  fans the new width out to every element referencing it. */
+const colWidthVar = (columnId: string) => `--col-${columnId}-w`;
 
 /* ================================================================== */
 /*  Column drag-to-reorder (unchanged, already generic)                */
@@ -137,12 +133,14 @@ function arrayMove<T>(array: T[], from: number, to: number): T[] {
 
 function DraggableHeaderCell({
     id,
-    width,
     children,
+    onResizeStart,
+    onResizeReset,
 }: {
     id: string;
-    width: number;
     children: React.ReactNode;
+    onResizeStart: (id: string, e: React.PointerEvent) => void;
+    onResizeReset: (id: string) => void;
 }) {
     const { attributes, listeners, setNodeRef: setDragRef, isDragging } = useDraggable({ id });
     const { setNodeRef: setDropRef, isOver } = useDroppable({ id });
@@ -154,10 +152,10 @@ function DraggableHeaderCell({
                 setDropRef(node);
             }}
             style={{
-                width,
+                width: `var(${colWidthVar(id)})`,
                 opacity: isDragging ? 0.4 : 1,
             }}
-            className={`flex items-center gap-1 px-2 py-1.5 hover:bg-accent/60 ${isOver ? 'bg-accent' : ''}`}
+            className={`relative flex items-center gap-1 py-1.5 pl-2 pr-3 hover:bg-accent/60 ${isOver ? 'bg-accent' : ''}`}
         >
             <span
                 {...attributes}
@@ -168,6 +166,25 @@ function DraggableHeaderCell({
                 <GripVertical className="h-3 w-3" />
             </span>
             {children}
+
+            {/* Resize handle. Deliberately a *sibling* of the grip span
+             *  above, not nested inside its {...listeners}, so dnd-kit's
+             *  PointerSensor never sees these pointer events — a resize
+             *  can't accidentally get picked up as a column reorder.
+             *
+             *  `right-0` (with no translate) keeps this fully INSIDE the
+             *  column's own border box — it used to be centered on the
+             *  boundary line (-translate-x-1/2), so half of it sat on top
+             *  of the next column's drag grip. The extra `pr-3` (vs. the
+             *  cell's own `pl-2`) reserves a dead zone wider than the
+             *  handle itself, so it also can't crowd this column's own
+             *  sort chevron. */}
+            <span
+                onPointerDown={(e) => onResizeStart(id, e)}
+                onDoubleClick={() => onResizeReset(id)}
+                title="Drag to resize · double-click to reset"
+                className="absolute right-0 top-0 z-10 h-full w-1.5 cursor-col-resize touch-none select-none hover:bg-primary/40 active:bg-primary/60"
+            />
         </div>
     );
 }
@@ -202,11 +219,10 @@ function Dropdown({
         <div className="relative" ref={ref}>
             <button
                 onClick={() => setOpen((o) => !o)}
-                className={`flex items-center gap-1.5 rounded-md border px-2 py-1 text-[12px] ${
-                    open
-                        ? 'border-border bg-accent text-accent-foreground'
-                        : 'border-border bg-card text-foreground hover:bg-accent hover:text-accent-foreground'
-                }`}
+                className={`flex items-center gap-1.5 rounded-md border px-2 py-1 text-[12px] ${open
+                    ? 'border-border bg-accent text-accent-foreground'
+                    : 'border-border bg-card text-foreground hover:bg-accent hover:text-accent-foreground'
+                    }`}
             >
                 {icon}
                 <span className="text-muted-foreground">{label}</span>
@@ -247,6 +263,18 @@ interface TableRowProps<TData extends BaseRow> {
     selected: boolean;
     group?: RequestGroup;
     groups: RequestGroup[];
+    /** Not read directly in the row body below — `row.getVisibleCells()`
+     *  already reflects the table's current column order whenever it's
+     *  called. It's threaded through purely so the memo comparator (see
+     *  `TableRow` below) can detect a drag-to-reorder and force this row
+     *  to re-render and re-call `getVisibleCells()`. Without it, a
+     *  column reorder updates the header (which gets `columnOrder` as an
+     *  explicit prop already) but every row's `row` object reference is
+     *  untouched by a reorder, so TableRow's memo silently kept the old
+     *  cell order — the body looked like it "didn't update" until some
+     *  unrelated re-render (e.g. the next streamed row) happened to
+     *  paper over it. */
+    columnOrder: string[];
     onRowClick: (e: React.MouseEvent, id: number) => void;
     onContextMenu: (id: number) => void;
     getActionIds: (rowId: number) => number[];
@@ -264,6 +292,7 @@ function TableRowInner<TData extends BaseRow>({
     selected,
     group,
     groups,
+    columnOrder,
     onRowClick,
     onContextMenu,
     getActionIds,
@@ -273,6 +302,9 @@ function TableRowInner<TData extends BaseRow>({
     onUngroup,
     onRemove,
 }: TableRowProps<TData>) {
+    // Not read directly — see the doc comment on `columnOrder` above.
+    void columnOrder;
+
     const rowId = row.original.id;
     // getActionIds is a stable (useCallback([])) function that reads a ref
     // internally, so rowId alone is a sufficient dep.
@@ -282,13 +314,16 @@ function TableRowInner<TData extends BaseRow>({
         <div
             onClick={(e) => onRowClick(e, rowId)}
             onContextMenu={() => onContextMenu(rowId)}
-            className={`flex h-full cursor-pointer items-center border-b border-border/40 border-l-[3px] ${
-                selected ? 'bg-primary text-primary-foreground' : 'hover:bg-accent/50 text-foreground'
-            }`}
+            className={`flex h-full cursor-pointer items-center border-b border-border/40 border-l-[3px] ${selected ? 'bg-primary text-primary-foreground' : 'hover:bg-accent/50 text-foreground'
+                }`}
             style={{ borderLeftColor: group?.color ?? 'transparent' }}
         >
             {row.getVisibleCells().map((cell) => (
-                <div key={cell.id} className="truncate px-2 py-1" style={{ width: cell.column.getSize() }}>
+                <div
+                    key={cell.id}
+                    className="truncate px-2 py-1"
+                    style={{ width: `var(${colWidthVar(cell.column.id)})` }}
+                >
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
                 </div>
             ))}
@@ -328,6 +363,7 @@ const TableRow = React.memo(TableRowInner, (prev, next) => {
         prev.selected === next.selected &&
         prev.group?.id === next.group?.id &&
         prev.groups === next.groups &&
+        prev.columnOrder === next.columnOrder &&
         prev.onRowClick === next.onRowClick &&
         prev.onContextMenu === next.onContextMenu &&
         prev.getActionIds === next.getActionIds &&
@@ -339,126 +375,12 @@ const TableRow = React.memo(TableRowInner, (prev, next) => {
     );
 }) as typeof TableRowInner;
 
-/* ================================================================== */
-/*  Toolbar — search / facets / column visibility / reset / count.     */
-/*  Extracted so that selection changes (arrow-key nav) never touch    */
-/*  this subtree: none of its props change on selection, so            */
-/*  React.memo bails out and it is skipped entirely during             */
-/*  reconciliation, not just "cheaply re-rendered".                    */
-/* ================================================================== */
 
-interface TableToolbarProps<TData extends BaseRow> {
-    search: string;
-    onSearchChange: (value: string) => void;
-    onClearSearch: () => void;
-    searchPlaceholder: string;
-    facetFilters: FacetFilter<TData>[];
-    facetOptions: Record<string, string[]>;
-    facetState: Record<string, Set<string>>;
-    onToggleFacet: (facetId: string, value: string) => void;
-    table: Table<TData>;
-    columnVisibility: VisibilityState;
-    hasActiveFilters: boolean;
-    onClearFilters: () => void;
-    filteredCount: number;
-    totalCount: number;
-}
-
-function TableToolbarInner<TData extends BaseRow>({
-    search,
-    onSearchChange,
-    onClearSearch,
-    searchPlaceholder,
-    facetFilters,
-    facetOptions,
-    facetState,
-    onToggleFacet,
-    table,
-    columnVisibility,
-    hasActiveFilters,
-    onClearFilters,
-    filteredCount,
-    totalCount,
-}: TableToolbarProps<TData>) {
-    // `table` is a stable instance (tanstack mutates it in place rather than
-    // returning a new object), so it alone can't tell React.memo that a
-    // column was hidden/shown. `columnVisibility` is threaded through as an
-    // explicit prop for that reason, and doubles as a genuinely useful
-    // "N hidden" badge on the Columns dropdown.
-    const hiddenCount = Object.values(columnVisibility).filter((v) => v === false).length;
-
-    return (
-        <div className="flex flex-wrap items-center gap-1.5 p-2 border-b border-border bg-background">
-            <div className="flex items-center gap-1.5 rounded-md border border-border bg-card px-2 py-1">
-                <Search className="h-3.5 w-3.5 text-muted-foreground" />
-                <input
-                    value={search}
-                    onChange={(e) => onSearchChange(e.target.value)}
-                    placeholder={searchPlaceholder}
-                    className="w-56 border-none bg-transparent text-[12px] text-foreground outline-none placeholder:text-muted-foreground"
-                />
-                {search && (
-                    <button onClick={onClearSearch} className="text-muted-foreground/70 hover:text-foreground">
-                        <X className="h-3.5 w-3.5" />
-                    </button>
-                )}
-            </div>
-
-            {facetFilters.map((f) => (
-                <Dropdown
-                    key={f.id}
-                    label={f.label}
-                    icon={<SlidersHorizontal className="h-3.5 w-3.5 text-muted-foreground" />}
-                    badge={facetState[f.id]?.size}
-                >
-                    {(facetOptions[f.id] ?? []).map((value) => (
-                        <DropdownCheckboxItem
-                            key={value}
-                            label={value}
-                            checked={facetState[f.id]?.has(value) ?? false}
-                            onToggle={() => onToggleFacet(f.id, value)}
-                        />
-                    ))}
-                </Dropdown>
-            ))}
-
-            <Dropdown
-                label="Columns"
-                icon={<SlidersHorizontal className="h-3.5 w-3.5 text-muted-foreground" />}
-                badge={hiddenCount || undefined}
-            >
-                {table.getAllLeafColumns().map((col) => (
-                    <DropdownCheckboxItem
-                        key={col.id}
-                        label={String(col.columnDef.header)}
-                        checked={col.getIsVisible()}
-                        onToggle={col.getToggleVisibilityHandler() as unknown as () => void}
-                    />
-                ))}
-            </Dropdown>
-
-            {hasActiveFilters && (
-                <button
-                    onClick={onClearFilters}
-                    className="flex items-center gap-1 rounded-md px-2 py-1 text-[12px] text-muted-foreground hover:text-foreground"
-                >
-                    <RotateCcw className="h-3.5 w-3.5" />
-                    Reset
-                </button>
-            )}
-
-            <div className="ml-auto text-[12px] text-muted-foreground">
-                {filteredCount} of {totalCount} rows
-            </div>
-        </div>
-    );
-}
-
-const TableToolbar = React.memo(TableToolbarInner) as typeof TableToolbarInner;
 
 /* ================================================================== */
-/*  Header row (sort + drag-to-reorder). Same isolation rationale as   */
-/*  the toolbar above — this should never re-render on selection.      */
+/*  Header row (sort + drag-to-reorder + resize). Same isolation       */
+/*  rationale as the toolbar above — this should never re-render on    */
+/*  selection.                                                         */
 /* ================================================================== */
 
 interface TableHeaderRowProps<TData extends BaseRow> {
@@ -467,6 +389,8 @@ interface TableHeaderRowProps<TData extends BaseRow> {
     sorting: SortingState;
     sensors: ReturnType<typeof useSensors>;
     onColumnDragEnd: (event: DragEndEvent) => void;
+    onResizeStart: (id: string, e: React.PointerEvent) => void;
+    onResizeReset: (id: string) => void;
 }
 
 function TableHeaderRowInner<TData extends BaseRow>({
@@ -475,6 +399,8 @@ function TableHeaderRowInner<TData extends BaseRow>({
     sorting,
     sensors,
     onColumnDragEnd,
+    onResizeStart,
+    onResizeReset,
 }: TableHeaderRowProps<TData>) {
     // Not read directly below — table.getHeaderGroups() already reflects
     // them — but declared as explicit props so React.memo actually detects
@@ -489,7 +415,12 @@ function TableHeaderRowInner<TData extends BaseRow>({
                 {table.getHeaderGroups().map((hg) => (
                     <div key={hg.id} className="flex items-center">
                         {hg.headers.map((header) => (
-                            <DraggableHeaderCell key={header.id} id={header.column.id} width={header.getSize()}>
+                            <DraggableHeaderCell
+                                key={header.id}
+                                id={header.column.id}
+                                onResizeStart={onResizeStart}
+                                onResizeReset={onResizeReset}
+                            >
                                 <span
                                     onClick={header.column.getToggleSortingHandler()}
                                     className="flex flex-1 cursor-pointer select-none items-center justify-between gap-1"
@@ -517,23 +448,26 @@ const TableHeaderRow = React.memo(TableHeaderRowInner) as typeof TableHeaderRowI
 /* ================================================================== */
 /*  RowsViewport — owns the virtualizer + keyboard navigation.         */
 /*                                                                      */
-/*  This is the ONLY subtree that re-renders when selection changes.   */
-/*  Isolating it here means an arrow-key press no longer re-runs the   */
-/*  toolbar, the header, or any of the filtering/derivation logic in   */
-/*  the parent — it only ever touches this component, and inside it    */
-/*  only the two rows whose `selected` prop actually flipped re-render */
-/*  (enforced by TableRow's memo comparator above).                    */
+/*  This is the ONLY subtree that re-renders when selection changes    */
+/*  (or, now, when columns are reordered — see the `columnOrder` prop  */
+/*  and the comment on TableRowProps.columnOrder above). Isolating it  */
+/*  here means an arrow-key press no longer re-runs the toolbar, the   */
+/*  header, or any of the derivation logic in the parent — it only     */
+/*  ever touches this component, and inside it only the rows whose     */
+/*  props actually changed re-render (enforced by TableRow's memo      */
+/*  comparator above). Column *resizing* deliberately does NOT go      */
+/*  through this path at all — see the resize block in DataTable.      */
 /* ================================================================== */
 
 interface RowsViewportProps<TData extends BaseRow> {
     visibleRows: Row<TData>[];
     groups: RequestGroup[];
     groupMap: Map<string, RequestGroup>;
+    columnOrder: string[];
     selectedIds: Set<number>;
     setSelectedIds: React.Dispatch<React.SetStateAction<Set<number>>>;
     maxHeight: number;
     fillHeight?: boolean;
-    totalRowsCount: number;
     emptyLabel: string;
     emptyHint?: string;
     renderContextMenu?: (ctx: RowContextMenuContext<TData>) => React.ReactNode;
@@ -547,11 +481,11 @@ function RowsViewportInner<TData extends BaseRow>({
     visibleRows,
     groups,
     groupMap,
+    columnOrder,
     selectedIds,
     setSelectedIds,
     maxHeight,
     fillHeight = false,
-    totalRowsCount,
     emptyLabel,
     emptyHint,
     renderContextMenu,
@@ -716,10 +650,8 @@ function RowsViewportInner<TData extends BaseRow>({
     if (visibleRows.length === 0) {
         return (
             <div className={fillHeight ? 'flex min-h-0 flex-1 items-center justify-center py-12 text-center text-muted-foreground' : 'py-12 text-center text-muted-foreground'}>
-                <p className="text-[13px]">{totalRowsCount === 0 ? emptyLabel : 'No rows match the current filters'}</p>
-                {emptyHint && (
-                    <p className="mt-1 text-[11px]">{totalRowsCount === 0 ? emptyHint : 'Try clearing search or filters'}</p>
-                )}
+                <p className="text-[13px]">{emptyLabel}</p>
+                {emptyHint && <p className="mt-1 text-[11px]">{emptyHint}</p>}
             </div>
         );
     }
@@ -754,6 +686,7 @@ function RowsViewportInner<TData extends BaseRow>({
                                 selected={selectedIds.has(rowId)}
                                 group={group}
                                 groups={groups}
+                                columnOrder={columnOrder}
                                 onRowClick={handleRowClick}
                                 onContextMenu={handleRowContextMenu}
                                 getActionIds={getActionIds}
@@ -781,9 +714,6 @@ interface DataTableProps<TData extends BaseRow> {
     data: TData[];
     columns: ColumnDef<TData, any>[];
     setSelectedRequest?: (id: number | null) => void;
-    searchFn?: (row: TData, query: string) => boolean;
-    facetFilters?: FacetFilter<TData>[];
-    searchPlaceholder?: string;
     emptyLabel?: string;
     emptyHint?: string;
     /** Max height of the scrollable row viewport. Rows outside this
@@ -795,10 +725,14 @@ interface DataTableProps<TData extends BaseRow> {
     fillHeight?: boolean;
     /** Caps how many rows are kept for a live-streaming table. When set,
      *  the oldest rows (by position in `data`) beyond this count are
-     *  dropped during the merge tick — bounding filter/sort/facet cost for
+     *  dropped during the merge tick — bounding sort/render cost for
      *  long-running capture sessions instead of letting it grow forever.
      *  Omit for a static/bounded dataset. */
     maxBufferRows?: number;
+    /** Minimum width (px) a column can be dragged down to. Default 60. */
+    minColumnWidth?: number;
+    /** Maximum width (px) a column can be dragged out to. Default 800. */
+    maxColumnWidth?: number;
     /** Customize (or fully replace) the row context menu. Receives a
      *  RowContextMenuContext with the clicked row, the current
      *  multi-selection, and DataTable's built-in group/remove actions
@@ -815,14 +749,13 @@ export default function DataTable<TData extends BaseRow>({
     data,
     columns,
     setSelectedRequest,
-    searchFn,
-    facetFilters = [],
-    searchPlaceholder = 'Search…',
     emptyLabel = 'No rows',
     emptyHint,
     maxHeight = 600,
     fillHeight = false,
     maxBufferRows,
+    minColumnWidth = 60,
+    maxColumnWidth = 800,
     renderRowContextMenu,
 }: DataTableProps<TData>) {
     const [rows, setRows] = useState<TData[]>(data);
@@ -886,9 +819,9 @@ export default function DataTable<TData extends BaseRow>({
             }
 
             // FIX #4 — bound memory/CPU growth for long-running capture
-            // sessions. Without a cap, `rows` (and therefore every sort/
-            // filter/facet scan derived from it) grows for as long as the
-            // session runs, so the same operation gets slower over time.
+            // sessions. Without a cap, `rows` (and therefore every sort
+            // pass derived from it) grows for as long as the session
+            // runs, so the same operation gets slower over time.
             // Dropping the oldest rows once the buffer is full keeps every
             // per-update pass O(maxBufferRows) instead of O(session length).
             if (maxBufferRows && merged.length > maxBufferRows) {
@@ -938,9 +871,6 @@ export default function DataTable<TData extends BaseRow>({
     const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
     const [columnOrder, setColumnOrder] = useState<string[]>(() => columns.map((c) => c.id as string));
 
-    const [search, setSearch] = useState('');
-    const [facetState, setFacetState] = useState<Record<string, Set<string>>>({});
-
     // Selection lives here (not pushed down into RowsViewport) because it
     // also has to feed `meta.selectedIds` on the `table` instance below, for
     // consumer column-defs that use the exported `isRowSelected` helper.
@@ -977,53 +907,8 @@ export default function DataTable<TData extends BaseRow>({
         });
     }, []);
 
-    const facetOptions = useMemo(() => {
-        const map: Record<string, string[]> = {};
-        facetFilters.forEach((f) => {
-            map[f.id] = Array.from(new Set(rows.map((r) => f.getValue(r)))).sort();
-        });
-        return map;
-    }, [rows, facetFilters]);
-
-    const toggleFacetValue = useCallback((facetId: string, value: string) => {
-        setFacetState((prev) => {
-            const next = new Set(prev[facetId] ?? []);
-            next.has(value) ? next.delete(value) : next.add(value);
-            return { ...prev, [facetId]: next };
-        });
-    }, []);
-
-    const defaultSearch = useCallback(
-        (row: TData, q: string) =>
-            Object.values(row as Record<string, unknown>).some(
-                (v) => v !== null && v !== undefined && String(v).toLowerCase().includes(q)
-            ),
-        []
-    );
-
-    const hasActiveFilters = !!search || Object.values(facetState).some((s) => s.size > 0);
-
-    // FIX #3 — skip the O(n) filter pass (and the array allocation that
-    // comes with it) when there's nothing to filter by. Every streamed
-    // update was previously rebuilding `filteredData` via `.filter()` even
-    // with zero active filters, which on its own forces TanStack Table to
-    // rebuild the entire row model (see FIX #2 below) instead of just
-    // extending it.
-    const filteredData = useMemo(() => {
-        if (!hasActiveFilters) return rows;
-        const q = search.trim().toLowerCase();
-        return rows.filter((r) => {
-            for (const f of facetFilters) {
-                const active = facetState[f.id];
-                if (active && active.size > 0 && !active.has(f.getValue(r))) return false;
-            }
-            if (!q) return true;
-            return (searchFn ?? defaultSearch)(r, q);
-        });
-    }, [rows, search, facetFilters, facetState, searchFn, defaultSearch, hasActiveFilters]);
-
     const table = useReactTable({
-        data: filteredData,
+        data: rows,
         columns,
         // FIX #2 — stable row identity. Without this, TanStack Table
         // defaults `row.id` to array index, so after any sort/filter/
@@ -1048,6 +933,132 @@ export default function DataTable<TData extends BaseRow>({
     // when `selectedIds` changes — so this reference doesn't churn on
     // arrow-key nav.
     const visibleRows = table.getRowModel().rows;
+
+    // ------------------------------------------------------------------
+    // Column resizing.
+    //
+    // Perf constraint: this table can be receiving 60-80 streamed row
+    // updates/sec (see the merge-tick effect above), so anything that
+    // runs on every pointermove during a drag — and would ALSO cause the
+    // whole virtualized row list to re-render — is a non-starter; it'd be
+    // fighting the stream for every animation frame, and jank on every
+    // resize.
+    //
+    // So resizing never touches React state while the pointer is down.
+    // Every column's width lives in one CSS custom property
+    // (`--col-<id>-w`, see `colWidthVar` up top) defined on this table's
+    // own root element and referenced via var(...) by that column's
+    // header cell AND by that column's cell in every rendered row. During
+    // a drag we write straight to `containerRef.current.style` — bypassing
+    // React entirely — so a resize is a single CSSOM write per animation
+    // frame that the browser fans out to every element referencing that
+    // var, not a React re-render of N row components.
+    //
+    // `columnSizing` (React state) is written exactly once, on pointer-up.
+    // That's the only state touched, and it isn't part of `useReactTable`'s
+    // `state` — so `table`, `visibleRows`, and everything RowsViewport
+    // depends on stay referentially identical across a resize commit, and
+    // RowsViewport's React.memo bails out without re-rendering a single
+    // row. Only the toolbar/header (which read `table` directly) re-render.
+    const containerRef = useRef<HTMLDivElement>(null);
+    const [columnSizing, setColumnSizing] = useState<Record<string, number>>({});
+
+    const columnWidthVars = useMemo(() => {
+        const vars: Record<string, string> = {};
+        table.getAllLeafColumns().forEach((col) => {
+            const width = columnSizing[col.id] ?? col.getSize();
+            vars[colWidthVar(col.id)] = `${width}px`;
+        });
+        return vars;
+    }, [table, columnSizing, columns]);
+
+    // The only thing that ever writes these vars through React — and it
+    // only re-runs when `columnSizing` (a committed resize) or the column
+    // set itself changes, never on the high-frequency streaming
+    // re-renders. That matters: if this ran every render, it would stomp
+    // an in-progress drag's live CSSOM value back to the last *committed*
+    // width up to 60-80 times a second.
+    useEffect(() => {
+        const el = containerRef.current;
+        if (!el) return;
+        for (const [key, value] of Object.entries(columnWidthVars)) {
+            el.style.setProperty(key, value);
+        }
+    }, [columnWidthVars]);
+
+    const resizeRef = useRef<{
+        colId: string;
+        startX: number;
+        startWidth: number;
+        pending: number | null;
+        rafId: number | null;
+    } | null>(null);
+
+    const handleResizeStart = useCallback(
+        (colId: string, e: React.PointerEvent) => {
+            e.preventDefault();
+            e.stopPropagation();
+
+            const col = table.getColumn(colId);
+            const startWidth = columnSizing[colId] ?? col?.getSize() ?? minColumnWidth;
+            resizeRef.current = { colId, startX: e.clientX, startWidth, pending: null, rafId: null };
+
+            // rAF-coalesced, same pattern as the keyboard-nav fix above:
+            // however many pointermove events fire in a frame, only the
+            // last one before paint gets written to the DOM.
+            const flush = () => {
+                const state = resizeRef.current;
+                if (!state) return;
+                state.rafId = null;
+                if (state.pending === null) return;
+                containerRef.current?.style.setProperty(colWidthVar(state.colId), `${state.pending}px`);
+            };
+
+            const onMove = (ev: PointerEvent) => {
+                const state = resizeRef.current;
+                if (!state) return;
+                const delta = ev.clientX - state.startX;
+                const next = Math.min(maxColumnWidth, Math.max(minColumnWidth, Math.round(state.startWidth + delta)));
+                state.pending = next;
+                if (state.rafId === null) {
+                    state.rafId = requestAnimationFrame(flush);
+                }
+            };
+
+            const onUp = () => {
+                window.removeEventListener('pointermove', onMove);
+                window.removeEventListener('pointerup', onUp);
+                document.body.style.removeProperty('cursor');
+                document.body.style.removeProperty('user-select');
+
+                const state = resizeRef.current;
+                resizeRef.current = null;
+                if (!state) return;
+                if (state.rafId !== null) cancelAnimationFrame(state.rafId);
+
+                // The one and only React state write in the whole drag —
+                // everything up to here was a direct DOM mutation — so a
+                // resize costs one re-render total, not one per pixel.
+                const finalWidth = state.pending ?? state.startWidth;
+                setColumnSizing((prev) => (prev[state.colId] === finalWidth ? prev : { ...prev, [state.colId]: finalWidth }));
+            };
+
+            document.body.style.cursor = 'col-resize';
+            document.body.style.userSelect = 'none';
+            window.addEventListener('pointermove', onMove);
+            window.addEventListener('pointerup', onUp);
+        },
+        [table, columnSizing, minColumnWidth, maxColumnWidth]
+    );
+
+    const handleResizeReset = useCallback((colId: string) => {
+        setColumnSizing((prev) => {
+            if (!(colId in prev)) return prev;
+            const next = { ...prev };
+            delete next[colId];
+            return next;
+        });
+    }, []);
 
     useEffect(() => {
         if (!setSelectedRequest) return;
@@ -1154,13 +1165,6 @@ export default function DataTable<TData extends BaseRow>({
         pruneUnusedGroups();
     }, [pruneUnusedGroups]);
 
-    const clearFilters = useCallback(() => {
-        setSearch('');
-        setFacetState({});
-    }, []);
-
-    const clearSearch = useCallback(() => setSearch(''), []);
-
     // Default context menu — reproduces the original hardcoded behavior
     // (New group / Add to group / Ungroup / Remove) so DataTable still
     // works out of the box if `renderRowContextMenu` isn't supplied.
@@ -1225,26 +1229,13 @@ export default function DataTable<TData extends BaseRow>({
     const resolvedRenderContextMenu = renderRowContextMenu ?? defaultRenderContextMenu;
 
     return (
-        <div className={fillHeight ? 'flex h-full min-h-0 w-full flex-col bg-background' : 'w-full flex flex-col bg-background'}>
-            <div className={fillHeight ? 'shrink-0' : undefined}>
-                <TableToolbar
-                    search={search}
-                    onSearchChange={setSearch}
-                    onClearSearch={clearSearch}
-                    searchPlaceholder={searchPlaceholder}
-                    facetFilters={facetFilters}
-                    facetOptions={facetOptions}
-                    facetState={facetState}
-                    onToggleFacet={toggleFacetValue}
-                    table={table}
-                    columnVisibility={columnVisibility}
-                    hasActiveFilters={hasActiveFilters}
-                    onClearFilters={clearFilters}
-                    filteredCount={filteredData.length}
-                    totalCount={rows.length}
-
-                />
-            </div>
+        <div
+            ref={containerRef}
+            className={fillHeight ? 'flex h-full min-h-0 w-full flex-col bg-background' : 'w-full flex flex-col bg-background'}
+        >
+            {/* <div className={fillHeight ? 'shrink-0' : undefined}>
+                <TableToolbar table={table} columnVisibility={columnVisibility} totalCount={rows.length} />
+            </div> */}
 
             <div className={fillHeight
                 ? 'flex min-h-0 flex-1 flex-col overflow-hidden bg-card'
@@ -1257,6 +1248,8 @@ export default function DataTable<TData extends BaseRow>({
                         sorting={sorting}
                         sensors={sensors}
                         onColumnDragEnd={handleColumnDragEnd}
+                        onResizeStart={handleResizeStart}
+                        onResizeReset={handleResizeReset}
                     />
                 </div>
 
@@ -1264,11 +1257,11 @@ export default function DataTable<TData extends BaseRow>({
                     visibleRows={visibleRows}
                     groups={groups}
                     groupMap={groupMap}
+                    columnOrder={columnOrder}
                     selectedIds={selectedIds}
                     setSelectedIds={setSelectedIds}
                     maxHeight={maxHeight}
                     fillHeight={fillHeight}
-                    totalRowsCount={rows.length}
                     emptyLabel={emptyLabel}
                     emptyHint={emptyHint}
                     renderContextMenu={resolvedRenderContextMenu}

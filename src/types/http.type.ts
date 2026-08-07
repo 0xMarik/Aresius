@@ -23,11 +23,21 @@ export interface HttpResponse {
   timestamp: string
 }
 
-export interface HttpHistory {
-    id: EntityId;
+export type RequestState = 'Pending' | 'Info' | 'Success' | 'Redirect' | 'Client Error' | 'Server Error' | 'Failed';
+
+
+export type HttpHistory = {
+    id: number;
+    host: string;
+    method: string;
+    path: string;
+    query: string | null;
+    extension: string | null;
+    statusCode: number;
+    responseLength: number;
+    responseTimeMs: number;
+    sentAtTsMs: number;
+    state: RequestState;
     rawRequest: string;
     rawResponse: string;
-    host: string;
-    timestamp: number;
-    duration: number;
-}
+};

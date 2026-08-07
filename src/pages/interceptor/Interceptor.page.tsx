@@ -37,7 +37,7 @@ import {
 } from '@/store/slices/interceptorSlice';
 import { parseRequest, parseResponse } from '@/components/utils';
 import { formatHttpMessage } from './http-pretty';
-import LightDataTable from '@/components/Table';
+import LightDataTable from '@/components/LightDataTable';
 import { EmptyState } from '@/components/ui/empty-state';
 
 
@@ -611,7 +611,7 @@ const InterceptorPage: React.FC = () => {
                                                     data={requestRows}
                                                     columns={requestColumns}
                                                     fillHeight
-                                                // onSelectRow={handleSelectRequestRow}
+                                                    onSelectRow={handleSelectRequestRow}
                                                 />
                                             )
                                         }
@@ -724,7 +724,7 @@ const InterceptorPage: React.FC = () => {
                                                 data={responseRows}
                                                 columns={responseColumns}
                                                 fillHeight
-                                            // onSelectRow={handleSelectResponseRow}
+                                                onSelectRow={handleSelectResponseRow}
                                             />
                                         )}
                                     </div>

@@ -8,7 +8,7 @@ import { useAppSelector } from '@/hooks/redux';
 import Table from '@/components/Table';
 import { CodeMirrorEditor } from '@/components/result-table.components';
 import { renderHttpHistoryTableContextMenu } from '@/components/HttpHistoryTableContextMenu';
-import { adaptFromReqRes, httpColumns, httpFacetFilters } from '@/pages/HttpHistory';
+import { adaptFromReqRes, httpColumns } from '@/pages/HttpHistory';
 import { historySelectors } from '@/store/slices/http-historySlice';
 import { buildSitemapNodeIndex, collectRequestIdsDeduped } from './utils';
 import type { EntityId } from '@reduxjs/toolkit';
@@ -129,7 +129,7 @@ const SitemapRequestTablePane = React.memo<SitemapRequestTablePaneProps>(functio
             const entities = state.httpHistory.entities;
             const items: HttpHistory[] = [];
             for (const idStr of requestIds) {
-                const item = entities[resolveEntityId(idStr)];
+                const item = entities[resolveEntityId(idStr) as any];
                 if (item) items.push(item);
             }
             return adaptFromReqRes(items);
@@ -150,8 +150,6 @@ const SitemapRequestTablePane = React.memo<SitemapRequestTablePaneProps>(functio
                 fillHeight
                 data={rows}
                 columns={httpColumns}
-                facetFilters={httpFacetFilters}
-                searchPlaceholder="Search host, url, method, code…"
                 emptyLabel="No requests for this node"
                 emptyHint="Captured traffic matching this path will appear here"
                 setSelectedRequest={onSelectRequest}
