@@ -287,8 +287,9 @@ async fn handle_connect(
         // the intercept UI, mirroring how `outgoing_response_bytes` is
         // handled below for responses.
         let mut outgoing_request_bytes = raw_request.clone();
+        let req_meta_init = parse_request_line(&raw_request);
         if intercept_state
-            .should_intercept(InterceptItemType::Request)
+            .should_intercept(InterceptItemType::Request, &target, &req_meta_init.path)
             .await
         {
             let item = InterceptItem {
@@ -362,8 +363,9 @@ async fn handle_connect(
         let mut final_response_text =
             decode_for_display(&response.headers, &response.body, &connection_options);
 
+        let req_meta_res = parse_request_line(&outgoing_request_bytes);
         if intercept_state
-            .should_intercept(InterceptItemType::Response)
+            .should_intercept(InterceptItemType::Response, &target, &req_meta_res.path)
             .await
         {
             let res_id = Uuid::new_v4().to_string();
@@ -515,8 +517,9 @@ async fn handle_http_request(
         // Byte-exact source of truth for what actually gets forwarded
         // upstream -- see identical note in `handle_connect`.
         let mut outgoing_request_bytes = raw_request.clone();
+        let req_meta_init = parse_request_line(&raw_request);
         if intercept_state
-            .should_intercept(InterceptItemType::Request)
+            .should_intercept(InterceptItemType::Request, &target, &req_meta_init.path)
             .await
         {
             let item = InterceptItem {
@@ -579,8 +582,9 @@ async fn handle_http_request(
         let mut final_response_text =
             decode_for_display(&response.headers, &response.body, &connection_options);
 
+        let req_meta_res = parse_request_line(&outgoing_request_bytes);
         if intercept_state
-            .should_intercept(InterceptItemType::Response)
+            .should_intercept(InterceptItemType::Response, &target, &req_meta_res.path)
             .await
         {
             let res_id = Uuid::new_v4().to_string();

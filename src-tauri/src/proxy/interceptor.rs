@@ -9,9 +9,30 @@ pub enum InterceptItemType {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ScopeRule {
+    pub id: String,
+    pub pattern: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActiveScope {
+    pub id: String,
+    pub name: String,
+    pub color: String,
+    pub allow: Vec<ScopeRule>,
+    pub deny: Vec<ScopeRule>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct InterceptSettings {
     pub requests_enabled: bool,
     pub responses_enabled: bool,
+    #[serde(default)]
+    pub scope_filter_enabled: bool,
+    #[serde(default)]
+    pub active_scope: Option<ActiveScope>,
 }
 
 impl Default for InterceptSettings {
@@ -19,8 +40,88 @@ impl Default for InterceptSettings {
         Self {
             requests_enabled: false,
             responses_enabled: false,
+            scope_filter_enabled: false,
+            active_scope: None,
         }
     }
+}
+
+pub fn pattern_to_regex_str(pattern: &str) -> String {
+    let mut regex = String::from("(?i)^");
+    for c in pattern.chars() {
+        match c {
+            '*' => regex.push_str("[^/]*"),
+            '.' | '+' | '^' | '$' | '(' | ')' | '[' | ']' | '{' | '}' | '|' | '\\' | '?' => {
+                regex.push('\\');
+                regex.push(c);
+            }
+            _ => regex.push(c),
+        }
+    }
+    regex.push('$');
+    regex
+}
+
+pub fn url_matches_pattern(pattern: &str, host: &str, path: &str) -> bool {
+    let trimmed = pattern.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+
+    let (pattern_host, pattern_path) = match trimmed.find('/') {
+        Some(idx) => (&trimmed[..idx], Some(&trimmed[idx..])),
+        None => (trimmed, None),
+    };
+
+    let host_regex_str = pattern_to_regex_str(pattern_host);
+    if let Ok(re) = regex::Regex::new(&host_regex_str) {
+        if !re.is_match(host) {
+            return false;
+        }
+    } else {
+        return false;
+    }
+
+    let pattern_path = match pattern_path {
+        Some(p) => p,
+        None => return true,
+    };
+
+    let path_to_test = if path.is_empty() { "/" } else { path };
+    let path_regex_str = pattern_to_regex_str(pattern_path);
+    if let Ok(re) = regex::Regex::new(&path_regex_str) {
+        re.is_match(path_to_test)
+    } else {
+        false
+    }
+}
+
+pub fn is_in_scope(scope: Option<&ActiveScope>, host: &str, path: &str) -> bool {
+    let scope = match scope {
+        Some(s) => s,
+        None => return true,
+    };
+
+    if scope.allow.is_empty() {
+        return false;
+    }
+
+    let path = if path.is_empty() { "/" } else { path };
+
+    let allowed = scope
+        .allow
+        .iter()
+        .any(|rule| url_matches_pattern(&rule.pattern, host, path));
+    if !allowed {
+        return false;
+    }
+
+    let denied = scope
+        .deny
+        .iter()
+        .any(|rule| url_matches_pattern(&rule.pattern, host, path));
+
+    !denied
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -59,12 +160,30 @@ impl InterceptState {
         }
     }
 
-    pub async fn should_intercept(&self, item_type: InterceptItemType) -> bool {
+    pub async fn should_intercept(
+        &self,
+        item_type: InterceptItemType,
+        target_host: &str,
+        path: &str,
+    ) -> bool {
         let settings = self.settings.read().await;
-        match item_type {
+        let enabled = match item_type {
             InterceptItemType::Request => settings.requests_enabled,
             InterceptItemType::Response => settings.responses_enabled,
+        };
+
+        if !enabled {
+            return false;
         }
+
+        if settings.scope_filter_enabled {
+            let host = target_host.split(':').next().unwrap_or(target_host);
+            if !is_in_scope(settings.active_scope.as_ref(), host, path) {
+                return false;
+            }
+        }
+
+        true
     }
 
     pub async fn add_and_await(&self, item: InterceptItem) -> Option<InterceptDecision> {
@@ -79,6 +198,7 @@ impl InterceptState {
         rx.await.ok()
     }
 }
+
 
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -219,6 +339,59 @@ pub async fn drop_all_intercept_items(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_url_matches_pattern() {
+        // Host only matching
+        assert!(url_matches_pattern("*.example.com", "sub.example.com", "/"));
+        assert!(url_matches_pattern("example.com", "example.com", "/api"));
+        assert!(!url_matches_pattern("example.com", "other.com", "/"));
+
+        // Host + Path matching
+        assert!(url_matches_pattern("example.com/api/*", "example.com", "/api/v1"));
+        assert!(!url_matches_pattern("example.com/api/*", "example.com", "/admin"));
+    }
+
+    #[test]
+    fn test_is_in_scope() {
+        let scope = ActiveScope {
+            id: "1".to_string(),
+            name: "Test Scope".to_string(),
+            color: "#fff".to_string(),
+            allow: vec![
+                ScopeRule {
+                    id: "r1".to_string(),
+                    pattern: "*.example.com".to_string(),
+                },
+                ScopeRule {
+                    id: "r2".to_string(),
+                    pattern: "target.com/api/*".to_string(),
+                },
+            ],
+            deny: vec![ScopeRule {
+                id: "r3".to_string(),
+                pattern: "secret.example.com".to_string(),
+            }],
+        };
+
+        // No scope active -> everything in scope
+        assert!(is_in_scope(None, "anything.com", "/"));
+
+        // In scope via allow rule 1
+        assert!(is_in_scope(Some(&scope), "app.example.com", "/test"));
+
+        // Out of scope via deny rule
+        assert!(!is_in_scope(Some(&scope), "secret.example.com", "/test"));
+
+        // In scope via allow rule 2
+        assert!(is_in_scope(Some(&scope), "target.com", "/api/users"));
+
+        // Out of scope (not matching allow rule 2 path)
+        assert!(!is_in_scope(Some(&scope), "target.com", "/dashboard"));
+
+        // Out of scope (host not in allow list)
+        assert!(!is_in_scope(Some(&scope), "google.com", "/"));
+    }
 
     #[test]
     fn test_validate_http_request() {

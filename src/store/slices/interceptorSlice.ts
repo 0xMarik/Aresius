@@ -12,9 +12,24 @@ export interface InterceptItem {
     isHttps: boolean;
 }
 
+export interface ActiveScopeRule {
+    id: string;
+    pattern: string;
+}
+
+export interface ActiveScopePayload {
+    id: string;
+    name: string;
+    color: string;
+    allow: ActiveScopeRule[];
+    deny: ActiveScopeRule[];
+}
+
 export interface InterceptSettings {
     requestsEnabled: boolean;
     responsesEnabled: boolean;
+    scopeFilterEnabled: boolean;
+    activeScope: ActiveScopePayload | null;
 }
 
 interface InterceptorState {
@@ -30,11 +45,14 @@ const initialState: InterceptorState = {
     settings: {
         requestsEnabled: false,
         responsesEnabled: false,
+        scopeFilterEnabled: false,
+        activeScope: null,
     },
     selectedId: null,
     pollIntervalMs: 500,
     isPolling: true,
 };
+
 
 const interceptorSlice = createSlice({
     name: 'interceptor',

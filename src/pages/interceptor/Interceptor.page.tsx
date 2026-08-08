@@ -41,7 +41,7 @@ import { formatHttpMessage } from './http-pretty';
 import LightDataTable from '@/components/LightDataTable';
 import { EmptyState } from '@/components/ui/empty-state';
 import { selectActiveScope } from '@/store/slices/scopeSlice';
-import { isInScope } from '@/lib/scopeMatcher';
+
 
 
 /* -------------------------------------------------------------------------- */
@@ -175,8 +175,6 @@ const InterceptorPage: React.FC = () => {
     // const [activeTab, setActiveTab] = useState<'requests' | 'responses'>('requests');
     const [actionLoading, setActionLoading] = useState<boolean>(false);
     const [validationError, setValidationError] = useState<string | null>(null);
-    const [scopeFilterEnabled, setScopeFilterEnabled] = useState(false);
-
     // Selected response tracking (separately selectable or reactive to request selection)
     const [selectedResponseIdState, setSelectedResponseIdState] = useState<string | null>(null);
 
@@ -216,22 +214,26 @@ const InterceptorPage: React.FC = () => {
         [queue]
     );
 
-    // Auto-forward out-of-scope items when scope filter is enabled
+    // Sync active scope to backend intercept settings whenever activeScope or settings change
     useEffect(() => {
-        if (!scopeFilterEnabled || !activeScope) return;
-        const outOfScopeItems = queue.filter(
-            (item) => !isInScope(activeScope, item.host)
-        );
-        if (outOfScopeItems.length === 0) return;
-        // Fire-and-forget: forward each one
-        outOfScopeItems.forEach((item) => {
-            invoke('forward_intercept_item', {
-                payload: { id: item.id, modifiedMessage: null },
-            })
-                .then(() => dispatch(removeQueueItem(item.id)))
-                .catch((err) => console.error('Scope auto-forward failed:', err));
+        const activeScopePayload = activeScope
+            ? {
+                  id: activeScope.id,
+                  name: activeScope.name,
+                  color: activeScope.color,
+                  allow: activeScope.allow.map((a) => ({ id: a.id, pattern: a.pattern })),
+                  deny: activeScope.deny.map((d) => ({ id: d.id, pattern: d.pattern })),
+              }
+            : null;
+
+        updateSettings({
+            ...settings,
+            scopeFilterEnabled: settings.scopeFilterEnabled ?? false,
+            activeScope: activeScopePayload,
         });
-    }, [queue, scopeFilterEnabled, activeScope, dispatch]);
+    }, [activeScope, settings.scopeFilterEnabled, settings.requestsEnabled, settings.responsesEnabled]);
+
+
 
     // Active selected items
     const selectedRequestItem = useMemo(() => {
@@ -630,8 +632,10 @@ const InterceptorPage: React.FC = () => {
                         <div className="flex items-center space-x-1.5">
                             <Switch
                                 id="top-scope-switch"
-                                checked={scopeFilterEnabled}
-                                onCheckedChange={setScopeFilterEnabled}
+                                checked={settings.scopeFilterEnabled ?? false}
+                                onCheckedChange={(val) => {
+                                    updateSettings({ ...settings, scopeFilterEnabled: val });
+                                }}
                                 disabled={!activeScope}
                             />
                             <Label
