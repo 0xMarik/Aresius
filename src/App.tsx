@@ -24,6 +24,7 @@ import SitemapTree from "./pages/sitemap/Sitemap";
 import { updateSiteMap } from "./store/slices/sitemapSlice";
 import { HttpHistory } from "./types/http.type";
 import ScopeManager from "./pages/scope/ScopeManager";
+import { ProjectGuard } from "./components/project-guard";
 
 interface ReqRes {
     request: string;
@@ -119,24 +120,24 @@ export default function App() {
             <div className="flex flex-col h-svh [&_*]:text-[12px] w-full overflow-hidden">
                 <MenubarDemo />
                 <div className="flex-1 min-h-0 relative">
-                    {/* <Headers/> */}
                     <SidebarProvider className="h-full min-h-0" style={{
                         "--sidebar-width": "10rem",
                         "--sidebar-width-icon": "3rem",
                     } as React.CSSProperties} >
                         <AppSidebar />
-                        <SidebarInset className="min-h-0 overflow-auto">
-                            <Routes >
-                                <Route path="/" element={<Navigate to="/projects" replace />} />
-                                <Route path="/site-map" element={<SitemapTree />} />
-                                <Route path="/scope" element={<ScopeManager />} />
-                                <Route path="/interceptor" element={<Interceptor />} />
-                                <Route path="/replayer" element={<Replayer />} />
-                                <Route path="/http-history" element={<HTTPHisotry />} />
-                                <Route path="/fuzzer" element={<Fuzzer />} />
-                                <Route path="/projects" element={<Projects />} />
-                            </Routes>
-
+                        <SidebarInset className="min-h-0 overflow-auto flex flex-col">
+                            <ProjectGuard>
+                                <Routes>
+                                    <Route path="/" element={<Navigate to="/projects" replace />} />
+                                    <Route path="/projects" element={<Projects />} />
+                                    <Route path="/site-map" element={<SitemapTree />} />
+                                    <Route path="/scope" element={<ScopeManager />} />
+                                    <Route path="/interceptor" element={<Interceptor />} />
+                                    <Route path="/replayer" element={<Replayer />} />
+                                    <Route path="/http-history" element={<HTTPHisotry />} />
+                                    <Route path="/fuzzer" element={<Fuzzer />} />
+                                </Routes>
+                            </ProjectGuard>
                         </SidebarInset>
                     </SidebarProvider>
                 </div>

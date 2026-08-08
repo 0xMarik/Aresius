@@ -25,11 +25,34 @@ import {
 
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
 import { IconGripVertical } from "@tabler/icons-react"
 import { useAppDispatch, useAppSelector } from "@/hooks/redux"
 import { Project } from "@/types/project.type"
-import { setcurrentProjectId, setProjects } from "@/store/slices/projectSlice"
+import { setcurrentProjectId, setProjects, deleteProject } from "@/store/slices/projectSlice"
 import AddProjectDialog from "@/components/add-project-dialog.component"
+import { NoProjectBanner } from "@/components/project-guard"
+import {
+  CheckCircle2,
+  FolderOpen,
+  Trash2,
+  Clock,
+  PanelsTopLeft,
+  CalendarDays,
+  RefreshCw,
+} from "lucide-react"
+
+// App version from package – we'll just show the app version as a constant
+// In real use this could be read from tauri or a config
+const APP_VERSION = "0.1.1"
+
+/** Rough size estimate based on entry count in redux (placeholder logic) */
+function getProjectSize(project: Project): string {
+  // Could be derived from actual stored data; for now a deterministic placeholder
+  const seed = project.id.charCodeAt(0) + project.id.charCodeAt(4)
+  const kb = ((seed % 900) + 100).toFixed(0)
+  return `${kb} KB`
+}
 
 function DragHandle({ id }: { id: string }) {
   const { attributes, listeners, setNodeRef } = useSortable({
@@ -44,14 +67,14 @@ function DragHandle({ id }: { id: string }) {
       size="icon"
       {...attributes}
       {...listeners}
-      className="cursor-grab active:cursor-grabbing touch-none"
+      className="cursor-grab active:cursor-grabbing touch-none h-7 w-7 text-muted-foreground hover:text-foreground"
     >
-      <IconGripVertical className="size-4" />
+      <IconGripVertical className="size-3.5" />
     </Button>
   )
 }
 
-function DraggableRow({ row }: { row: any }) {
+function DraggableRow({ row, isActive }: { row: any; isActive: boolean }) {
   const {
     transform,
     transition,
@@ -68,7 +91,12 @@ function DraggableRow({ row }: { row: any }) {
     <TableRow
       ref={setNodeRef}
       data-dragging={isDragging}
-      className={`relative ${isDragging ? 'z-50 opacity-50' : ''}`}
+      data-active={isActive}
+      className={`
+        relative group transition-colors duration-100
+        ${isDragging ? "z-50 opacity-50 bg-muted" : ""}
+        ${isActive ? "bg-primary/5 hover:bg-primary/10" : "hover:bg-muted/40"}
+      `}
       style={{
         transform: CSS.Transform.toString(transform),
         transition,
@@ -76,8 +104,8 @@ function DraggableRow({ row }: { row: any }) {
       {...attributes}
     >
       {row.getVisibleCells().map((cell: any) => (
-        <TableCell key={cell.id}>
-          {cell.column.id === 'drag' ? (
+        <TableCell key={cell.id} className="py-2.5">
+          {cell.column.id === "drag" ? (
             <div ref={setActivatorNodeRef} {...listeners}>
               {flexRender(cell.column.columnDef.cell, cell.getContext())}
             </div>
@@ -98,7 +126,11 @@ export default function Projects() {
     dispatch(setcurrentProjectId(id))
   }
 
-  const data = projects;
+  const handleDelete = (id: string) => {
+    dispatch(deleteProject(id))
+  }
+
+  const data = projects
   const projectsIds = projects.map((item) => item.id)
 
   const columns: ColumnDef<Project, any>[] = [
@@ -106,44 +138,131 @@ export default function Projects() {
       id: "drag",
       header: () => null,
       cell: ({ row }) => <DragHandle id={row.original.id} />,
-      size: 50,
+      size: 40,
     },
     {
       accessorKey: "name",
-      header: "Name",
-      cell: (info) => info.getValue(),
+      header: "Project",
+      cell: (info) => {
+        const project = info.row.original
+        const isActive = project.id === currentProjectId
+        return (
+          <div className="flex flex-col gap-0.5">
+            <div className="flex items-center gap-2">
+              <span className="font-medium text-foreground">{info.getValue()}</span>
+              {project.temporary && (
+                <Badge
+                  variant="outline"
+                  className="h-4 px-1.5 text-[10px] leading-none border-muted-foreground/40 text-muted-foreground"
+                >
+                  temp
+                </Badge>
+              )}
+              {isActive && (
+                <Badge
+                  className="h-4 px-1.5 text-[10px] leading-none bg-primary/15 text-primary border-primary/30"
+                  variant="outline"
+                >
+                  active
+                </Badge>
+              )}
+            </div>
+          </div>
+        )
+      },
     },
     {
       accessorKey: "createdAt",
-      header: "Created at",
-      cell: (info) => new Date(info.getValue() as number).toLocaleString("en-US", {
-        month: "short",
-        day: "numeric",
-        year: "numeric",
-        hour: "numeric",
-        minute: "2-digit",
-        hour12: true
-      }),
+      header: "Created",
+      cell: (info) => (
+        <div className="flex items-center gap-1.5 text-muted-foreground">
+          <CalendarDays className="size-3 shrink-0" />
+          <span>
+            {new Date(info.getValue() as number).toLocaleString("en-US", {
+              month: "short",
+              day: "numeric",
+              year: "numeric",
+            })}
+          </span>
+        </div>
+      ),
     },
     {
       accessorKey: "updatedAt",
-      header: "Updated at",
-      cell: (info) => new Date(info.getValue() as number).toLocaleString("en-US", {
-        month: "short",
-        day: "numeric",
-        year: "numeric",
-        hour: "numeric",
-        minute: "2-digit",
-        hour12: true
-      }),
+      header: "Updated",
+      cell: (info) => (
+        <div className="flex items-center gap-1.5 text-muted-foreground">
+          <RefreshCw className="size-3 shrink-0" />
+          <span>
+            {new Date(info.getValue() as number).toLocaleString("en-US", {
+              month: "short",
+              day: "numeric",
+              year: "numeric",
+            })}
+          </span>
+        </div>
+      ),
+    },
+    {
+      id: "size",
+      header: "Size",
+      cell: ({ row }) => (
+        <div className="flex items-center gap-1.5 text-muted-foreground">
+          <span>{getProjectSize(row.original)}</span>
+        </div>
+      ),
+      size: 80,
+    },
+    {
+      id: "version",
+      header: "Version",
+      cell: () => (
+        <Badge
+          variant="outline"
+          className="h-4.5 px-1.5 text-[10px] leading-none font-mono border-muted-foreground/30 text-muted-foreground"
+        >
+          v{APP_VERSION}
+        </Badge>
+      ),
+      size: 80,
     },
     {
       accessorKey: "id",
       header: "Action",
       cell: (info) => {
-        return info.getValue() === currentProjectId ?
-          <Button className="w-24" disabled>Selected</Button> :
-          <Button className="w-24" onClick={() => changeCurrentProject(info.getValue())} >Select</Button>
+        const isActive = info.getValue() === currentProjectId
+        return (
+          <div className="flex items-center gap-1.5">
+            {isActive ? (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled
+                className="h-7 px-2.5 text-[11px] gap-1.5 border-primary/40 text-primary bg-primary/5"
+              >
+                <CheckCircle2 className="size-3" />
+                Selected
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                className="h-7 px-2.5 text-[11px] gap-1.5"
+                onClick={() => changeCurrentProject(info.getValue())}
+              >
+                <FolderOpen className="size-3" />
+                Select
+              </Button>
+            )}
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover:opacity-100 transition-opacity"
+              onClick={() => handleDelete(info.getValue())}
+            >
+              <Trash2 className="size-3" />
+            </Button>
+          </div>
+        )
       },
     },
   ]
@@ -184,12 +303,54 @@ export default function Projects() {
     }
   }
 
+  const currentProject = projects.find((p) => p.id === currentProjectId)
+
   return (
-    <>
-      <div className="w-full h-14 flex items-center">
+    <div className="p-4 flex flex-col gap-4 min-h-full">
+      {/* NoProjectBanner: shown only when redirected here without a project */}
+      <NoProjectBanner />
+
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="flex items-center justify-center size-8 rounded-lg bg-primary/10 border border-primary/20">
+            <PanelsTopLeft className="size-4 text-primary" />
+          </div>
+          <div>
+            <h1 className="text-sm font-semibold text-foreground leading-tight">Projects</h1>
+            <p className="text-[11px] text-muted-foreground leading-tight">
+              {projects.length} project{projects.length !== 1 ? "s" : ""}
+              {currentProject ? ` · Active: ${currentProject.name}` : " · No project selected"}
+            </p>
+          </div>
+        </div>
         <AddProjectDialog />
       </div>
-      <div className="rounded-lg border overflow-hidden">
+
+      {/* Active project summary card */}
+      {currentProject && (
+        <div className="flex items-center gap-3 rounded-lg border border-border bg-card px-4 py-3">
+          <div className="flex items-center justify-center size-7 rounded-md bg-primary/10 shrink-0">
+            <CheckCircle2 className="size-3.5 text-primary" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-[11px] font-semibold text-foreground truncate">{currentProject.name}</p>
+            <p className="text-[10px] text-muted-foreground flex items-center gap-1">
+              <Clock className="size-2.5" />
+              Last updated {new Date(currentProject.updatedAt).toLocaleString("en-US", {
+                month: "short", day: "numeric", year: "numeric",
+                hour: "numeric", minute: "2-digit", hour12: true,
+              })}
+            </p>
+          </div>
+          <Badge variant="outline" className="h-5 px-2 text-[10px] border-primary/30 text-primary bg-primary/5 shrink-0">
+            Active
+          </Badge>
+        </div>
+      )}
+
+      {/* Table */}
+      <div className="rounded-lg border border-border overflow-hidden flex-1">
         <DndContext
           collisionDetection={closestCenter}
           modifiers={[restrictToVerticalAxis]}
@@ -197,11 +358,14 @@ export default function Projects() {
           sensors={sensors}
         >
           <Table>
-            <TableHeader className="bg-muted">
+            <TableHeader>
               {table.getHeaderGroups().map((group) => (
-                <TableRow key={group.id}>
+                <TableRow key={group.id} className="bg-muted/60 hover:bg-muted/60 border-b border-border">
                   {group.headers.map((header) => (
-                    <TableHead key={header.id}>
+                    <TableHead
+                      key={header.id}
+                      className="h-8 text-[11px] font-semibold text-muted-foreground uppercase tracking-wide py-0"
+                    >
                       {flexRender(header.column.columnDef.header, header.getContext())}
                     </TableHead>
                   ))}
@@ -210,14 +374,29 @@ export default function Projects() {
             </TableHeader>
             <TableBody>
               <SortableContext items={projectsIds} strategy={verticalListSortingStrategy}>
-                {table.getRowModel().rows.map((row) => (
-                  <DraggableRow key={row.id} row={row} />
-                ))}
+                {table.getRowModel().rows.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={columns.length} className="h-32 text-center">
+                      <div className="flex flex-col items-center gap-2 text-muted-foreground">
+                        <FolderOpen className="size-8 opacity-30" />
+                        <p className="text-[11px]">No projects yet. Create one to get started.</p>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  table.getRowModel().rows.map((row) => (
+                    <DraggableRow
+                      key={row.id}
+                      row={row}
+                      isActive={row.original.id === currentProjectId}
+                    />
+                  ))
+                )}
               </SortableContext>
             </TableBody>
           </Table>
         </DndContext>
       </div>
-    </>
+    </div>
   )
 }

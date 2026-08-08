@@ -40,7 +40,7 @@ const AddProjectDialog = () => {
         <Dialog open={open} onOpenChange={setOpen} >
 
             <DialogTrigger asChild>
-                <Button className="bg-orange-700 hover:bg-orange-800 active:bg-orange-700" >
+                <Button variant="default" >
                     <Plus />Add new project
                 </Button>
             </DialogTrigger>
