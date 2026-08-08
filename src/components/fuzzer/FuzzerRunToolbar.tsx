@@ -13,6 +13,9 @@ import {
     DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { selectActiveScope } from '@/store/slices/scopeSlice';
+import { isInScope } from '@/lib/scopeMatcher';
+import { useMemo } from 'react';
 
 interface FuzzerRunToolbarProps {
     sessionIndex: number;
@@ -35,6 +38,18 @@ export function FuzzerRunToolbar({
 }: FuzzerRunToolbarProps) {
     const dispatch = useAppDispatch();
     const { fuzzerSessions } = useAppSelector((state) => state.fuzzerstate);
+    const activeScope = useAppSelector(selectActiveScope);
+
+    // Determine if the fuzzer target is outside the active scope
+    const isTargetOutOfScope = useMemo(() => {
+        if (!activeScope || !targetUrl) return false;
+        try {
+            const url = new URL(targetUrl.includes('://') ? targetUrl : `https://${targetUrl}`);
+            return !isInScope(activeScope, url.hostname);
+        } catch {
+            return false;
+        }
+    }, [activeScope, targetUrl]);
 
     const isRunning = runState.status === 'running';
     const percent = runState.total > 0
@@ -316,6 +331,18 @@ export function FuzzerRunToolbar({
                         <RotateCcw className="size-3" />
                         Re-send Dropped Requests
                     </Button>
+                </div>
+            )}
+
+            {/* Out-of-scope warning banner */}
+            {isTargetOutOfScope && (
+                <div className="flex items-center gap-2 rounded bg-amber-50 dark:bg-amber-500/10 px-2.5 py-1.5 border border-amber-200 dark:border-amber-500/30 text-amber-800 dark:text-amber-400 text-xs">
+                    <AlertTriangle className="size-3.5 shrink-0 text-amber-500" />
+                    <span>
+                        Target <span className="font-mono font-semibold">{targetUrl}</span> is outside the active scope
+                        {' '}(<span className="font-medium" style={{ color: activeScope?.color }}>{activeScope?.name}</span>).
+                        Fuzzing will proceed regardless.
+                    </span>
                 </div>
             )}
         </div>

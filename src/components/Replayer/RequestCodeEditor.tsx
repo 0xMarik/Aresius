@@ -2,9 +2,10 @@ import { useAppDispatch, useAppSelector } from "@/hooks/redux";
 import { setReaplayerContent } from "@/store/slices/replayerSlice";
 import { basicSetup, EditorView } from "codemirror";
 import { useEffect, useRef } from "react";
-import { EditorState, } from '@codemirror/state';
+import { EditorState } from '@codemirror/state';
 import { http } from "../http-parser.component";
 import { oneDark } from "@codemirror/theme-one-dark";
+import { useTheme } from "@/components/theme-provider";
 import CoreContextMenu from "../ContextMenu/CoreContextMenu";
 import RequestContextMenu from "./RequestContextMenu";
 
@@ -25,6 +26,8 @@ const RequestCodeEditor = () => {
 
     const editorRef = useRef<HTMLDivElement | null>(null);
     const viewRef = useRef<EditorView | null>(null);
+    const { theme } = useTheme();
+    const isDark = theme === "dark" || (theme === "system" && typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches);
     const { collections, selectedCollectionIndex } = useAppSelector(state => state.replayerstate);
     const { selectedSessionIndex } = collections[selectedCollectionIndex];
     const session = selectedSessionIndex !== null
@@ -57,7 +60,7 @@ const RequestCodeEditor = () => {
                 EditorState.lineSeparator.of("\r\n"),
                 basicSetup,
                 http(),
-                oneDark,
+                ...(isDark ? [oneDark] : []),
                 fullHeightTheme,
                 updateListener,
                 EditorView.lineWrapping,
@@ -76,13 +79,13 @@ const RequestCodeEditor = () => {
                 view.destroy();
             }
         };
-    }, [selectedHistoryIndex, selectedCollectionIndex, selectedSessionIndex]);
+    }, [selectedHistoryIndex, selectedCollectionIndex, selectedSessionIndex, isDark]);
 
 
     return (
-        <div className="bg-background w-full h-full">
+        <div className="bg-card w-full h-full">
             <CoreContextMenu renderContextMenu={() => <RequestContextMenu viewRef={viewRef} />}>
-                <div ref={editorRef} className="h-full w-full ">
+                <div ref={editorRef} className="h-full w-full">
                 </div>
             </CoreContextMenu>
         </div>

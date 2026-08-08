@@ -4,6 +4,7 @@ import { EditorState, } from '@codemirror/state';
 import { useEffect, useRef } from 'react'
 import { http } from '@/components/http-parser.component';
 import { oneDark } from '@codemirror/theme-one-dark';
+import { useTheme } from '@/components/theme-provider';
 import { useAppDispatch, useAppSelector } from '@/hooks/redux';
 import { addReplayerHistory, resetReplayerReceivedSession, selectedHisotryIndex, setReaplayerURL } from '@/store/slices/replayerSlice';
 import { Button } from '@/components/ui/button';
@@ -36,6 +37,8 @@ const fullHeightTheme = EditorView.theme({
 const ResponseCodeEditor = () => {
     const editorRef = useRef<HTMLDivElement | null>(null);
     const viewRef = useRef<EditorView | null>(null);
+    const { theme } = useTheme();
+    const isDark = theme === "dark" || (theme === "system" && typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches);
     const { collections, selectedCollectionIndex, } = useAppSelector(state => state.replayerstate);
     const { selectedSessionIndex } = collections[selectedCollectionIndex];
     const session = selectedSessionIndex !== null
@@ -60,7 +63,7 @@ const ResponseCodeEditor = () => {
             extensions: [
                 basicSetup,
                 http(),
-                oneDark,
+                ...(isDark ? [oneDark] : []),
                 fullHeightTheme,
                 EditorView.lineWrapping,
                 EditorView.editable.of(false),
@@ -80,10 +83,10 @@ const ResponseCodeEditor = () => {
                 view.destroy();
             }
         };
-    }, [history, selectedHistoryIndex, selectedCollectionIndex, selectedSessionIndex]);
+    }, [history, selectedHistoryIndex, selectedCollectionIndex, selectedSessionIndex, isDark]);
 
     return (
-        <div ref={editorRef} className="h-full w-full ">
+        <div ref={editorRef} className="h-full w-full">
         </div>
     )
 }
@@ -171,7 +174,7 @@ function Replayer() {
                             </ResizablePanel>
                             <ResizableHandle withHandle />
                             <ResizablePanel>
-                                <div className="bg-background min-w-0 w-full h-full">
+                                <div className="bg-card min-w-0 w-full h-full">
                                     {responseLoading ? (
                                         <div className="flex flex-col items-center justify-center h-full text-muted-foreground text-xs gap-2">
                                             <Loader2 className="w-6 h-6 animate-spin text-primary" />

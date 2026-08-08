@@ -279,19 +279,49 @@ const httpMode = {
 
 export const httpStreamLanguage = StreamLanguage.define(httpMode);
 
-// Custom theme for HTTP highlighting with body-specific styles
+// Custom theme for HTTP highlighting with body-specific styles and light/dark theme adaptation
 export const httpTheme = EditorView.theme({
-    '.cm-keyword': { color: '#ff6b6b', fontWeight: 'bold' }, // HTTP methods
-    '.cm-string': { color: '#4ecdc4' }, // URLs, header values, JSON/attribute strings
-    '.cm-number': { color: '#45b7d1' }, // HTTP version and JSON numbers
-    '.cm-property': { color: '#96ceb4', fontWeight: 'bold' }, // Header names and JSON keys
-    '.cm-operator': { color: '#74b9ff' }, // Colons and JSON/attribute operators
-    '.cm-bracket': { color: '#fd79a8' }, // JSON brackets and HTML tag delimiters
-    '.cm-atom': { color: '#fdcb6e' }, // JSON booleans/null
-    '.cm-tag': { color: '#ff7675' }, // HTML/XML tags
-    '.cm-attribute': { color: '#a29bfe' }, // HTML/XML attributes
-    '.cm-comment': { color: '#636e72', fontStyle: 'italic' }, // HTML/XML comments
-    '.cm-variable': { color: '#e17055', fontWeight: 'bold', backgroundColor: '#ffeaa7' }, // Template variables
+    '&': {
+        backgroundColor: 'hsl(var(--card)) !important',
+        color: 'hsl(var(--card-foreground))',
+    },
+    '.cm-gutters': {
+        backgroundColor: 'hsl(var(--card)) !important',
+        color: 'hsl(var(--muted-foreground))',
+        borderRight: '1px solid hsl(var(--border))',
+    },
+    '.cm-activeLine': {
+        backgroundColor: 'hsl(var(--accent) / 0.4)',
+    },
+    '.cm-activeLineGutter': {
+        backgroundColor: 'hsl(var(--accent))',
+    },
+
+    // Dark theme token styling
+    '.dark & .cm-keyword, & .cm-keyword': { color: '#ff6b6b', fontWeight: 'bold' },
+    '.dark & .cm-string, & .cm-string': { color: '#4ecdc4' },
+    '.dark & .cm-number, & .cm-number': { color: '#45b7d1' },
+    '.dark & .cm-property, & .cm-property': { color: '#96ceb4', fontWeight: 'bold' },
+    '.dark & .cm-operator, & .cm-operator': { color: '#74b9ff' },
+    '.dark & .cm-bracket, & .cm-bracket': { color: '#fd79a8' },
+    '.dark & .cm-atom, & .cm-atom': { color: '#fdcb6e' },
+    '.dark & .cm-tag, & .cm-tag': { color: '#ff7675' },
+    '.dark & .cm-attribute, & .cm-attribute': { color: '#a29bfe' },
+    '.dark & .cm-comment, & .cm-comment': { color: '#9a9a90', fontStyle: 'italic' },
+    '.dark & .cm-variable, & .cm-variable': { color: '#e17055', fontWeight: 'bold', backgroundColor: '#3a2e1b' },
+
+    // Light theme token styling
+    '.light & .cm-keyword': { color: '#b23a2e', fontWeight: 'bold' },
+    '.light & .cm-string': { color: '#0277bd' },
+    '.light & .cm-number': { color: '#00838f' },
+    '.light & .cm-property': { color: '#2e7d32', fontWeight: 'bold' },
+    '.light & .cm-operator': { color: '#3f51b5' },
+    '.light & .cm-bracket': { color: '#ad1457' },
+    '.light & .cm-atom': { color: '#e65100' },
+    '.light & .cm-tag': { color: '#c62828' },
+    '.light & .cm-attribute': { color: '#6a1b9a' },
+    '.light & .cm-comment': { color: '#5c6360', fontStyle: 'italic' },
+    '.light & .cm-variable': { color: '#d84315', fontWeight: 'bold', backgroundColor: '#fff8e1' },
 });
 
 // Complete language support

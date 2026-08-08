@@ -6,6 +6,7 @@ import HttpHistoryReducer from './slices/http-historySlice';
 import { Middleware } from '@reduxjs/toolkit'
 import interceptorReducer from './slices/interceptorSlice';
 import SiteMapReducer from './slices/sitemapSlice'
+import scopeReducer from './slices/scopeSlice'
 
 export const loggerMiddleware: Middleware = store => next => action => {
   // if((action as any).type !== "http-history/addToHttpHistory"){
@@ -26,6 +27,7 @@ const store = configureStore({
     httpHistory: HttpHistoryReducer,
     interceptor: interceptorReducer,
     sitemap: SiteMapReducer,
+    scope: scopeReducer,
   },
   middleware: (getDefaultMiddleware) =>
     getDefaultMiddleware().concat(loggerMiddleware),

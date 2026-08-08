@@ -23,6 +23,7 @@ import { applyFuzzUpdates, updateFuzzProgress, updateFuzzWorkerProgress } from "
 import SitemapTree from "./pages/sitemap/Sitemap";
 import { updateSiteMap } from "./store/slices/sitemapSlice";
 import { HttpHistory } from "./types/http.type";
+import ScopeManager from "./pages/scope/ScopeManager";
 
 interface ReqRes {
     request: string;
@@ -128,9 +129,7 @@ export default function App() {
                             <Routes >
                                 <Route path="/" element={<Navigate to="/projects" replace />} />
                                 <Route path="/site-map" element={<SitemapTree />} />
-                                <Route path="/scope" element={
-                                    <div>Under Construction</div>
-                                } />
+                                <Route path="/scope" element={<ScopeManager />} />
                                 <Route path="/interceptor" element={<Interceptor />} />
                                 <Route path="/replayer" element={<Replayer />} />
                                 <Route path="/http-history" element={<HTTPHisotry />} />

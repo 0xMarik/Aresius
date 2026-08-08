@@ -15,18 +15,41 @@ import {
     MenubarTrigger,
 } from "@/components/ui/menubar"
 import { Avatar, AvatarFallback, AvatarImage } from "./ui/avatar"
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { getCurrentWindow } from "@tauri-apps/api/window"
-import { Minus, Square, Copy, X, Sun, Moon, Laptop, Check } from "lucide-react"
+import { Minus, Square, Copy, X, Sun, Moon, Laptop, Check, ChevronDown, CircleDot } from "lucide-react"
 import InstallCertificateDialog from "./InstallCert"
 import { open } from "@tauri-apps/plugin-shell";
 import { useTheme } from "./theme-provider";
+import { useAppDispatch, useAppSelector } from "@/hooks/redux";
+import { selectAllScopes, selectActiveScope, selectActiveScopeId, setActiveScope } from "@/store/slices/scopeSlice";
+import { cn } from "@/lib/utils";
 
 const appWindow = getCurrentWindow()
 
 export default function MenubarDemo() {
     const [isMaximized, setIsMaximized] = useState(false)
     const { theme, setTheme } = useTheme()
+
+    // Scope state
+    const dispatch = useAppDispatch();
+    const allScopes = useAppSelector(selectAllScopes);
+    const activeScope = useAppSelector(selectActiveScope);
+    const activeScopeId = useAppSelector(selectActiveScopeId);
+    const [scopeDropdownOpen, setScopeDropdownOpen] = useState(false);
+    const scopeDropdownRef = useRef<HTMLDivElement>(null);
+
+    // Close scope dropdown on outside click
+    useEffect(() => {
+        if (!scopeDropdownOpen) return;
+        const handler = (e: MouseEvent) => {
+            if (scopeDropdownRef.current && !scopeDropdownRef.current.contains(e.target as Node)) {
+                setScopeDropdownOpen(false);
+            }
+        };
+        document.addEventListener('mousedown', handler);
+        return () => document.removeEventListener('mousedown', handler);
+    }, [scopeDropdownOpen]);
 
     useEffect(() => {
         // Set initial state
@@ -255,8 +278,84 @@ export default function MenubarDemo() {
                 </MenubarMenu>
             </Menubar>
 
+            {/* ── Scope Indicator ── */}
+            <div className="ml-auto flex items-center shrink-0 mr-2 relative" ref={scopeDropdownRef}>
+                <button
+                    type="button"
+                    onClick={() => setScopeDropdownOpen((v) => !v)}
+                    className={cn(
+                        'flex items-center gap-1.5 h-6 px-2 rounded-md border text-[11px] font-medium transition-all select-none',
+                        activeScope
+                            ? 'border-border bg-accent/60 text-foreground hover:bg-accent'
+                            : 'border-border/50 bg-transparent text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted/40'
+                    )}
+                    title={activeScope ? `Active scope: ${activeScope.name}` : 'No active scope'}
+                >
+                    {activeScope ? (
+                        <span
+                            className="w-2 h-2 rounded-full shrink-0 ring-1 ring-inset ring-white/20"
+                            style={{ backgroundColor: activeScope.color }}
+                        />
+                    ) : (
+                        <CircleDot className="w-2.5 h-2.5 shrink-0 text-muted-foreground/50" />
+                    )}
+                    <span className={activeScope ? 'text-foreground' : 'text-muted-foreground/60'}>
+                        {activeScope ? activeScope.name : 'No Scope'}
+                    </span>
+                    <ChevronDown className="w-2.5 h-2.5 text-muted-foreground/60" />
+                </button>
+
+                {/* Scope dropdown */}
+                {scopeDropdownOpen && (
+                    <div className="absolute top-full right-0 mt-1 z-50 w-52 rounded-md border border-border bg-popover shadow-lg py-1 text-[11px]">
+                        {/* No scope option */}
+                        <button
+                            type="button"
+                            onClick={() => { dispatch(setActiveScope(null)); setScopeDropdownOpen(false); }}
+                            className={cn(
+                                'w-full flex items-center gap-2 px-3 py-1.5 hover:bg-accent text-left transition-colors',
+                                activeScopeId === null ? 'text-primary font-medium' : 'text-muted-foreground'
+                            )}
+                        >
+                            <CircleDot className="w-2.5 h-2.5 shrink-0" />
+                            <span>No Scope (all traffic)</span>
+                            {activeScopeId === null && <Check className="w-2.5 h-2.5 ml-auto" />}
+                        </button>
+
+                        {allScopes.length > 0 && (
+                            <div className="my-1 h-px bg-border/50 mx-2" />
+                        )}
+
+                        {allScopes.map((scope) => (
+                            <button
+                                key={scope.id}
+                                type="button"
+                                onClick={() => { dispatch(setActiveScope(scope.id)); setScopeDropdownOpen(false); }}
+                                className={cn(
+                                    'w-full flex items-center gap-2 px-3 py-1.5 hover:bg-accent text-left transition-colors',
+                                    scope.id === activeScopeId ? 'text-foreground font-medium' : 'text-muted-foreground'
+                                )}
+                            >
+                                <span
+                                    className="w-2 h-2 rounded-full shrink-0 ring-1 ring-inset ring-white/20"
+                                    style={{ backgroundColor: scope.color }}
+                                />
+                                <span className="flex-1 truncate">{scope.name}</span>
+                                {scope.id === activeScopeId && <Check className="w-2.5 h-2.5 ml-auto shrink-0" />}
+                            </button>
+                        ))}
+
+                        {allScopes.length === 0 && (
+                            <div className="px-3 py-2 text-muted-foreground/50 text-center">
+                                No scopes defined
+                            </div>
+                        )}
+                    </div>
+                )}
+            </div>
+
             {/* Window controls: minimize, maximize/restore, close */}
-            <div className="ml-auto flex items-center shrink-0">
+            <div className="flex items-center shrink-0">
                 <button
                     type="button"
                     aria-label="Minimize"

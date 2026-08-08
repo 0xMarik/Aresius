@@ -26,6 +26,7 @@ import {
     Inbox,
     Send,
     Antenna,
+    Crosshair,
 } from 'lucide-react';
 import { useAppDispatch, useAppSelector } from '@/hooks/redux';
 import { useInterceptSettings } from '@/hooks/useInterceptPoller';
@@ -39,6 +40,8 @@ import { parseRequest, parseResponse } from '@/components/utils';
 import { formatHttpMessage } from './http-pretty';
 import LightDataTable from '@/components/LightDataTable';
 import { EmptyState } from '@/components/ui/empty-state';
+import { selectActiveScope } from '@/store/slices/scopeSlice';
+import { isInScope } from '@/lib/scopeMatcher';
 
 
 /* -------------------------------------------------------------------------- */
@@ -166,11 +169,13 @@ const InterceptorPage: React.FC = () => {
     const queue = useAppSelector((state) => state.interceptor.queue);
     const settings = useAppSelector((state) => state.interceptor.settings);
     const selectedId = useAppSelector((state) => state.interceptor.selectedId);
+    const activeScope = useAppSelector(selectActiveScope);
     const { updateSettings } = useInterceptSettings();
 
     // const [activeTab, setActiveTab] = useState<'requests' | 'responses'>('requests');
     const [actionLoading, setActionLoading] = useState<boolean>(false);
     const [validationError, setValidationError] = useState<string | null>(null);
+    const [scopeFilterEnabled, setScopeFilterEnabled] = useState(false);
 
     // Selected response tracking (separately selectable or reactive to request selection)
     const [selectedResponseIdState, setSelectedResponseIdState] = useState<string | null>(null);
@@ -210,6 +215,23 @@ const InterceptorPage: React.FC = () => {
         () => queue.filter((item) => item.itemType === 'response'),
         [queue]
     );
+
+    // Auto-forward out-of-scope items when scope filter is enabled
+    useEffect(() => {
+        if (!scopeFilterEnabled || !activeScope) return;
+        const outOfScopeItems = queue.filter(
+            (item) => !isInScope(activeScope, item.host)
+        );
+        if (outOfScopeItems.length === 0) return;
+        // Fire-and-forget: forward each one
+        outOfScopeItems.forEach((item) => {
+            invoke('forward_intercept_item', {
+                payload: { id: item.id, modifiedMessage: null },
+            })
+                .then(() => dispatch(removeQueueItem(item.id)))
+                .catch((err) => console.error('Scope auto-forward failed:', err));
+        });
+    }, [queue, scopeFilterEnabled, activeScope, dispatch]);
 
     // Active selected items
     const selectedRequestItem = useMemo(() => {
@@ -601,6 +623,31 @@ const InterceptorPage: React.FC = () => {
                             />
                             <Label htmlFor="top-res-switch" className="cursor-pointer text-[11px] font-medium text-muted-foreground">
                                 Intercept Response
+                            </Label>
+                        </div>
+                        <div className="h-3 w-px bg-border" />
+                        {/* Scope filter toggle */}
+                        <div className="flex items-center space-x-1.5">
+                            <Switch
+                                id="top-scope-switch"
+                                checked={scopeFilterEnabled}
+                                onCheckedChange={setScopeFilterEnabled}
+                                disabled={!activeScope}
+                            />
+                            <Label
+                                htmlFor="top-scope-switch"
+                                className={`cursor-pointer text-[11px] font-medium flex items-center gap-1 ${
+                                    !activeScope ? 'text-muted-foreground/40' : 'text-muted-foreground'
+                                }`}
+                            >
+                                <Crosshair className="w-3 h-3" />
+                                Scope Filter
+                                {activeScope && (
+                                    <span
+                                        className="w-1.5 h-1.5 rounded-full"
+                                        style={{ backgroundColor: activeScope.color }}
+                                    />
+                                )}
                             </Label>
                         </div>
                     </div>
