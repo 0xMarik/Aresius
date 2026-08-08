@@ -178,13 +178,25 @@ const fuzzerSlice = createSlice({
     const history = state.fuzzerSessions[selectedSession]?.fuzzingHistory[fuzzHistory];
     if (!history) return;
 
+    const existingRunState = history.runState || {} as any;
+    const existingTotal = existingRunState.total ?? 0;
+    const completedBase = existingRunState.completedBase ?? 0;
+
+    // Preserve the larger total (original run total vs resend subset total)
+    const newTotal = Math.max(existingTotal, total);
+
+    // If this is a resend (incoming total < existing total), offset by completedBase
+    const newCompleted = total < existingTotal
+      ? Math.min(completedBase + completed, newTotal)
+      : completed;
+
     history.runState = {
-      ...history.runState,
+      ...existingRunState,
       status: status as FuzzingHistory['runState']['status'],
-      total,
-      completed,
+      total: newTotal,
+      completed: newCompleted,
       connectionDropped,
-      workers: history.runState?.workers ?? [],
+      workers: existingRunState.workers ?? [],
     };
 
     if (status === 'cancelled') {
@@ -244,7 +256,12 @@ const fuzzerSlice = createSlice({
       req.response = null;
       const history = state.fuzzerSessions[sessionIndex]?.fuzzingHistory[historyIndex];
       if (history) {
-        history.runState = { ...history.runState, status: 'running', connectionDropped: false };
+        history.runState = {
+          ...history.runState,
+          status: 'running',
+          connectionDropped: false,
+          completedBase: history.runState.completed,
+        };
       }
     }
   },
@@ -273,6 +290,7 @@ const fuzzerSlice = createSlice({
     }
 
     history.runState.status = 'running';
+    history.runState.completedBase = history.runState.completed;
     history.runState.connectionDropped = history.runState.workers.some((w) => w.status === 'dropped');
   },
 
@@ -297,6 +315,7 @@ const fuzzerSlice = createSlice({
       ...history.runState,
       status: 'running',
       connectionDropped: false,
+      completedBase: history.runState.completed,
     };
   },
 
@@ -326,6 +345,7 @@ const fuzzerSlice = createSlice({
       completed: 0,
       connectionDropped: false,
       workers: initialWorkers,
+      completedBase: 0,
     };
   },
 

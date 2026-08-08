@@ -34,6 +34,8 @@ export interface FuzzRunState {
     completed: number;
     connectionDropped: boolean;
     workers: FuzzWorkerState[];
+    /** Offset of already-completed requests from a prior run, used during resend to avoid double-counting. */
+    completedBase: number;
 }
 
 // Fuzzing attack types
@@ -105,6 +107,7 @@ export const initialFuzzRunState = (): FuzzRunState => ({
     completed: 0,
     connectionDropped: false,
     workers: [],
+    completedBase: 0,
 });
 
 /** Must match backend chunking: ceil(len / numThreads) per worker. */

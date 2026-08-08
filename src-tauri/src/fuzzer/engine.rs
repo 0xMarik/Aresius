@@ -681,7 +681,7 @@ pub async fn resend_failed_fuzz_requests(
         num_tasks,
         selected_session,
         fuzz_history,
-        register_cancel: false,
+        register_cancel: true,
     };
 
     tokio::spawn(async move {
@@ -718,11 +718,17 @@ pub async fn resend_worker_fuzz_requests(
     tokio::spawn(async move {
         let total = targets.len() as u32;
         let completed = Arc::new(AtomicU32::new(0));
-        let cancel = Arc::new(AtomicBool::new(false));
+        let cancel = register_run(selected_session, fuzz_history).await;
+        let _cleanup_guard = CleanupGuard {
+            session: selected_session,
+            history: fuzz_history,
+        };
         let worker_dropped = Arc::new(AtomicBool::new(false));
         let (tx, mut rx) = mpsc::unbounded_channel::<FuzzUpdate>();
 
         let agg_app = app.clone();
+        let agg_cancel = Arc::clone(&cancel);
+        let agg_completed = Arc::clone(&completed);
         let aggregator = tokio::spawn(async move {
             let mut ticker = interval(Duration::from_millis(500));
             let mut buffer = Vec::new();
@@ -733,6 +739,21 @@ pub async fn resend_worker_fuzz_requests(
                             let _ = agg_app.emit("fuzz-update-batch", &buffer);
                             buffer.clear();
                         }
+                        let done = agg_completed.load(Ordering::Relaxed);
+                        let status = if agg_cancel.load(Ordering::Relaxed) && done < total {
+                            "cancelled"
+                        } else {
+                            "running"
+                        };
+                        emit_progress(
+                            &agg_app,
+                            selected_session,
+                            fuzz_history,
+                            done,
+                            total,
+                            status,
+                            false,
+                        );
                     }
                     maybe_update = rx.recv() => {
                         match maybe_update {
@@ -758,7 +779,7 @@ pub async fn resend_worker_fuzz_requests(
             selected_session,
             fuzz_history,
             tx.clone(),
-            cancel,
+            cancel.clone(),
             Arc::clone(&completed),
             Arc::clone(&worker_dropped),
         )
@@ -768,18 +789,22 @@ pub async fn resend_worker_fuzz_requests(
         aggregator.await.ok();
 
         let conn_dropped = worker_dropped.load(Ordering::Relaxed);
+        let cancelled = cancel.load(Ordering::Relaxed);
         let done = completed.load(Ordering::Relaxed);
+        let status = if cancelled && done < total {
+            "cancelled"
+        } else if conn_dropped {
+            "connection_dropped"
+        } else {
+            "completed"
+        };
         emit_progress(
             &app,
             selected_session,
             fuzz_history,
             done,
             total,
-            if conn_dropped {
-                "connection_dropped"
-            } else {
-                "completed"
-            },
+            status,
             conn_dropped,
         );
     });
