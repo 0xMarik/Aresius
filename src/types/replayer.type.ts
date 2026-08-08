@@ -7,6 +7,7 @@ export interface ReplayerHistoryItem {
 }
 
 export interface ReplayerSession {
+    name?: string;
     history: ReplayerHistoryItem[];
     requestTmp: string;
     url: string;
@@ -14,6 +15,7 @@ export interface ReplayerSession {
     selectedHistoryIndex: number | null;
 }
 export interface ReplayerCollection {
+    name?: string;
     sessions: ReplayerSession[];
-    selectedSessionIndex: number | null,
+    selectedSessionIndex: number | null;
 }

@@ -104,9 +104,49 @@ const replayerSlice = createSlice({
     resetReplayerReceivedSession: (state) => {
         state.receivedSession = 0;
     },
+    removeCollection: (state, action: PayloadAction<{ collectionIndex: number }>) => {
+        const { collectionIndex } = action.payload;
+        if (collectionIndex >= 0 && collectionIndex < state.collections.length) {
+            state.collections.splice(collectionIndex, 1);
+            if (state.collections.length === 0) {
+                state.collections.push({
+                    sessions: [],
+                    selectedSessionIndex: null,
+                });
+                state.selectedCollectionIndex = 0;
+            } else if (state.selectedCollectionIndex >= state.collections.length) {
+                state.selectedCollectionIndex = state.collections.length - 1;
+            }
+        }
+    },
+    removeSession: (state, action: PayloadAction<{ collectionIndex: number; sessionIndex: number }>) => {
+        const { collectionIndex, sessionIndex } = action.payload;
+        const collection = state.collections[collectionIndex];
+        if (collection && sessionIndex >= 0 && sessionIndex < collection.sessions.length) {
+            collection.sessions.splice(sessionIndex, 1);
+            if (collection.selectedSessionIndex === sessionIndex) {
+                collection.selectedSessionIndex = collection.sessions.length > 0 ? Math.min(sessionIndex, collection.sessions.length - 1) : null;
+            } else if (collection.selectedSessionIndex !== null && collection.selectedSessionIndex > sessionIndex) {
+                collection.selectedSessionIndex -= 1;
+            }
+        }
+    },
+    renameCollection: (state, action: PayloadAction<{ collectionIndex: number; name: string }>) => {
+        const { collectionIndex, name } = action.payload;
+        if (state.collections[collectionIndex]) {
+            state.collections[collectionIndex].name = name;
+        }
+    },
+    renameSession: (state, action: PayloadAction<{ collectionIndex: number; sessionIndex: number; name: string }>) => {
+        const { collectionIndex, sessionIndex, name } = action.payload;
+        const collection = state.collections[collectionIndex];
+        if (collection && collection.sessions[sessionIndex]) {
+            collection.sessions[sessionIndex].name = name;
+        }
+    },
 
 }})
 
-export const {setReaplayerContent,setReaplayerURL,addReplayerHistory,selectedHisotryIndex,addCollection,selectColSess, addSessionToCollection, resetReplayerReceivedSession} = replayerSlice.actions;
+export const { setReaplayerContent, setReaplayerURL, addReplayerHistory, selectedHisotryIndex, addCollection, selectColSess, addSessionToCollection, resetReplayerReceivedSession, removeCollection, removeSession, renameCollection, renameSession } = replayerSlice.actions;
 
 export default replayerSlice.reducer;
