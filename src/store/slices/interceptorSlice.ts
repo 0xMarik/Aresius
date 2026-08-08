@@ -135,9 +135,19 @@ export const {
 
 // ─── Selectors ─────────────────────────────────────────────────────────────────
 
-const _default = defaultInterceptorState();
+const DEFAULT_INTERCEPTOR_STATE = defaultInterceptorState();
 
-export const selectInterceptor = (projectId: string | null) => (state: RootState): InterceptorState =>
-    projectId ? (state.interceptor[projectId] ?? _default) : _default;
+const interceptorSelectorsCache = new Map<string | null, (state: RootState) => InterceptorState>();
+
+export const selectInterceptor = (projectId: string | null) => {
+    if (!interceptorSelectorsCache.has(projectId)) {
+        interceptorSelectorsCache.set(
+            projectId,
+            (state: RootState): InterceptorState =>
+                projectId && state.interceptor[projectId] ? state.interceptor[projectId] : DEFAULT_INTERCEPTOR_STATE
+        );
+    }
+    return interceptorSelectorsCache.get(projectId)!;
+};
 
 export default interceptorSlice.reducer;

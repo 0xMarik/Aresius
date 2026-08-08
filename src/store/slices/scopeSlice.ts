@@ -1,4 +1,4 @@
-import { createSlice, PayloadAction } from '@reduxjs/toolkit';
+import { createSlice, createSelector, PayloadAction } from '@reduxjs/toolkit';
 import type { RootState } from '@/store';
 import { deleteProject } from './projectSlice';
 
@@ -140,18 +140,48 @@ export const {
 
 // ─── Selectors ─────────────────────────────────────────────────────────────────
 
-const empty = defaultScopeState();
+const EMPTY_SCOPES: Scope[] = [];
 
-export const selectAllScopes = (projectId: string | null) => (state: RootState): Scope[] =>
-    projectId ? (state.scope[projectId]?.scopes ?? []) : [];
+const allScopesSelectorsCache = new Map<string | null, (state: RootState) => Scope[]>();
+const activeScopeIdSelectorsCache = new Map<string | null, (state: RootState) => string | null>();
+const activeScopeSelectorsCache = new Map<string | null, (state: RootState) => Scope | null>();
 
-export const selectActiveScopeId = (projectId: string | null) => (state: RootState): string | null =>
-    projectId ? (state.scope[projectId]?.activeScopeId ?? null) : null;
+export const selectAllScopes = (projectId: string | null) => {
+    if (!allScopesSelectorsCache.has(projectId)) {
+        allScopesSelectorsCache.set(
+            projectId,
+            (state: RootState): Scope[] =>
+                projectId && state.scope[projectId]?.scopes ? state.scope[projectId].scopes : EMPTY_SCOPES
+        );
+    }
+    return allScopesSelectorsCache.get(projectId)!;
+};
 
-export const selectActiveScope = (projectId: string | null) => (state: RootState): Scope | null => {
-    if (!projectId) return null;
-    const bucket = state.scope[projectId] ?? empty;
-    return bucket.scopes.find((s) => s.id === bucket.activeScopeId) ?? null;
+export const selectActiveScopeId = (projectId: string | null) => {
+    if (!activeScopeIdSelectorsCache.has(projectId)) {
+        activeScopeIdSelectorsCache.set(
+            projectId,
+            (state: RootState): string | null =>
+                projectId && state.scope[projectId] ? state.scope[projectId].activeScopeId : null
+        );
+    }
+    return activeScopeIdSelectorsCache.get(projectId)!;
+};
+
+export const selectActiveScope = (projectId: string | null) => {
+    if (!activeScopeSelectorsCache.has(projectId)) {
+        activeScopeSelectorsCache.set(
+            projectId,
+            createSelector(
+                [(state: RootState) => (projectId ? state.scope[projectId] : undefined)],
+                (bucket) => {
+                    if (!bucket || !bucket.activeScopeId) return null;
+                    return bucket.scopes.find((s) => s.id === bucket.activeScopeId) ?? null;
+                }
+            )
+        );
+    }
+    return activeScopeSelectorsCache.get(projectId)!;
 };
 
 export default scopeSlice.reducer;

@@ -28,8 +28,20 @@ const SiteMapSlice = createSlice({
 
 export const { updateSiteMap } = SiteMapSlice.actions;
 
+const EMPTY_SITEMAP: TreeNode[] = [];
+
+const sitemapSelectorsCache = new Map<string | null, (state: RootState) => TreeNode[]>();
+
 /** Selector: returns the sitemap tree for the given project (defaults to empty array) */
-export const selectSitemap = (projectId: string | null) => (state: RootState): TreeNode[] =>
-  projectId ? (state.sitemap[projectId] ?? []) : [];
+export const selectSitemap = (projectId: string | null) => {
+  if (!sitemapSelectorsCache.has(projectId)) {
+    sitemapSelectorsCache.set(
+      projectId,
+      (state: RootState): TreeNode[] =>
+        projectId && state.sitemap[projectId] ? state.sitemap[projectId] : EMPTY_SITEMAP
+    );
+  }
+  return sitemapSelectorsCache.get(projectId)!;
+};
 
 export default SiteMapSlice.reducer;

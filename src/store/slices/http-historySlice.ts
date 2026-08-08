@@ -1,5 +1,5 @@
 import { HttpHistory } from '@/types/http.type';
-import { createEntityAdapter, createSlice, PayloadAction } from '@reduxjs/toolkit';
+import { createEntityAdapter, createSlice, createSelector, PayloadAction } from '@reduxjs/toolkit';
 import type { RootState } from '@/store';
 import { deleteProject } from './projectSlice';
 
@@ -35,27 +35,40 @@ const HttpHistorySlice = createSlice({
 
 export const { addToHttpHistory } = HttpHistorySlice.actions;
 
-/** Returns entity adapter selectors scoped to a specific project */
+const EMPTY_HISTORY: HttpHistory[] = [];
+const emptyState = historyAdapter.getInitialState();
+
+const historySelectorsCache = new Map<string | null, {
+  selectAll: (state: RootState) => HttpHistory[];
+  selectById: (state: RootState, id: number | string) => HttpHistory | undefined;
+  selectEntities: (state: RootState) => Record<string | number, HttpHistory>;
+}>();
+
+/** Returns entity adapter selectors scoped to a specific project (memoized per projectId) */
 export const getHistorySelectors = (projectId: string | null) => {
-  const emptyState = historyAdapter.getInitialState();
-  return {
-    selectAll: (state: RootState): HttpHistory[] => {
-      if (!projectId) return [];
-      const bucket = state.httpHistory[projectId] ?? emptyState;
-      return historyAdapter.getSelectors().selectAll(bucket);
-    },
-    selectById: (state: RootState, id: number | string): HttpHistory | undefined => {
-      if (!projectId) return undefined;
-      const bucket = state.httpHistory[projectId] ?? emptyState;
+  if (!historySelectorsCache.has(projectId)) {
+    const selectBucket = (state: RootState) => (projectId ? state.httpHistory[projectId] : undefined);
+    const selectAll = createSelector(
+      [selectBucket],
+      (bucket) => (bucket ? historyAdapter.getSelectors().selectAll(bucket) : EMPTY_HISTORY)
+    );
+    const selectEntities = createSelector(
+      [selectBucket],
+      (bucket) => (bucket ? historyAdapter.getSelectors().selectEntities(bucket) : emptyState.entities)
+    );
+    const selectById = (state: RootState, id: number | string): HttpHistory | undefined => {
+      if (!projectId || !state.httpHistory[projectId]) return undefined;
       const numId = typeof id === 'number' ? id : Number(id);
-      return isNaN(numId) ? undefined : historyAdapter.getSelectors().selectById(bucket, numId);
-    },
-    selectEntities: (state: RootState) => {
-      if (!projectId) return emptyState.entities;
-      const bucket = state.httpHistory[projectId] ?? emptyState;
-      return historyAdapter.getSelectors().selectEntities(bucket);
-    },
-  };
+      return isNaN(numId) ? undefined : state.httpHistory[projectId].entities[numId];
+    };
+
+    historySelectorsCache.set(projectId, {
+      selectAll,
+      selectById,
+      selectEntities,
+    });
+  }
+  return historySelectorsCache.get(projectId)!;
 };
 
 // Legacy selector kept for backward-compat — requires projectId

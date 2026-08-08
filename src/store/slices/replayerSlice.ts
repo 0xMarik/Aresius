@@ -177,7 +177,19 @@ export const {
 
 // ─── Selectors ─────────────────────────────────────────────────────────────────
 
-export const selectReplayerState = (projectId: string | null) => (state: RootState): ReplayerState =>
-    projectId ? (state.replayerstate[projectId] ?? defaultReplayerState()) : defaultReplayerState();
+const DEFAULT_REPLAYER_STATE = defaultReplayerState();
+
+const replayerSelectorsCache = new Map<string | null, (state: RootState) => ReplayerState>();
+
+export const selectReplayerState = (projectId: string | null) => {
+    if (!replayerSelectorsCache.has(projectId)) {
+        replayerSelectorsCache.set(
+            projectId,
+            (state: RootState): ReplayerState =>
+                projectId && state.replayerstate[projectId] ? state.replayerstate[projectId] : DEFAULT_REPLAYER_STATE
+        );
+    }
+    return replayerSelectorsCache.get(projectId)!;
+};
 
 export default replayerSlice.reducer;

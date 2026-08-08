@@ -548,8 +548,20 @@ export const {
   setFuzzingAttackType,
 } = fuzzerSlice.actions;
 
+const DEFAULT_FUZZER_STATE = defaultFuzzerState();
+
+const fuzzerStateSelectorsCache = new Map<string | null, (state: RootState) => FuzzerState>();
+
 /** Selector: returns FuzzerState for given project (or default state if none) */
-export const selectFuzzerState = (projectId: string | null) => (state: RootState): FuzzerState =>
-  projectId ? (state.fuzzerstate[projectId] ?? defaultFuzzerState()) : defaultFuzzerState();
+export const selectFuzzerState = (projectId: string | null) => {
+  if (!fuzzerStateSelectorsCache.has(projectId)) {
+    fuzzerStateSelectorsCache.set(
+      projectId,
+      (state: RootState): FuzzerState =>
+        projectId && state.fuzzerstate[projectId] ? state.fuzzerstate[projectId] : DEFAULT_FUZZER_STATE
+    );
+  }
+  return fuzzerStateSelectorsCache.get(projectId)!;
+};
 
 export default fuzzerSlice.reducer;
