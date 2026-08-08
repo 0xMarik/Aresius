@@ -23,6 +23,9 @@ import {
   // SidebarRail,
 } from '@/components/ui/sidebar'
 import { useAppSelector } from "@/hooks/redux"
+import { useProjectId } from "@/hooks/useProjectId"
+import { selectFuzzerState } from "@/store/slices/fuzzerSlice"
+import { selectReplayerState } from "@/store/slices/replayerSlice"
 
 // This is sample data.
 const data = {
@@ -159,12 +162,14 @@ const data = {
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 
-  const fuzzerReceivedSession = useAppSelector((state) => state.fuzzerstate.receivedSession)
-  const replayerReceivedSession = useAppSelector((state) => state.replayerstate.receivedSession);
-  const isFuzzRunning = useAppSelector((state) =>
-    state.fuzzerstate.fuzzerSessions.some((session) =>
-      session.fuzzingHistory.some((h) => h.runState?.status === 'running')
-    )
+  const projectId = useProjectId();
+  const fstate = useAppSelector(selectFuzzerState(projectId));
+  const rstate = useAppSelector(selectReplayerState(projectId));
+
+  const fuzzerReceivedSession = fstate.receivedSession;
+  const replayerReceivedSession = rstate.receivedSession;
+  const isFuzzRunning = fstate.fuzzerSessions.some((session) =>
+    session.fuzzingHistory.some((h) => h.runState?.status === 'running')
   );
 
   const testingItems = React.useMemo(

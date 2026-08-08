@@ -1,24 +1,25 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 import type { RootState } from '@/store';
+import { deleteProject } from './projectSlice';
 
 // ─── Data types ────────────────────────────────────────────────────────────────
 
 export interface ScopeRule {
     id: string;
-    pattern: string; // e.g. "*.target.com", "target.com/api/*"
+    pattern: string;
 }
 
 export interface Scope {
     id: string;
     name: string;
-    color: string; // hex, e.g. "#6366f1"
+    color: string;
     allow: ScopeRule[];
     deny: ScopeRule[];
 }
 
 interface ScopeState {
     scopes: Scope[];
-    activeScopeId: string | null; // null = no active scope (everything passes)
+    activeScopeId: string | null;
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
@@ -28,22 +29,27 @@ function generateId(): string {
 }
 
 const SCOPE_COLORS = [
-    '#6366f1', // indigo
-    '#10b981', // emerald
-    '#f59e0b', // amber
-    '#ef4444', // red
-    '#8b5cf6', // violet
-    '#06b6d4', // cyan
-    '#ec4899', // pink
-    '#84cc16', // lime
+    '#6366f1', '#10b981', '#f59e0b', '#ef4444',
+    '#8b5cf6', '#06b6d4', '#ec4899', '#84cc16',
 ];
 
-// ─── Initial state ─────────────────────────────────────────────────────────────
-
-const initialState: ScopeState = {
+const defaultScopeState = (): ScopeState => ({
     scopes: [],
     activeScopeId: null,
-};
+});
+
+// ─── Per-project map ────────────────────────────────────────────────────────────
+
+type ScopeByProject = Record<string, ScopeState>
+
+const initialState: ScopeByProject = {}
+
+// ─── Helper to get or create a project bucket ──────────────────────────────────
+
+function getBucket(state: ScopeByProject, projectId: string): ScopeState {
+    if (!state[projectId]) state[projectId] = defaultScopeState();
+    return state[projectId];
+}
 
 // ─── Slice ─────────────────────────────────────────────────────────────────────
 
@@ -51,82 +57,71 @@ const scopeSlice = createSlice({
     name: 'scope',
     initialState,
     reducers: {
-        /** Create a brand-new scope with a generated id and a random color. */
-        createScope: (state, action: PayloadAction<{ name: string }>) => {
-            const colorIndex = state.scopes.length % SCOPE_COLORS.length;
-            const scope: Scope = {
+        createScope: (state, action: PayloadAction<{ name: string; projectId: string }>) => {
+            const bucket = getBucket(state, action.payload.projectId);
+            const colorIndex = bucket.scopes.length % SCOPE_COLORS.length;
+            bucket.scopes.push({
                 id: generateId(),
                 name: action.payload.name,
                 color: SCOPE_COLORS[colorIndex],
                 allow: [],
                 deny: [],
-            };
-            state.scopes.push(scope);
+            });
         },
 
-        /** Delete a scope by id. If it was active, clear the active scope. */
-        deleteScope: (state, action: PayloadAction<string>) => {
-            state.scopes = state.scopes.filter((s) => s.id !== action.payload);
-            if (state.activeScopeId === action.payload) {
-                state.activeScopeId = null;
-            }
+        deleteScope: (state, action: PayloadAction<{ id: string; projectId: string }>) => {
+            const bucket = getBucket(state, action.payload.projectId);
+            bucket.scopes = bucket.scopes.filter((s) => s.id !== action.payload.id);
+            if (bucket.activeScopeId === action.payload.id) bucket.activeScopeId = null;
         },
 
-        /** Rename a scope. */
-        renameScope: (state, action: PayloadAction<{ id: string; name: string }>) => {
-            const scope = state.scopes.find((s) => s.id === action.payload.id);
+        renameScope: (state, action: PayloadAction<{ id: string; name: string; projectId: string }>) => {
+            const scope = getBucket(state, action.payload.projectId).scopes.find((s) => s.id === action.payload.id);
             if (scope) scope.name = action.payload.name;
         },
 
-        /** Change a scope's color. */
-        setScopeColor: (state, action: PayloadAction<{ id: string; color: string }>) => {
-            const scope = state.scopes.find((s) => s.id === action.payload.id);
+        setScopeColor: (state, action: PayloadAction<{ id: string; color: string; projectId: string }>) => {
+            const scope = getBucket(state, action.payload.projectId).scopes.find((s) => s.id === action.payload.id);
             if (scope) scope.color = action.payload.color;
         },
 
-        /** Set (or clear) the active scope. Pass null to deactivate all scopes. */
-        setActiveScope: (state, action: PayloadAction<string | null>) => {
-            state.activeScopeId = action.payload;
+        setActiveScope: (state, action: PayloadAction<{ scopeId: string | null; projectId: string }>) => {
+            const bucket = getBucket(state, action.payload.projectId);
+            bucket.activeScopeId = action.payload.scopeId;
         },
 
-        /** Add an allow or deny rule to a scope. */
         addRule: (
             state,
-            action: PayloadAction<{ scopeId: string; list: 'allow' | 'deny'; pattern: string }>
+            action: PayloadAction<{ scopeId: string; list: 'allow' | 'deny'; pattern: string; projectId: string }>
         ) => {
-            const scope = state.scopes.find((s) => s.id === action.payload.scopeId);
+            const scope = getBucket(state, action.payload.projectId).scopes.find((s) => s.id === action.payload.scopeId);
             if (!scope) return;
-            const rule: ScopeRule = { id: generateId(), pattern: action.payload.pattern.trim() };
-            scope[action.payload.list].push(rule);
+            scope[action.payload.list].push({ id: generateId(), pattern: action.payload.pattern.trim() });
         },
 
-        /** Remove a rule by its id from either list. */
         removeRule: (
             state,
-            action: PayloadAction<{ scopeId: string; list: 'allow' | 'deny'; ruleId: string }>
+            action: PayloadAction<{ scopeId: string; list: 'allow' | 'deny'; ruleId: string; projectId: string }>
         ) => {
-            const scope = state.scopes.find((s) => s.id === action.payload.scopeId);
+            const scope = getBucket(state, action.payload.projectId).scopes.find((s) => s.id === action.payload.scopeId);
             if (!scope) return;
-            scope[action.payload.list] = scope[action.payload.list].filter(
-                (r) => r.id !== action.payload.ruleId
-            );
+            scope[action.payload.list] = scope[action.payload.list].filter((r) => r.id !== action.payload.ruleId);
         },
 
-        /** Update a rule's pattern in-place. */
         updateRule: (
             state,
-            action: PayloadAction<{
-                scopeId: string;
-                list: 'allow' | 'deny';
-                ruleId: string;
-                pattern: string;
-            }>
+            action: PayloadAction<{ scopeId: string; list: 'allow' | 'deny'; ruleId: string; pattern: string; projectId: string }>
         ) => {
-            const scope = state.scopes.find((s) => s.id === action.payload.scopeId);
+            const scope = getBucket(state, action.payload.projectId).scopes.find((s) => s.id === action.payload.scopeId);
             if (!scope) return;
             const rule = scope[action.payload.list].find((r) => r.id === action.payload.ruleId);
             if (rule) rule.pattern = action.payload.pattern.trim();
         },
+    },
+    extraReducers: (builder) => {
+        builder.addCase(deleteProject, (state, action) => {
+            delete state[action.payload];
+        });
     },
 });
 
@@ -145,11 +140,18 @@ export const {
 
 // ─── Selectors ─────────────────────────────────────────────────────────────────
 
-export const selectActiveScope = (state: RootState): Scope | null =>
-    state.scope.scopes.find((s) => s.id === state.scope.activeScopeId) ?? null;
+const empty = defaultScopeState();
 
-export const selectAllScopes = (state: RootState): Scope[] => state.scope.scopes;
+export const selectAllScopes = (projectId: string | null) => (state: RootState): Scope[] =>
+    projectId ? (state.scope[projectId]?.scopes ?? []) : [];
 
-export const selectActiveScopeId = (state: RootState): string | null => state.scope.activeScopeId;
+export const selectActiveScopeId = (projectId: string | null) => (state: RootState): string | null =>
+    projectId ? (state.scope[projectId]?.activeScopeId ?? null) : null;
+
+export const selectActiveScope = (projectId: string | null) => (state: RootState): Scope | null => {
+    if (!projectId) return null;
+    const bucket = state.scope[projectId] ?? empty;
+    return bucket.scopes.find((s) => s.id === bucket.activeScopeId) ?? null;
+};
 
 export default scopeSlice.reducer;

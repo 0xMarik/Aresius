@@ -22,6 +22,7 @@ import InstallCertificateDialog from "./InstallCert"
 import { open } from "@tauri-apps/plugin-shell";
 import { useTheme } from "./theme-provider";
 import { useAppDispatch, useAppSelector } from "@/hooks/redux";
+import { useProjectId } from "@/hooks/useProjectId";
 import { selectAllScopes, selectActiveScope, selectActiveScopeId, setActiveScope } from "@/store/slices/scopeSlice";
 import { cn } from "@/lib/utils";
 
@@ -33,9 +34,10 @@ export default function MenubarDemo() {
 
     // Scope state
     const dispatch = useAppDispatch();
-    const allScopes = useAppSelector(selectAllScopes);
-    const activeScope = useAppSelector(selectActiveScope);
-    const activeScopeId = useAppSelector(selectActiveScopeId);
+    const projectId = useProjectId();
+    const allScopes = useAppSelector(selectAllScopes(projectId));
+    const activeScope = useAppSelector(selectActiveScope(projectId));
+    const activeScopeId = useAppSelector(selectActiveScopeId(projectId));
     const [scopeDropdownOpen, setScopeDropdownOpen] = useState(false);
     const scopeDropdownRef = useRef<HTMLDivElement>(null);
 
@@ -311,7 +313,10 @@ export default function MenubarDemo() {
                         {/* No scope option */}
                         <button
                             type="button"
-                            onClick={() => { dispatch(setActiveScope(null)); setScopeDropdownOpen(false); }}
+                            onClick={() => {
+                                if (projectId) dispatch(setActiveScope({ scopeId: null, projectId }));
+                                setScopeDropdownOpen(false);
+                            }}
                             className={cn(
                                 'w-full flex items-center gap-2 px-3 py-1.5 hover:bg-accent text-left transition-colors',
                                 activeScopeId === null ? 'text-primary font-medium' : 'text-muted-foreground'
@@ -330,7 +335,10 @@ export default function MenubarDemo() {
                             <button
                                 key={scope.id}
                                 type="button"
-                                onClick={() => { dispatch(setActiveScope(scope.id)); setScopeDropdownOpen(false); }}
+                                onClick={() => {
+                                    if (projectId) dispatch(setActiveScope({ scopeId: scope.id, projectId }));
+                                    setScopeDropdownOpen(false);
+                                }}
                                 className={cn(
                                     'w-full flex items-center gap-2 px-3 py-1.5 hover:bg-accent text-left transition-colors',
                                     scope.id === activeScopeId ? 'text-foreground font-medium' : 'text-muted-foreground'

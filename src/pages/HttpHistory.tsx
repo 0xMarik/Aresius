@@ -8,13 +8,14 @@ import { isRowSelected, } from '@/components/Table';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { renderHttpHistoryTableContextMenu } from '@/components/HttpHistoryTableContextMenu';
 import { HttpHistory, RequestState } from '@/types/http.type';
-import { historySelectors } from '@/store/slices/http-historySlice';
+import { getHistorySelectors } from '@/store/slices/http-historySlice';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Clipboard } from 'lucide-react'
 import { Badge } from '@/components/ui/badge';
 import { selectActiveScope } from '@/store/slices/scopeSlice';
 import { isInScope } from '@/lib/scopeMatcher';
 import { cn } from '@/lib/utils';
+import { useProjectId } from '@/hooks/useProjectId';
 
 // Flat, at the same level as rawRequest/rawResponse -- no nested metadata
 // object. Every field except `state` is now populated straight from the
@@ -231,8 +232,10 @@ export const httpColumns: ColumnDef<HttpTransaction, any>[] = [
 
 
 const HTTPHisotry = () => {
+    const projectId = useProjectId();
+    const historySelectors = useMemo(() => getHistorySelectors(projectId), [projectId]);
     const history = useAppSelector(historySelectors.selectAll);
-    const activeScope = useAppSelector(selectActiveScope);
+    const activeScope = useAppSelector(selectActiveScope(projectId));
     const [selectedRequest, setSelectedRequest] = useState<number | null>(null);
     const [scopeFilter, setScopeFilter] = useState<'all' | 'in' | 'out'>('all');
 

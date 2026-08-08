@@ -1,10 +1,11 @@
 import React from 'react';
 import { useAppDispatch, useAppSelector } from '@/hooks/redux';
-
+import { useProjectId } from '@/hooks/useProjectId';
+import type { RootState } from '@/store';
 import RequestEditor from './request-editor/RequestEditor';
 import FuzzConfig from './FuzzConfig';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '../ui/resizable';
-import { addFuzzingHistory, setFuzzingAttackType, setFuzzRunTargets, setTargerUrl } from '@/store/slices/fuzzerSlice';
+import { addFuzzingHistory, setFuzzingAttackType, setFuzzRunTargets, setTargerUrl, selectFuzzerState, defaultFuzzerState } from '@/store/slices/fuzzerSlice';
 import { FuzzingAttackType, initialFuzzRunState } from '@/types/fuzzer.type';
 import { invoke } from '@tauri-apps/api/core';
 import { useStore } from 'react-redux';
@@ -13,11 +14,6 @@ import { Button } from '../ui/button';
 import { Play } from 'lucide-react';
 import { ValidateUrlInput } from '../ValidateUrlInput';
 
-
-// Shape of what this component actually renders for the active session.
-// Deliberately excludes `requests` — that's what applyFuzzUpdates mutates
-// on every completed/errored fuzz request, and we don't want to re-render
-// on that.
 type ActiveSessionShape = {
   targetUrl: string
   fuzzingAttackType: FuzzingAttackType
@@ -25,73 +21,72 @@ type ActiveSessionShape = {
   historyDates: string[]
 } | undefined
 
-
-
-export const selectActiveSessionShape = (state: { fuzzerstate: any }): ActiveSessionShape => {
-  const idx = state.fuzzerstate.activeSessionIndex
-  if (idx === null || idx === undefined) return undefined
-  const s = state.fuzzerstate.fuzzerSessions[idx]
-  if (!s) return undefined
+export const selectActiveSessionShape = (projectId: string | null) => (state: RootState): ActiveSessionShape => {
+  if (!projectId) return undefined;
+  const fstate = state.fuzzerstate[projectId] ?? defaultFuzzerState();
+  const idx = fstate.activeSessionIndex;
+  if (idx === null || idx === undefined) return undefined;
+  const s = fstate.fuzzerSessions[idx];
+  if (!s) return undefined;
   return {
     targetUrl: s.fuzzConfig.metadata.targetUrl,
     fuzzingAttackType: s.fuzzConfig.fuzzingAttackType,
     selectedHistoryIndex: s.selectedHistoryIndex ?? null,
     historyDates: s.fuzzingHistory.map((h: { date: string }) => h.date),
-  }
-}
+  };
+};
 
 export const shallowEqualActiveSession = (a: ActiveSessionShape, b: ActiveSessionShape) => {
-  if (a === b) return true
-  if (!a || !b) return a === b
-  if (a.targetUrl !== b.targetUrl) return false
-  if (a.fuzzingAttackType !== b.fuzzingAttackType) return false
-  if (a.selectedHistoryIndex !== b.selectedHistoryIndex) return false
-  if (a.historyDates.length !== b.historyDates.length) return false
+  if (a === b) return true;
+  if (!a || !b) return a === b;
+  if (a.targetUrl !== b.targetUrl) return false;
+  if (a.fuzzingAttackType !== b.fuzzingAttackType) return false;
+  if (a.selectedHistoryIndex !== b.selectedHistoryIndex) return false;
+  if (a.historyDates.length !== b.historyDates.length) return false;
   for (let i = 0; i < a.historyDates.length; i++) {
-    if (a.historyDates[i] !== b.historyDates[i]) return false
+    if (a.historyDates[i] !== b.historyDates[i]) return false;
   }
-  return true
-}
+  return true;
+};
 
 const FuzzRequestPayload: React.FC = () => {
-  const dispatch = useAppDispatch()
-  const store = useStore()
+  const dispatch = useAppDispatch();
+  const store = useStore();
+  const projectId = useProjectId();
 
-  const { activeSessionIndex, fuzzerSessions } = useAppSelector(state => state.fuzzerstate);
-  if (activeSessionIndex === null) return null;
-  if (fuzzerSessions[activeSessionIndex] === undefined) return null;
-  // Narrow shape + custom equality -> ignores `requests` churn entirely.
-  const activeSession = useAppSelector(selectActiveSessionShape, shallowEqualActiveSession)
-  // const { rawRequest } = fuzzerSessions[activeSessionIndex].payload;
+  const { activeSessionIndex, fuzzerSessions } = useAppSelector(selectFuzzerState(projectId));
+  const activeSession = useAppSelector(selectActiveSessionShape(projectId), shallowEqualActiveSession);
 
-  // Event handler, not a render concern: read fresh state directly from
-  // the store instead of subscribing to it via a selector. This keeps
-  // triggerFuzzing's dependency on fuzzerSessions from ever causing a
-  // re-render — it only needs the value at the moment it's called.
+  if (activeSessionIndex === null || fuzzerSessions[activeSessionIndex] === undefined) return null;
+
   const triggerFuzzing = async () => {
-    const { activeSessionIndex, fuzzerSessions } = (store.getState() as any).fuzzerstate
-    if (activeSessionIndex === null || activeSessionIndex === undefined) return;
-    const fuzzSession = fuzzerSessions[activeSessionIndex]
+    if (!projectId) return;
+    const currentStoreState = store.getState() as RootState;
+    const fstate = currentStoreState.fuzzerstate[projectId] ?? defaultFuzzerState();
+    const activeSessionIdx = fstate.activeSessionIndex;
+    if (activeSessionIdx === null || activeSessionIdx === undefined) return;
+    const fuzzSession = fstate.fuzzerSessions[activeSessionIdx];
     if (!fuzzSession) return;
 
     const historyIndex = fuzzSession.fuzzingHistory.length;
 
     dispatch(addFuzzingHistory({
-      sessionIndex: activeSessionIndex,
+      sessionIndex: activeSessionIdx,
       history: {
         date: (new Date()).toISOString(),
         fuzzConfigSnapshot: fuzzSession.fuzzConfig,
         requests: [],
         runState: { ...initialFuzzRunState(), status: 'running' },
       },
+      projectId,
     }));
 
     const executeProps = {
       session: fuzzSession,
       numTasks: fuzzSession.fuzzConfig.numThreads,
-      selectedSession: activeSessionIndex,
+      selectedSession: activeSessionIdx,
       fuzzHistory: historyIndex,
-    }
+    };
 
     let targets: { id: string; request: string }[] = [];
     try {
@@ -115,11 +110,12 @@ const FuzzRequestPayload: React.FC = () => {
     }
 
     dispatch(setFuzzRunTargets({
-      sessionIndex: activeSessionIndex,
+      sessionIndex: activeSessionIdx,
       historyIndex,
       targets,
-    }))
-  }
+      projectId,
+    }));
+  };
 
   return (
     <div className='flex flex-col gap-1 h-full'>
@@ -127,13 +123,17 @@ const FuzzRequestPayload: React.FC = () => {
 
         <ValidateUrlInput
           url={activeSession?.targetUrl ?? ''}
-          onChange={(url, urlIsValid) => dispatch(setTargerUrl({ targetUrl: url, urlIsValid }))}
+          onChange={(url, urlIsValid) => {
+            if (projectId) dispatch(setTargerUrl({ targetUrl: url, urlIsValid, projectId }));
+          }}
         />
 
         <Select
           defaultValue={"1"}
           value={activeSession?.fuzzingAttackType}
-          onValueChange={(value) => dispatch(setFuzzingAttackType({ fuzzingAttackingType: value as FuzzingAttackType }))}
+          onValueChange={(value) => {
+            if (projectId) dispatch(setFuzzingAttackType({ fuzzingAttackingType: value as FuzzingAttackType, projectId }));
+          }}
         >
           <SelectTrigger className="w-[180px] h-8 text-xs shrink-0">
             <SelectValue />

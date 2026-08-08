@@ -29,11 +29,13 @@ import {
     Crosshair,
 } from 'lucide-react';
 import { useAppDispatch, useAppSelector } from '@/hooks/redux';
+import { useProjectId } from '@/hooks/useProjectId';
 import { useInterceptSettings } from '@/hooks/useInterceptPoller';
 import {
     setSelectedId,
     removeQueueItem,
     clearQueue,
+    selectInterceptor,
     InterceptItem,
 } from '@/store/slices/interceptorSlice';
 import { parseRequest, parseResponse } from '@/components/utils';
@@ -164,12 +166,12 @@ const RawMessageEditor: React.FC<RawMessageEditorProps> = ({
 
 const InterceptorPage: React.FC = () => {
     const dispatch = useAppDispatch();
-    // Use granular selectors so this component only re-renders when the specific
-    // field changes — NOT on every setSelectedId dispatch from DataTable.
-    const queue = useAppSelector((state) => state.interceptor.queue);
-    const settings = useAppSelector((state) => state.interceptor.settings);
-    const selectedId = useAppSelector((state) => state.interceptor.selectedId);
-    const activeScope = useAppSelector(selectActiveScope);
+    const projectId = useProjectId();
+    const interceptorState = useAppSelector(selectInterceptor(projectId));
+    const queue = interceptorState.queue;
+    const settings = interceptorState.settings;
+    const selectedId = interceptorState.selectedId;
+    const activeScope = useAppSelector(selectActiveScope(projectId));
     const { updateSettings } = useInterceptSettings();
 
     // const [activeTab, setActiveTab] = useState<'requests' | 'responses'>('requests');
@@ -218,12 +220,12 @@ const InterceptorPage: React.FC = () => {
     useEffect(() => {
         const activeScopePayload = activeScope
             ? {
-                  id: activeScope.id,
-                  name: activeScope.name,
-                  color: activeScope.color,
-                  allow: activeScope.allow.map((a) => ({ id: a.id, pattern: a.pattern })),
-                  deny: activeScope.deny.map((d) => ({ id: d.id, pattern: d.pattern })),
-              }
+                id: activeScope.id,
+                name: activeScope.name,
+                color: activeScope.color,
+                allow: activeScope.allow.map((a) => ({ id: a.id, pattern: a.pattern })),
+                deny: activeScope.deny.map((d) => ({ id: d.id, pattern: d.pattern })),
+            }
             : null;
 
         updateSettings({
@@ -303,7 +305,7 @@ const InterceptorPage: React.FC = () => {
 
         try {
             await invoke('forward_intercept_item', { payload });
-            dispatch(removeQueueItem(selectedRequestItem.id));
+            if (projectId) dispatch(removeQueueItem({ id: selectedRequestItem.id, projectId }));
         } catch (err: any) {
             console.error('Failed to forward request:', err);
             setValidationError(typeof err === 'string' ? err : err.message || 'Validation error');
@@ -317,7 +319,7 @@ const InterceptorPage: React.FC = () => {
         setActionLoading(true);
         try {
             await invoke('drop_intercept_item', { id: selectedRequestItem.id });
-            dispatch(removeQueueItem(selectedRequestItem.id));
+            if (projectId) dispatch(removeQueueItem({ id: selectedRequestItem.id, projectId }));
         } catch (err) {
             console.error('Failed to drop request:', err);
         } finally {
@@ -336,7 +338,7 @@ const InterceptorPage: React.FC = () => {
 
         try {
             await invoke('forward_intercept_item', { payload });
-            dispatch(removeQueueItem(selectedResponseItem.id));
+            if (projectId) dispatch(removeQueueItem({ id: selectedResponseItem.id, projectId }));
         } catch (err: any) {
             console.error('Failed to forward response:', err);
         } finally {
@@ -349,7 +351,7 @@ const InterceptorPage: React.FC = () => {
         setActionLoading(true);
         try {
             await invoke('drop_intercept_item', { id: selectedResponseItem.id });
-            dispatch(removeQueueItem(selectedResponseItem.id));
+            if (projectId) dispatch(removeQueueItem({ id: selectedResponseItem.id, projectId }));
         } catch (err) {
             console.error('Failed to drop response:', err);
         } finally {
@@ -362,7 +364,7 @@ const InterceptorPage: React.FC = () => {
         setActionLoading(true);
         try {
             await invoke('drop_all_intercept_items');
-            dispatch(clearQueue());
+            if (projectId) dispatch(clearQueue(projectId));
         } catch (err) {
             console.error('Failed to drop all items:', err);
         } finally {
@@ -381,7 +383,9 @@ const InterceptorPage: React.FC = () => {
                 items.map((item) =>
                     invoke('forward_intercept_item', {
                         payload: { id: item.id, modifiedMessage: null },
-                    }).then(() => dispatch(removeQueueItem(item.id)))
+                    }).then(() => {
+                        if (projectId) dispatch(removeQueueItem({ id: item.id, projectId }));
+                    })
                 )
             );
         } catch (err) {
@@ -561,18 +565,19 @@ const InterceptorPage: React.FC = () => {
 
     const handleSelectRequestRow = useCallback(
         (idNum: number | null) => {
+            if (!projectId) return;
             if (idNum === null) {
                 if (selectedIdRef.current !== null) {
-                    dispatch(setSelectedId(null));
+                    dispatch(setSelectedId({ id: null, projectId }));
                 }
                 return;
             }
             const match = requestRowsRef.current.find((r) => r.id === idNum);
             if (match && match.originalId !== selectedIdRef.current) {
-                dispatch(setSelectedId(match.originalId));
+                dispatch(setSelectedId({ id: match.originalId, projectId }));
             }
         },
-        [dispatch]
+        [dispatch, projectId]
     );
 
     const handleSelectResponseRow = useCallback(
@@ -640,9 +645,8 @@ const InterceptorPage: React.FC = () => {
                             />
                             <Label
                                 htmlFor="top-scope-switch"
-                                className={`cursor-pointer text-[11px] font-medium flex items-center gap-1 ${
-                                    !activeScope ? 'text-muted-foreground/40' : 'text-muted-foreground'
-                                }`}
+                                className={`cursor-pointer text-[11px] font-medium flex items-center gap-1 ${!activeScope ? 'text-muted-foreground/40' : 'text-muted-foreground'
+                                    }`}
                             >
                                 <Crosshair className="w-3 h-3" />
                                 Scope Filter

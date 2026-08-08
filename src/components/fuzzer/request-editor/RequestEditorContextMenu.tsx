@@ -1,6 +1,8 @@
 import { Copy } from "lucide-react";
 import { EditorView } from "codemirror";
 import { useAppSelector } from "@/hooks/redux";
+import { useProjectId } from "@/hooks/useProjectId";
+import { selectFuzzerState } from "@/store/slices/fuzzerSlice";
 import { ContextMenuItem, ContextMenuShortcut } from "@/components/ui/context-menu";
 import SendToReplayer from "@/components/ContextMenu/SendToReplayer";
 import { Kbd, KbdGroup } from "@/components/ui/kbd";
@@ -12,7 +14,6 @@ const handleCopy = ({ viewRef }: { viewRef: React.MutableRefObject<EditorView | 
     const { state } = view;
     const { from, to, empty } = state.selection.main;
 
-    // selection present -> copy just that; otherwise copy the whole doc
     const text = empty
         ? state.sliceDoc(0, state.doc.length)
         : state.sliceDoc(from, to);
@@ -21,10 +22,10 @@ const handleCopy = ({ viewRef }: { viewRef: React.MutableRefObject<EditorView | 
 };
 
 const RequestEditorContextMenu = ({ viewRef }: { viewRef: React.MutableRefObject<EditorView | null> }) => {
-    const { fuzzerSessions, activeSessionIndex } = useAppSelector(state => state.fuzzerstate);
-    if (activeSessionIndex === null) return;
+    const projectId = useProjectId();
+    const { fuzzerSessions, activeSessionIndex } = useAppSelector(selectFuzzerState(projectId));
+    if (activeSessionIndex === null || !fuzzerSessions[activeSessionIndex]) return null;
     const { fuzzConfig } = fuzzerSessions[activeSessionIndex];
-
 
     return (
         <>

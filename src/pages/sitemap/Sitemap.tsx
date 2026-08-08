@@ -5,16 +5,18 @@ import { Globe, Server, Folder, Route, Braces, ListTree, Eye, EyeOff } from 'luc
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { SitemapKind, TreeNode } from '@/types/sitemap.type';
 import { useAppSelector } from '@/hooks/redux';
+import { useProjectId } from '@/hooks/useProjectId';
 import Table from '@/components/Table';
 import { CodeMirrorEditor } from '@/components/result-table.components';
 import { renderHttpHistoryTableContextMenu } from '@/components/HttpHistoryTableContextMenu';
 import { adaptFromReqRes, httpColumns } from '@/pages/HttpHistory';
-import { historySelectors } from '@/store/slices/http-historySlice';
+import { getHistorySelectors } from '@/store/slices/http-historySlice';
+import { selectSitemap } from '@/store/slices/sitemapSlice';
 import { buildSitemapNodeIndex, collectRequestIdsDeduped, countUniqueRequests } from './utils';
 import type { EntityId } from '@reduxjs/toolkit';
 import type { HttpHistory } from '@/types/http.type';
 import { EmptyState } from '@/components/ui/empty-state';
-import { selectActiveScope } from '@/store/slices/scopeSlice';
+import { selectActiveScope, Scope } from '@/store/slices/scopeSlice';
 import { isInScope } from '@/lib/scopeMatcher';
 import { cn } from '@/lib/utils';
 
@@ -28,7 +30,7 @@ const kindIcon: Record<SitemapKind, ReactNode> = {
 
 function renderSitemapNode(
     node: TreeNode,
-    _activeScope: ReturnType<typeof selectActiveScope>
+    _activeScope: Scope | null
 ) {
     const d = node.data;
     if (!d) return <span className="text-sm">{node.label}</span>;
@@ -76,7 +78,7 @@ interface SitemapTreePaneProps {
     onSelect: (ids: string[]) => void;
     expandedIds: string[];
     onExpand: (ids: string[]) => void;
-    activeScope: ReturnType<typeof selectActiveScope>;
+    activeScope: Scope | null;
 }
 
 const SitemapTreePane = React.memo<SitemapTreePaneProps>(function SitemapTreePane({
@@ -98,15 +100,6 @@ const SitemapTreePane = React.memo<SitemapTreePaneProps>(function SitemapTreePan
             showTreeLines
             renderNode={(node) => renderSitemapNode(node as any, activeScope) as any}
             virtualizeEnabled
-            className="bg-transparent !h-full"
-            treeLineClassName="!border-border/40"
-            treeNodeClassName="
-    !bg-transparent
-    !text-muted-foreground
-    hover:!bg-accent/50 hover:!text-foreground
-    aria-selected:!bg-accent aria-selected:!text-accent-foreground
-    rounded-sm text-[13px] font-mono transition-colors
-  "
         />
     );
 });
@@ -115,7 +108,7 @@ const SitemapTreePane = React.memo<SitemapTreePaneProps>(function SitemapTreePan
 // 2. Memoized Request Table Component
 // ---------------------------------------------------------------------------
 interface SitemapRequestTablePaneProps {
-    selectedNodeId: string;
+    selectedNodeId: string | null;
     requestIds: string[];
     onSelectRequest: (id: number | null) => void;
 }
@@ -125,13 +118,13 @@ const SitemapRequestTablePane = React.memo<SitemapRequestTablePaneProps>(functio
     requestIds,
     onSelectRequest,
 }) {
-    // Fine-grained Redux selector: only re-compute `rows` if the relevant entities change
+    const projectId = useProjectId();
     const rows = useAppSelector(
         (state) => {
-            const entities = state.httpHistory.entities;
+            const entities = getHistorySelectors(projectId).selectEntities(state);
             const items: HttpHistory[] = [];
             for (const idStr of requestIds) {
-                const item = entities[resolveEntityId(idStr) as any];
+                const item = (entities as Record<string | number, HttpHistory>)[resolveEntityId(idStr)];
                 if (item) items.push(item);
             }
             return adaptFromReqRes(items);
@@ -171,8 +164,11 @@ interface SitemapRequestViewerPaneProps {
 const SitemapRequestViewerPane = React.memo<SitemapRequestViewerPaneProps>(function SitemapRequestViewerPane({
     selectedRequestId,
 }) {
+    const projectId = useProjectId();
     const selectedEntity = useAppSelector((state) =>
-        selectedRequestId !== null ? historySelectors.selectById(state, selectedRequestId) : undefined
+        selectedRequestId !== null
+            ? getHistorySelectors(projectId).selectById(state, selectedRequestId)
+            : undefined
     );
 
     return (
@@ -207,17 +203,16 @@ export default function SitemapTree() {
     const [selectedIds, setSelectedIds] = useState<string[]>([]);
     const [expandedIds, setExpandedIds] = useState<string[]>([]);
     const [selectedRequest, setSelectedRequest] = useState<number | null>(null);
-    const [showOutOfScope, setShowOutOfScope] = useState(false); // default: hide out-of-scope when scope is active
+    const [showOutOfScope, setShowOutOfScope] = useState(false);
 
-    const sitemap = useAppSelector((state) => state.sitemap);
-    const activeScope = useAppSelector(selectActiveScope);
+    const projectId = useProjectId();
+    const sitemap = useAppSelector(selectSitemap(projectId));
+    const activeScope = useAppSelector(selectActiveScope(projectId));
     const selectedNodeId = selectedIds[0] ?? null;
 
     const nodeIndex = useMemo(() => buildSitemapNodeIndex(sitemap), [sitemap]);
     const selectedNode = selectedNodeId ? nodeIndex.get(selectedNodeId) ?? null : null;
 
-    // Filter top-level nodes: when a scope is active, hide out-of-scope nodes by default.
-    // If showOutOfScope is toggled on, show everything.
     const visibleSitemap = useMemo(() => {
         if (!activeScope || showOutOfScope) return sitemap;
         return sitemap.filter((node) => isInScope(activeScope, node.label ?? ''));
@@ -244,83 +239,95 @@ export default function SitemapTree() {
         setSelectedRequest(id);
     }, []);
 
+    if (sitemap.length === 0) {
+        return (
+            <div className="flex h-full min-h-0 flex-col items-center justify-center">
+                <EmptyState
+                    icon={ListTree}
+                    title="No Sitemap Data Yet"
+                    description="Make HTTP requests through Aresius to populate the target sitemap hierarchy automatically."
+                />
+            </div>
+        );
+    }
+
     return (
-        <div className="h-full min-h-0 overflow-hidden rounded-md flex flex-col">
-            {/* Scope toolbar */}
-            <div className="flex items-center gap-2 px-3 py-1.5 border-b border-border/60 bg-card/30 shrink-0">
-                {activeScope ? (
-                    <>
-                        <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground/70">
-                            <span
-                                className="w-2 h-2 rounded-full"
-                                style={{ backgroundColor: activeScope.color }}
-                            />
+        <div className="flex h-full min-h-0 flex-col bg-[--color-canvas] select-none font-sans">
+            {/* Scope Bar */}
+            {activeScope && (
+                <div className="flex items-center justify-between px-3 py-1 bg-muted/20 border-b border-border/40 text-[11px] shrink-0">
+                    <div className="flex items-center gap-1.5 text-muted-foreground">
+                        <span>Filtered by scope:</span>
+                        <span className="font-semibold text-foreground flex items-center gap-1">
+                            <span className="w-2 h-2 rounded-full inline-block" style={{ backgroundColor: activeScope.color }} />
                             {activeScope.name}
                         </span>
-                        <button
-                            type="button"
-                            onClick={() => setShowOutOfScope((v) => !v)}
-                            className={cn(
-                                'flex items-center gap-1.5 text-[11px] font-medium px-2 py-0.5 rounded-md border transition-colors',
-                                showOutOfScope
-                                    ? 'border-amber-300/60 bg-amber-500/10 text-amber-600 dark:text-amber-400'
-                                    : 'border-border text-muted-foreground hover:bg-muted/40'
-                            )}
-                            title={showOutOfScope ? 'Click to hide out-of-scope nodes' : 'Click to show out-of-scope nodes'}
-                        >
-                            {showOutOfScope
-                                ? <Eye className="w-3 h-3" />
-                                : <EyeOff className="w-3 h-3" />}
-                            {showOutOfScope ? 'Showing out-of-scope' : 'In-scope only'}
-                        </button>
-                    </>
-                ) : (
-                    <span className="text-[11px] text-muted-foreground/50">No active scope — showing all traffic</span>
-                )}
-            </div>
+                        {!showOutOfScope && (
+                            <span className="text-[10px] text-muted-foreground/70">
+                                ({sitemap.length - visibleSitemap.length} hidden)
+                            </span>
+                        )}
+                    </div>
+                    <button
+                        onClick={() => setShowOutOfScope((v) => !v)}
+                        className={cn(
+                            'flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium transition-colors',
+                            showOutOfScope
+                                ? 'bg-primary/10 text-primary hover:bg-primary/20'
+                                : 'bg-muted/40 text-muted-foreground hover:text-foreground'
+                        )}
+                    >
+                        {showOutOfScope ? (
+                            <>
+                                <EyeOff className="w-3 h-3" /> Hide Out-of-Scope
+                            </>
+                        ) : (
+                            <>
+                                <Eye className="w-3 h-3" /> Show Out-of-Scope
+                            </>
+                        )}
+                    </button>
+                </div>
+            )}
 
-            <div className="flex-1 min-h-0 overflow-hidden">
-            <ResizablePanelGroup direction="horizontal" autoSaveId="aresius-sitemap-layout" className="h-full min-h-0">
-                <ResizablePanel defaultSize={20} minSize={13} className="min-h-0 overflow-hidden">
-                    <SitemapTreePane
-                        data={visibleSitemap}
-                        selectedIds={selectedIds}
-                        onSelect={handleSelectTree}
-                        expandedIds={expandedIds}
-                        onExpand={handleExpandTree}
-                        activeScope={activeScope}
-                    />
+            <ResizablePanelGroup direction="horizontal" autoSaveId="aresius-sitemap-layout" className="flex-1 min-h-0">
+                {/* Tree Pane */}
+                <ResizablePanel defaultSize={30} minSize={15} className="min-h-0 overflow-hidden">
+                    <div className="h-full min-h-0 overflow-auto p-2 bg-[--color-canvas]">
+                        <SitemapTreePane
+                            data={visibleSitemap}
+                            selectedIds={selectedIds}
+                            onSelect={handleSelectTree}
+                            expandedIds={expandedIds}
+                            onExpand={handleExpandTree}
+                            activeScope={activeScope}
+                        />
+                    </div>
                 </ResizablePanel>
+
                 <ResizableHandle withHandle />
-                <ResizablePanel defaultSize={80} minSize={20} className="min-h-0 overflow-hidden">
-                    {!selectedNode ? (
-                        <div className="flex h-full items-center justify-center text-sm text-[--color-charcoal]/50">
-                            <EmptyState
-                                icon={ListTree}
-                                title="Sitemap Node Not Selected"
-                                description="Pick any host, folder, or endpoint on the left to inspect the requests captured for it."
+
+                {/* Right Side: Requests Table + Request/Response Viewers */}
+                <ResizablePanel defaultSize={70} minSize={20} className="min-h-0 overflow-hidden">
+                    <ResizablePanelGroup direction="vertical" autoSaveId="aresius-sitemap-right-layout" className="h-full min-h-0">
+                        {/* Upper: Requests Table */}
+                        <ResizablePanel defaultSize={50} minSize={15} className="min-h-0 overflow-hidden">
+                            <SitemapRequestTablePane
+                                selectedNodeId={selectedNodeId}
+                                requestIds={requestIds}
+                                onSelectRequest={handleSelectRequest}
                             />
-                        </div>
-                    ) : (
-                        <ResizablePanelGroup direction="vertical" autoSaveId="aresius-sitemap-requests-layout" className="h-full min-h-0">
-                            <ResizablePanel defaultSize={50} minSize={15} className="min-h-0 overflow-hidden">
-                                <SitemapRequestTablePane
-                                    selectedNodeId={selectedNodeId!}
-                                    requestIds={requestIds}
-                                    onSelectRequest={handleSelectRequest}
-                                />
-                            </ResizablePanel>
-                            <ResizableHandle withHandle />
-                            <ResizablePanel defaultSize={50} minSize={15} className="min-h-0 overflow-hidden">
-                                <div className="flex h-full min-h-0 flex-col overflow-hidden">
-                                    <SitemapRequestViewerPane selectedRequestId={selectedRequest} />
-                                </div>
-                            </ResizablePanel>
-                        </ResizablePanelGroup>
-                    )}
+                        </ResizablePanel>
+
+                        <ResizableHandle withHandle />
+
+                        {/* Lower: Request/Response Split View */}
+                        <ResizablePanel defaultSize={50} minSize={15} className="min-h-0 overflow-hidden">
+                            <SitemapRequestViewerPane selectedRequestId={selectedRequest} />
+                        </ResizablePanel>
+                    </ResizablePanelGroup>
                 </ResizablePanel>
             </ResizablePanelGroup>
-            </div>
         </div>
     );
 }

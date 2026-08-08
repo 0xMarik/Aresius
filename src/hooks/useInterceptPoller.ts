@@ -4,9 +4,11 @@ import { useAppDispatch, useAppSelector } from './redux';
 import {
     setQueue,
     setSettings,
+    selectInterceptor,
     InterceptItem,
     InterceptSettings,
 } from '@/store/slices/interceptorSlice';
+import { useProjectId } from './useProjectId';
 
 function isQueueEqual(a: InterceptItem[], b: InterceptItem[]): boolean {
     if (a.length !== b.length) return false;
@@ -25,10 +27,13 @@ function isQueueEqual(a: InterceptItem[], b: InterceptItem[]): boolean {
 
 export function useInterceptSettings() {
     const dispatch = useAppDispatch();
-    const settings = useAppSelector((state) => state.interceptor.settings);
+    const projectId = useProjectId();
+    const interceptor = useAppSelector(selectInterceptor(projectId));
+    const settings = interceptor.settings;
 
     const updateSettings = async (newSettings: InterceptSettings) => {
-        dispatch(setSettings(newSettings));
+        if (!projectId) return;
+        dispatch(setSettings({ settings: newSettings, projectId }));
         try {
             await invoke('set_intercept_settings', { settings: newSettings });
         } catch (err) {
@@ -41,20 +46,18 @@ export function useInterceptSettings() {
 
 export function useInterceptPoller() {
     const dispatch = useAppDispatch();
-    // Select ONLY the fields needed for the poller — never the full interceptor
-    // object, because selecting `state.interceptor` causes App to re-render on
-    // every setQueue / setSelectedId dispatch, cascading through the whole tree.
-    const pollIntervalMs = useAppSelector((state) => state.interceptor.pollIntervalMs);
-    const isPolling = useAppSelector((state) => state.interceptor.isPolling);
-    const queue = useAppSelector((state) => state.interceptor.queue);
+    const projectId = useProjectId();
+    const interceptor = useAppSelector(selectInterceptor(projectId));
+
+    const pollIntervalMs = interceptor.pollIntervalMs;
+    const isPolling = interceptor.isPolling;
+    const queue = interceptor.queue;
     const queueRef = useRef(queue);
 
     useEffect(() => {
         queueRef.current = queue;
     }, [queue]);
 
-    // Stable refs for interval config so the interval effect doesn't restart
-    // when only queue changes (which would happen if we read from the closure).
     const pollIntervalMsRef = useRef(pollIntervalMs);
     const isPollingRef = useRef(isPolling);
     useEffect(() => { pollIntervalMsRef.current = pollIntervalMs; }, [pollIntervalMs]);
@@ -62,18 +65,20 @@ export function useInterceptPoller() {
 
     // Initial settings fetch
     useEffect(() => {
+        if (!projectId) return;
         invoke<InterceptSettings>('get_intercept_settings')
             .then((res) => {
-                dispatch(setSettings(res));
+                dispatch(setSettings({ settings: res, projectId }));
             })
             .catch((err) => {
                 console.error('Failed to get intercept settings:', err);
             });
-    }, [dispatch]);
+    }, [dispatch, projectId]);
 
     // Sync settings change to Rust backend
     const updateSettings = async (newSettings: InterceptSettings) => {
-        dispatch(setSettings(newSettings));
+        if (!projectId) return;
+        dispatch(setSettings({ settings: newSettings, projectId }));
         try {
             await invoke('set_intercept_settings', { settings: newSettings });
         } catch (err) {
@@ -83,7 +88,7 @@ export function useInterceptPoller() {
 
     // Polling hook for single queue state command
     useEffect(() => {
-        if (!isPolling) return;
+        if (!isPolling || !projectId) return;
 
         let isMounted = true;
 
@@ -91,7 +96,7 @@ export function useInterceptPoller() {
             try {
                 const newQueue = await invoke<InterceptItem[]>('get_intercept_queue');
                 if (isMounted && !isQueueEqual(newQueue, queueRef.current)) {
-                    dispatch(setQueue(newQueue));
+                    dispatch(setQueue({ items: newQueue, projectId }));
                 }
             } catch (err) {
                 console.error('Failed to poll intercept queue:', err);
@@ -105,7 +110,7 @@ export function useInterceptPoller() {
             isMounted = false;
             clearInterval(intervalId);
         };
-    }, [dispatch, pollIntervalMs, isPolling]);
+    }, [dispatch, pollIntervalMs, isPolling, projectId]);
 
     return {
         updateSettings,

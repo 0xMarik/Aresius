@@ -2,48 +2,34 @@ import { useCallback, useMemo } from 'react'
 import { Button } from '../ui/button'
 import { Folder, Plus, SlidersVertical } from 'lucide-react'
 import { useAppDispatch, useAppSelector } from '@/hooks/redux'
-import { addFuzzSession, setSelectedFuzz } from '@/store/slices/fuzzerSlice'
+import { useProjectId } from '@/hooks/useProjectId'
+import { addFuzzSession, setSelectedFuzz, selectFuzzerState } from '@/store/slices/fuzzerSlice'
 import { RsTree, TreeNode } from 'rstree-ui'
 import { RunningDot } from '@/components/ui/RunningDot'
 
-// Only compares what the tree renders: session count + each session's
-// history dates and running statuses. `requests` never enters this, so applyFuzzUpdates
-// churning through fuzzed rows doesn't count as a "change" here unless status changes.
 interface HistoryShapeItem {
     date: string;
     isRunning: boolean;
 }
 
-const sessionShapeEqual = (a: HistoryShapeItem[][], b: HistoryShapeItem[][]) => {
-    if (a === b) return true
-    if (!a || !b || a.length !== b.length) return false
-    for (let i = 0; i < a.length; i++) {
-        if (!a[i] || !b[i] || a[i].length !== b[i].length) return false
-        for (let j = 0; j < a[i].length; j++) {
-            if (a[i][j].date !== b[i][j].date || a[i][j].isRunning !== b[i][j].isRunning) return false
-        }
-    }
-    return true
-}
 
 const FuzzSession = () => {
-    console.count('FuzzSession render')
     const dispatch = useAppDispatch();
+    const projectId = useProjectId();
+    const fstate = useAppSelector(selectFuzzerState(projectId));
 
-    const sessionShape = useAppSelector<HistoryShapeItem[][]>(
-        (state) => state.fuzzerstate.fuzzerSessions.map((s) => s.fuzzingHistory.map((h) => ({
+    const sessionShape = useMemo<HistoryShapeItem[][]>(() => {
+        return fstate.fuzzerSessions.map((s) => s.fuzzingHistory.map((h) => ({
             date: h.date,
             isRunning: h.runState?.status === 'running',
-        }))),
-        sessionShapeEqual
-    )
+        })));
+    }, [fstate.fuzzerSessions]);
 
-    const activeSessionIndex = useAppSelector((state) => state.fuzzerstate.activeSessionIndex)
-    const activeHistoryIndex = useAppSelector((state) => {
-        const idx = state.fuzzerstate.activeSessionIndex
-        if (idx === null || idx === undefined) return undefined
-        return state.fuzzerstate.fuzzerSessions[idx]?.selectedHistoryIndex
-    })
+    const activeSessionIndex = fstate.activeSessionIndex;
+    const activeHistoryIndex = useMemo(() => {
+        if (activeSessionIndex === null || activeSessionIndex === undefined) return undefined;
+        return fstate.fuzzerSessions[activeSessionIndex]?.selectedHistoryIndex;
+    }, [fstate.fuzzerSessions, activeSessionIndex]);
 
     const data: TreeNode<unknown>[] = useMemo(() =>
         sessionShape.map((historyItems, colIndex) => {
@@ -90,21 +76,24 @@ const FuzzSession = () => {
     }, [activeSessionIndex])
 
     const handleCreateFuzzSession = useCallback(() => {
-        dispatch(addFuzzSession({ name: "Session", targetUrl: "", isItFuzzerPage: true }))
-    }, [dispatch])
+        if (projectId) {
+            dispatch(addFuzzSession({ name: "Session", targetUrl: "", isItFuzzerPage: true, projectId }));
+        }
+    }, [dispatch, projectId])
 
     const handleSelection = useCallback((value: string[]) => {
+        if (!projectId) return;
         if (value.length >= 1) {
             if (value[0].includes("-")) {
                 const [sessionId, historyId] = value[0].split("-");
-                dispatch(setSelectedFuzz({ sessionIndex: Number(sessionId), historyIndex: Number(historyId) }))
+                dispatch(setSelectedFuzz({ sessionIndex: Number(sessionId), historyIndex: Number(historyId), projectId }));
             } else {
-                dispatch(setSelectedFuzz({ sessionIndex: Number(value[0]), historyIndex: null }))
+                dispatch(setSelectedFuzz({ sessionIndex: Number(value[0]), historyIndex: null, projectId }));
             }
         } else {
-            dispatch(setSelectedFuzz({ sessionIndex: null, historyIndex: null }))
+            dispatch(setSelectedFuzz({ sessionIndex: null, historyIndex: null, projectId }));
         }
-    }, [dispatch])
+    }, [dispatch, projectId])
 
     return (
         <div className='flex flex-col gap-1 h-full'>

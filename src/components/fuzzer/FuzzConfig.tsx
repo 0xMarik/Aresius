@@ -4,15 +4,17 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import { useAppDispatch, useAppSelector } from "@/hooks/redux";
+import { useProjectId } from "@/hooks/useProjectId";
 import { Textarea } from "@/components/ui/textarea";
-import { loadValuesParam, setDelayMs, setNumThreads, setSelectedParameter } from "@/store/slices/fuzzerSlice";
+import { loadValuesParam, setDelayMs, setNumThreads, setSelectedParameter, selectFuzzerState } from "@/store/slices/fuzzerSlice";
 import { FuzzingAttackType } from "@/types/fuzzer.type";
 import { IconUpload } from "@tabler/icons-react";
 import { EmptyState } from "../ui/empty-state";
 import { ArrowRight, MousePointerClick } from "lucide-react";
 
 export default function PayloadConfigurator() {
-    const { activeSessionIndex, fuzzerSessions } = useAppSelector(state => state.fuzzerstate);
+    const projectId = useProjectId();
+    const { activeSessionIndex, fuzzerSessions } = useAppSelector(selectFuzzerState(projectId));
     const dispatch = useAppDispatch();
 
     if (activeSessionIndex === null) {
@@ -31,9 +33,6 @@ export default function PayloadConfigurator() {
         [session.fuzzConfig.fuzzingAttackType]
     );
 
-    // Derive selectedParam fresh on every render instead of caching it in
-    // state — this guarantees it's always in sync with `parameters`, and
-    // it's always either a real FuzzerParameter or null, never undefined.
     const selectedParam = useMemo(() => {
         if (parameters.length === 0) return null;
         if (isOnePayload) return parameters[0] ?? null;
@@ -52,13 +51,13 @@ export default function PayloadConfigurator() {
     }, [selectedParam, isOnePayload, parameters]);
 
     const handleValues = (event: any) => {
-        if (paramIndex === -1) return;
-        dispatch(loadValuesParam({ paramIndex, values: event.target.value }));
+        if (paramIndex === -1 || !projectId) return;
+        dispatch(loadValuesParam({ paramIndex, values: event.target.value, projectId }));
     };
 
     const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
-        if (!file || paramIndex === -1) return;
+        if (!file || paramIndex === -1 || !projectId) return;
 
         const reader = new FileReader();
         reader.onload = (e) => {
@@ -68,7 +67,7 @@ export default function PayloadConfigurator() {
             const existingValues = selectedParam?.values.join("\n") || "";
             const updatedValues = existingValues ? `${existingValues}\n${fileContent}` : fileContent;
 
-            dispatch(loadValuesParam({ paramIndex, values: updatedValues }));
+            dispatch(loadValuesParam({ paramIndex, values: updatedValues, projectId }));
         };
 
         reader.onerror = () => {
@@ -104,7 +103,6 @@ export default function PayloadConfigurator() {
 
             <TabsContent value="payload" className="space-y-4 mt-4 h-full">
                 {
-                    // their is no need to show payload if you won't set each parameter their payloads values
                     (session.fuzzConfig.fuzzingAttackType === FuzzingAttackType.ZIPPED || session.fuzzConfig.fuzzingAttackType === FuzzingAttackType.COMBINATORIAL) &&
                     <div>
                         <Label htmlFor="payloadNumber">Payload #</Label>
@@ -112,7 +110,7 @@ export default function PayloadConfigurator() {
                             disabled={isOnePayload}
                             value={selectedParam.highlightRange.id}
                             onValueChange={(value) => {
-                                dispatch(setSelectedParameter({ parameterId: value }));
+                                if (projectId) dispatch(setSelectedParameter({ parameterId: value, projectId }));
                             }}
                         >
                             <SelectTrigger className="w-[180px]">
@@ -171,12 +169,12 @@ export default function PayloadConfigurator() {
                 <div>
                     Number of requests: {
                         isOnePayload
-                            ? parameters[0].values.length
+                            ? parameters[0]?.values.length ?? 0
                             : session.fuzzConfig.fuzzingAttackType === FuzzingAttackType.ZIPPED
                                 ? parameters.reduce((acc, param) => param.values.length < acc ? param.values.length : acc, Infinity)
                                 : session.fuzzConfig.fuzzingAttackType === FuzzingAttackType.COMBINATORIAL
                                     ? parameters.reduce((acc, param) => acc * param.values.length, 1)
-                                    : parameters[0].values.length
+                                    : parameters[0]?.values.length ?? 0
                     }
                 </div>
             </TabsContent>
@@ -196,7 +194,7 @@ export default function PayloadConfigurator() {
                     max={20}
                     value={session.fuzzConfig.numThreads}
                     onChange={(event) => {
-                        dispatch(setNumThreads({ numThreads: parseInt(event.target.value) }));
+                        if (projectId) dispatch(setNumThreads({ numThreads: parseInt(event.target.value), projectId }));
                     }}
                 />
                 <br />
@@ -211,7 +209,7 @@ export default function PayloadConfigurator() {
                     min={0}
                     value={session.fuzzConfig.delayMs}
                     onChange={(event) => {
-                        dispatch(setDelayMs({ delayMs: parseInt(event.target.value) }));
+                        if (projectId) dispatch(setDelayMs({ delayMs: parseInt(event.target.value), projectId }));
                     }}
                 />
             </TabsContent>

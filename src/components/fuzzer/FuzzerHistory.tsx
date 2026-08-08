@@ -1,4 +1,6 @@
 import { useAppDispatch, useAppSelector } from '@/hooks/redux';
+import { useProjectId } from '@/hooks/useProjectId';
+import { selectFuzzerState } from '@/store/slices/fuzzerSlice';
 import { CodeMirrorEditor } from '../result-table.components';
 import { createColumnHelper, ColumnDef } from '@tanstack/react-table';
 import Table, { isRowSelected, BaseRow } from '@/components/Table';
@@ -249,7 +251,8 @@ interface ParamsType {
 }
 
 const FuzzerHistoryCompo = ({ isLoading, sessionIndex, historyIndex }: ParamsType) => {
-    const { fuzzerSessions } = useAppSelector((state) => state.fuzzerstate);
+    const projectId = useProjectId();
+    const { fuzzerSessions } = useAppSelector(selectFuzzerState(projectId));
     const [focusedId, setFocusedId] = useState<number | null>(null);
 
     const session = fuzzerSessions[sessionIndex];
@@ -294,6 +297,7 @@ function FuzzerHistoryBody({
     setFocusedId: (id: number | null) => void;
 }) {
     const dispatch = useAppDispatch();
+    const projectId = useProjectId();
     const rows = useMemo(() => adaptFuzzerRequests(requests), [requests]);
 
     const enrichedRows = useMemo(
@@ -384,6 +388,7 @@ function FuzzerHistoryBody({
                                                             focusedResult!.fuzzRequestId,
                                                             focusedResult!.rawRequest,
                                                             fuzzConfigSnapshot.metadata.targetUrl,
+                                                            projectId,
                                                         )}
                                                     >
                                                         <RotateCcw className="size-3" />
@@ -426,6 +431,7 @@ function FuzzerHistoryBody({
                                                                 focusedResult.fuzzRequestId,
                                                                 focusedResult.rawRequest,
                                                                 fuzzConfigSnapshot.metadata.targetUrl,
+                                                                projectId,
                                                             )}
                                                         >
                                                             <RotateCcw className="size-3" />

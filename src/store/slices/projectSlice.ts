@@ -46,6 +46,9 @@ const projectSlice = createSlice({
         state.currentProjectId = project ? project.id : null;
       }
     },
+    resetProjectData(_state, _action: PayloadAction<string>) {
+      // Handled by other slices in extraReducers
+    },
   },
 })
 
@@ -55,6 +58,7 @@ export const {
   updateProject,
   deleteProject,
   setcurrentProjectId,
+  resetProjectData,
 } = projectSlice.actions;
 
 export default projectSlice.reducer;

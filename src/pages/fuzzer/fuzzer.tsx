@@ -1,4 +1,5 @@
 import { useAppDispatch, useAppSelector } from '@/hooks/redux';
+import { useProjectId } from '@/hooks/useProjectId';
 import FuzzSession from '@/components/Fuzzer/FuzzerSession';
 import FuzzerHistoryCompo from '@/components/Fuzzer/FuzzerHistory';
 import FuzzRequestPayload, { selectActiveSessionShape, shallowEqualActiveSession } from '@/components/Fuzzer/FuzzerRequestPayload';
@@ -6,17 +7,20 @@ import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/componen
 import { EmptyState } from '@/components/ui/empty-state';
 import { Target } from 'lucide-react';
 import { useEffect } from 'react';
-import { resetFuzzReceivedSession } from '@/store/slices/fuzzerSlice';
+import { resetFuzzReceivedSession, selectFuzzerState } from '@/store/slices/fuzzerSlice';
 
 const Fuzzer: React.FC = () => {
-    const activeSessionIndex = useAppSelector(state => state.fuzzerstate.activeSessionIndex)
-    const activeSession = useAppSelector(selectActiveSessionShape, shallowEqualActiveSession)
+    const projectId = useProjectId();
+    const { activeSessionIndex } = useAppSelector(selectFuzzerState(projectId));
+    const activeSession = useAppSelector(selectActiveSessionShape(projectId), shallowEqualActiveSession);
 
-    const dispatch = useAppDispatch()
+    const dispatch = useAppDispatch();
 
     useEffect(() => {
-        dispatch(resetFuzzReceivedSession())
-    }, [dispatch])
+        if (projectId) {
+            dispatch(resetFuzzReceivedSession(projectId));
+        }
+    }, [dispatch, projectId]);
 
     return (
         <div className="h-full min-h-0">
@@ -31,11 +35,11 @@ const Fuzzer: React.FC = () => {
                             {
                                 activeSessionIndex !== null && activeSessionIndex !== undefined ?
                                     (
-                                        activeSession?.selectedHistoryIndex !== null ?
+                                        activeSession?.selectedHistoryIndex !== null && activeSession?.selectedHistoryIndex !== undefined ?
                                             <FuzzerHistoryCompo
                                                 isLoading={false}
                                                 sessionIndex={activeSessionIndex}
-                                                historyIndex={activeSession!.selectedHistoryIndex!}
+                                                historyIndex={activeSession.selectedHistoryIndex}
                                             /> :
                                             <FuzzRequestPayload />
                                     )
@@ -56,5 +60,3 @@ const Fuzzer: React.FC = () => {
 };
 
 export default Fuzzer;
-
-

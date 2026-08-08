@@ -2,12 +2,15 @@ import { ContextMenuItem } from '../ui/context-menu'
 import { Send } from 'lucide-react'
 import { addFuzzSession } from '@/store/slices/fuzzerSlice';
 import { useAppDispatch } from '@/hooks/redux';
+import { useProjectId } from '@/hooks/useProjectId';
 
 const SendToFuzzer = ({ rawRequest, host }: { rawRequest: string, host: string }) => {
     const dispatch = useAppDispatch();
+    const projectId = useProjectId();
 
     const sendToFuzzer = () => {
-        dispatch(addFuzzSession({ name: "From history", rawRequest: rawRequest, targetUrl: host, isItFuzzerPage: false }))
+        if (!projectId) return;
+        dispatch(addFuzzSession({ name: "From history", rawRequest: rawRequest, targetUrl: host, isItFuzzerPage: false, projectId }))
     };
     return (
         <ContextMenuItem onSelect={sendToFuzzer}>

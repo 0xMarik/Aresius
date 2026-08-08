@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { useAppDispatch } from '@/hooks/redux'
+import { useProjectId } from '@/hooks/useProjectId'
 import {
     addCollection,
     addSessionToCollection,
@@ -35,6 +36,7 @@ interface RemoveTarget {
 
 const ReplayerSession = ({ collections }: { collections: ReplayerCollection[] }) => {
     const dispatch = useAppDispatch()
+    const projectId = useProjectId()
 
     const [selectedIds, setSelectedIds] = React.useState<string[]>([]);
     const [searchTerm, setSearchTerm] = useState('')
@@ -59,19 +61,19 @@ const ReplayerSession = ({ collections }: { collections: ReplayerCollection[] })
     }))
 
     const handleSelection = (value: string[]) => {
-        if (value !== undefined && value.length === 1 && value[0].includes("-")) {
+        if (value !== undefined && value.length === 1 && value[0].includes("-") && projectId) {
             const newValue = value[0]?.split("-") || [];
-            dispatch(selectColSess({ collectionIndex: Number(newValue[0]), sessionIndex: Number(newValue[1]) }));
+            dispatch(selectColSess({ collectionIndex: Number(newValue[0]), sessionIndex: Number(newValue[1]), projectId }));
         }
         setSelectedIds(value)
     }
 
     const handleConfirmRemove = () => {
-        if (!removingItem) return;
+        if (!removingItem || !projectId) return;
         if (removingItem.type === 'collection') {
-            dispatch(removeCollection({ collectionIndex: removingItem.colIndex }));
+            dispatch(removeCollection({ collectionIndex: removingItem.colIndex, projectId }));
         } else if (removingItem.type === 'session' && removingItem.sessIndex !== undefined) {
-            dispatch(removeSession({ collectionIndex: removingItem.colIndex, sessionIndex: removingItem.sessIndex }));
+            dispatch(removeSession({ collectionIndex: removingItem.colIndex, sessionIndex: removingItem.sessIndex, projectId }));
         }
         setRemoveDialogOpen(false);
         setRemovingItem(null);
@@ -86,12 +88,12 @@ const ReplayerSession = ({ collections }: { collections: ReplayerCollection[] })
         const isEditing = editingNodeId === node.id;
 
         const handleSaveInline = () => {
-            if (!editingNodeId) return;
+            if (!editingNodeId || !projectId) return;
             const trimmed = editingText.trim();
             if (isCollection) {
-                dispatch(renameCollection({ collectionIndex: colIndex, name: trimmed }));
+                dispatch(renameCollection({ collectionIndex: colIndex, name: trimmed, projectId }));
             } else if (sessIndex !== undefined) {
-                dispatch(renameSession({ collectionIndex: colIndex, sessionIndex: sessIndex, name: trimmed }));
+                dispatch(renameSession({ collectionIndex: colIndex, sessionIndex: sessIndex, name: trimmed, projectId }));
             }
             setEditingNodeId(null);
         };
@@ -192,7 +194,11 @@ const ReplayerSession = ({ collections }: { collections: ReplayerCollection[] })
         <div className='h-full'>
             <ButtonGroup className="my-2 mx-auto">
                 <Button className=' w-full' onClick={
-                    () => dispatch(addSessionToCollection({ collectionIndex: Number((selectedIds[0] ?? "0-0").split('-')[0]), isItReplayerPage: true }))}><Plus /> New Session</Button>
+                    () => {
+                        if (projectId) {
+                            dispatch(addSessionToCollection({ collectionIndex: Number((selectedIds[0] ?? "0-0").split('-')[0]), isItReplayerPage: true, projectId }));
+                        }
+                    }}><Plus /> New Session</Button>
                 <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                         <Button variant="default" className="pl-2!">
@@ -200,7 +206,9 @@ const ReplayerSession = ({ collections }: { collections: ReplayerCollection[] })
                         </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end" className="w-44">
-                        <DropdownMenuItem onSelect={() => dispatch(addCollection())}>
+                        <DropdownMenuItem onSelect={() => {
+                            if (projectId) dispatch(addCollection(projectId));
+                        }}>
                             <Plus />
                             New Collection
                         </DropdownMenuItem>

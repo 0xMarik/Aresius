@@ -26,6 +26,8 @@ import { HttpHistory } from "./types/http.type";
 import ScopeManager from "./pages/scope/ScopeManager";
 import { ProjectGuard } from "./components/project-guard";
 
+import store from "./store";
+
 interface ReqRes {
     request: string;
     response: string;
@@ -68,8 +70,11 @@ export default function App() {
         const setupListener = async () => {
             const unlisten = await listen('http_history', (event) => {
                 console.log({ historyItem: event.payload })
-                dispatch(addToHttpHistory({ historyItem: event.payload as HttpHistory }));
-                dispatch(updateSiteMap({ historyItem: event.payload as any }))
+                const projectId = store.getState().workspacestate.currentProjectId;
+                if (projectId) {
+                    dispatch(addToHttpHistory({ historyItem: event.payload as HttpHistory, projectId }));
+                    dispatch(updateSiteMap({ historyItem: event.payload as any, projectId }));
+                }
             });
 
 
@@ -87,7 +92,10 @@ export default function App() {
 
     useEffect(() => {
         const unlisten = listen<FuzzUpdate[]>("fuzz-update-batch", (event) => {
-            dispatch(applyFuzzUpdates({ updates: event.payload }))
+            const projectId = store.getState().workspacestate.currentProjectId;
+            if (projectId) {
+                dispatch(applyFuzzUpdates({ updates: event.payload, projectId }));
+            }
         });
 
         return () => {
@@ -97,7 +105,10 @@ export default function App() {
 
     useEffect(() => {
         const unlisten = listen<FuzzProgressUpdate>("fuzz-progress", (event) => {
-            dispatch(updateFuzzProgress(event.payload));
+            const projectId = store.getState().workspacestate.currentProjectId;
+            if (projectId) {
+                dispatch(updateFuzzProgress({ ...event.payload, projectId }));
+            }
         });
 
         return () => {
@@ -107,7 +118,10 @@ export default function App() {
 
     useEffect(() => {
         const unlisten = listen<FuzzWorkerUpdate>("fuzz-worker-update", (event) => {
-            dispatch(updateFuzzWorkerProgress(event.payload));
+            const projectId = store.getState().workspacestate.currentProjectId;
+            if (projectId) {
+                dispatch(updateFuzzWorkerProgress({ ...event.payload, projectId }));
+            }
         });
 
         return () => {

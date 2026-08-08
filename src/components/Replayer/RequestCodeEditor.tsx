@@ -1,5 +1,6 @@
 import { useAppDispatch, useAppSelector } from "@/hooks/redux";
-import { setReaplayerContent } from "@/store/slices/replayerSlice";
+import { useProjectId } from "@/hooks/useProjectId";
+import { setReaplayerContent, selectReplayerState } from "@/store/slices/replayerSlice";
 import { basicSetup, EditorView } from "codemirror";
 import { useEffect, useRef } from "react";
 import { EditorState } from '@codemirror/state';
@@ -21,25 +22,26 @@ const fullHeightTheme = EditorView.theme({
     },
 });
 
-
 const RequestCodeEditor = () => {
-
     const editorRef = useRef<HTMLDivElement | null>(null);
     const viewRef = useRef<EditorView | null>(null);
     const { theme } = useTheme();
     const isDark = theme === "dark" || (theme === "system" && typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches);
-    const { collections, selectedCollectionIndex } = useAppSelector(state => state.replayerstate);
-    const { selectedSessionIndex } = collections[selectedCollectionIndex];
-    const session = selectedSessionIndex !== null
-        ? collections[selectedCollectionIndex].sessions[selectedSessionIndex]
+
+    const projectId = useProjectId();
+    const { collections, selectedCollectionIndex } = useAppSelector(selectReplayerState(projectId));
+    const collection = collections[selectedCollectionIndex];
+    const selectedSessionIndex = collection?.selectedSessionIndex ?? null;
+    const session = selectedSessionIndex !== null && collection
+        ? collection.sessions[selectedSessionIndex]
         : null;
     const requestTmp = session?.requestTmp ?? "";
     const selectedHistoryIndex = session?.selectedHistoryIndex ?? null;
     const dispatch = useAppDispatch();
 
     useEffect(() => {
-        if (!editorRef.current) return;
-        if (selectedSessionIndex === null) return; // nothing to edit yet
+        if (!editorRef.current || !projectId) return;
+        if (selectedSessionIndex === null) return;
 
         if (viewRef.current) {
             viewRef.current.destroy();
@@ -48,9 +50,8 @@ const RequestCodeEditor = () => {
 
         const updateListener = EditorView.updateListener.of((update) => {
             if (update.docChanged) {
-                // line break to specify \r\n that are in the origin request
-                const code = update.state.doc.sliceString(0, update.state.doc.length, state.lineBreak)
-                dispatch(setReaplayerContent({ rawRequest: code }));
+                const code = update.state.doc.sliceString(0, update.state.doc.length, state.lineBreak);
+                dispatch(setReaplayerContent({ rawRequest: code, projectId }));
             }
         });
 
@@ -79,8 +80,7 @@ const RequestCodeEditor = () => {
                 view.destroy();
             }
         };
-    }, [selectedHistoryIndex, selectedCollectionIndex, selectedSessionIndex, isDark]);
-
+    }, [selectedHistoryIndex, selectedCollectionIndex, selectedSessionIndex, isDark, projectId]);
 
     return (
         <div className="bg-card w-full h-full">
@@ -89,7 +89,7 @@ const RequestCodeEditor = () => {
                 </div>
             </CoreContextMenu>
         </div>
-    )
-}
+    );
+};
 
 export default RequestCodeEditor;

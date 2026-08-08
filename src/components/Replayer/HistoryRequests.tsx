@@ -5,25 +5,28 @@ import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/table'
 import { parseRequest } from '../utils'
 import { useAppDispatch } from '@/hooks/redux'
+import { useProjectId } from '@/hooks/useProjectId'
 import { selectedHisotryIndex } from '@/store/slices/replayerSlice'
 import { ReplayerHistoryItem } from '@/types/replayer.type'
 
 const HistoryRequests = ({ selectedHistoryIndex, history }: { selectedHistoryIndex: number | null; history: ReplayerHistoryItem[] }) => {
 
     const dispatch = useAppDispatch()
+    const projectId = useProjectId()
 
     const goNewer = () => {
-        if (selectedHistoryIndex === null || selectedHistoryIndex === 0) return;
-        dispatch(selectedHisotryIndex({ historyIndex: selectedHistoryIndex - 1 }));
+        if (selectedHistoryIndex === null || selectedHistoryIndex === 0 || !projectId) return;
+        dispatch(selectedHisotryIndex({ historyIndex: selectedHistoryIndex - 1, projectId }));
     };
 
     const goOlder = () => {
-        if (selectedHistoryIndex === null || selectedHistoryIndex >= history.length - 1) return;
-        dispatch(selectedHisotryIndex({ historyIndex: selectedHistoryIndex + 1 }));
+        if (selectedHistoryIndex === null || selectedHistoryIndex >= history.length - 1 || !projectId) return;
+        dispatch(selectedHisotryIndex({ historyIndex: selectedHistoryIndex + 1, projectId }));
     };
 
     const handleSelectedHisotry = (value: string) => {
-        dispatch(selectedHisotryIndex({ historyIndex: parseInt(value) }));
+        if (!projectId) return;
+        dispatch(selectedHisotryIndex({ historyIndex: parseInt(value), projectId }));
     }
 
     return (

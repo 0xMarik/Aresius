@@ -8,6 +8,8 @@ import interceptorReducer from './slices/interceptorSlice';
 import SiteMapReducer from './slices/sitemapSlice'
 import scopeReducer from './slices/scopeSlice'
 
+import { projectDataMiddleware } from './projectDataMiddleware';
+
 export const loggerMiddleware: Middleware = store => next => action => {
   // if((action as any).type !== "http-history/addToHttpHistory"){
     // }
@@ -30,7 +32,7 @@ const store = configureStore({
     scope: scopeReducer,
   },
   middleware: (getDefaultMiddleware) =>
-    getDefaultMiddleware().concat(loggerMiddleware),
+    getDefaultMiddleware().concat(loggerMiddleware, projectDataMiddleware),
 })
 
 export type RootState = ReturnType<typeof store.getState>

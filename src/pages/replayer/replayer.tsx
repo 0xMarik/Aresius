@@ -6,7 +6,8 @@ import { http } from '@/components/http-parser.component';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { useTheme } from '@/components/theme-provider';
 import { useAppDispatch, useAppSelector } from '@/hooks/redux';
-import { addReplayerHistory, resetReplayerReceivedSession, selectedHisotryIndex, setReaplayerURL } from '@/store/slices/replayerSlice';
+import { useProjectId } from '@/hooks/useProjectId';
+import { addReplayerHistory, resetReplayerReceivedSession, selectedHisotryIndex, setReaplayerURL, selectReplayerState } from '@/store/slices/replayerSlice';
 import { Button } from '@/components/ui/button';
 import { invoke } from '@tauri-apps/api/core';
 import { ReplayerHistoryItem } from '@/types/replayer.type';
@@ -39,10 +40,12 @@ const ResponseCodeEditor = () => {
     const viewRef = useRef<EditorView | null>(null);
     const { theme } = useTheme();
     const isDark = theme === "dark" || (theme === "system" && typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches);
-    const { collections, selectedCollectionIndex, } = useAppSelector(state => state.replayerstate);
-    const { selectedSessionIndex } = collections[selectedCollectionIndex];
-    const session = selectedSessionIndex !== null
-        ? collections[selectedCollectionIndex].sessions[selectedSessionIndex]
+    const projectId = useProjectId();
+    const { collections, selectedCollectionIndex } = useAppSelector(selectReplayerState(projectId));
+    const collection = collections[selectedCollectionIndex];
+    const selectedSessionIndex = collection?.selectedSessionIndex ?? null;
+    const session = selectedSessionIndex !== null && collection
+        ? collection.sessions[selectedSessionIndex]
         : null;
     const history = session?.history ?? [];
     const selectedHistoryIndex = session?.selectedHistoryIndex ?? null;
@@ -93,10 +96,12 @@ const ResponseCodeEditor = () => {
 
 function Replayer() {
 
-    const { collections, selectedCollectionIndex } = useAppSelector(state => state.replayerstate);
-    const { selectedSessionIndex } = collections[selectedCollectionIndex];
-    const session = selectedSessionIndex !== null
-        ? collections[selectedCollectionIndex].sessions[selectedSessionIndex]
+    const projectId = useProjectId();
+    const { collections, selectedCollectionIndex } = useAppSelector(selectReplayerState(projectId));
+    const collection = collections[selectedCollectionIndex];
+    const selectedSessionIndex = collection?.selectedSessionIndex ?? null;
+    const session = selectedSessionIndex !== null && collection
+        ? collection.sessions[selectedSessionIndex]
         : null;
 
     const url = session?.url ?? "";
@@ -108,20 +113,22 @@ function Replayer() {
     const dispatch = useAppDispatch();
 
     useEffect(() => {
-        dispatch(resetReplayerReceivedSession())
-    }, [dispatch])
+        if (projectId) {
+            dispatch(resetReplayerReceivedSession(projectId));
+        }
+    }, [dispatch, projectId])
 
     const triggerRequest = async () => {
-        if (selectedSessionIndex === null) return; // no active session, nothing to run
+        if (selectedSessionIndex === null || !projectId) return; // no active session, nothing to run
 
         setResponseLoading(true)
         const stripedUrl = stripPath(url);
-        dispatch(setReaplayerURL({ url: stripedUrl, urlIsValid: true })); // update the url in the store to be stripped of path
+        dispatch(setReaplayerURL({ url: stripedUrl, urlIsValid: true, projectId })); // update the url in the store to be stripped of path
         try {
             const response = await invoke<ReplayerHistoryItem>('replay_request', { requestTmp: requestTmp, url: stripedUrl });
             setResponseLoading(false)
-            dispatch(addReplayerHistory({ historyItem: response }));
-            dispatch(selectedHisotryIndex({ historyIndex: 0 }));
+            dispatch(addReplayerHistory({ historyItem: response, projectId }));
+            dispatch(selectedHisotryIndex({ historyIndex: 0, projectId }));
         } catch (error) {
             console.error('Error replaying request:', error);
             setResponseLoading(false);
@@ -155,7 +162,9 @@ function Replayer() {
                                 value={url}
                                 onChange={(event) => dispatch(setReaplayerURL({ url: event.target.value }))}
                             /> */}
-                            <ValidateUrlInput url={session?.url || ""} onChange={(url, urlIsValid) => dispatch(setReaplayerURL({ url, urlIsValid }))} />
+                            <ValidateUrlInput url={session?.url || ""} onChange={(url, urlIsValid) => {
+                                if (projectId) dispatch(setReaplayerURL({ url, urlIsValid, projectId }));
+                            }} />
                             <Button
                                 onClick={triggerRequest}
                                 size="sm"

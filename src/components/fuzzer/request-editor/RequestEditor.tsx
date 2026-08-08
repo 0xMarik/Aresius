@@ -10,7 +10,8 @@ import { Button } from "../../ui/button";
 import { Badge } from "../../ui/badge";
 import { RangeSetBuilder } from "@codemirror/state";
 import { useAppDispatch, useAppSelector } from "@/hooks/redux";
-import { addParameter, removeParameter, setParameters, setSelectedParameter, setContent } from '@/store/slices/fuzzerSlice'
+import { useProjectId } from "@/hooks/useProjectId";
+import { addParameter, removeParameter, setParameters, setSelectedParameter, setContent, selectFuzzerState } from '@/store/slices/fuzzerSlice'
 import { FuzzerParameter, HighlightRange } from "@/types/fuzzer.type";
 import { oneDark } from '@codemirror/theme-one-dark';
 import CoreContextMenu from "@/components/ContextMenu/CoreContextMenu";
@@ -234,7 +235,8 @@ const RequestEditor: React.FC = () => {
     const editorRef = useRef<HTMLDivElement | null>(null);
     const viewRef = useRef<EditorView | null>(null);
 
-    const { activeSessionIndex, fuzzerSessions } = useAppSelector(state => state.fuzzerstate);
+    const projectId = useProjectId();
+    const { activeSessionIndex, fuzzerSessions } = useAppSelector(selectFuzzerState(projectId));
     const dispatch = useAppDispatch();
 
     if (activeSessionIndex === null) return <h1>No session</h1>;
@@ -247,8 +249,6 @@ const RequestEditor: React.FC = () => {
             // Force a complete redraw of decorations
             viewRef.current.dispatch({
                 effects: [],
-                // This forces the plugin to rebuild decorations
-                // annotations: [EditorView.updateListener.of(() => { })]
             });
         }
     };
@@ -263,12 +263,12 @@ const RequestEditor: React.FC = () => {
 
         // Set up the callback to update React state when ranges change
         onRangesUpdate = (updatedRanges: FuzzerParameter[]) => {
-            dispatch(setParameters({ parameters: updatedRanges }));
+            if (projectId) dispatch(setParameters({ parameters: updatedRanges, projectId }));
         };
 
         // Set up the callback to update selection state
         onSelectionUpdate = (selectedId: string | null) => {
-            dispatch(setSelectedParameter({ parameterId: selectedId }))
+            if (projectId) dispatch(setSelectedParameter({ parameterId: selectedId, projectId }));
         };
 
         // Set up click handler
@@ -279,11 +279,11 @@ const RequestEditor: React.FC = () => {
         // CRITICAL: Force editor to refresh its decorations
         forceEditorRefresh();
 
-    }, [activeSessionIndex, currentFuzzerSession.fuzzConfig.parameters, currentFuzzerSession.selectedHighlightId, dispatch]);
+    }, [activeSessionIndex, currentFuzzerSession.fuzzConfig.parameters, currentFuzzerSession.selectedHighlightId, dispatch, projectId]);
 
     // Function to add a new highlight range
     const addHighlightRange = (from: number, to: number, lineNumber: number) => {
-        if (!viewRef.current) return;
+        if (!viewRef.current || !projectId) return;
         const state = viewRef.current.state;
         if (from >= 0 && to <= state.doc.length && from < to) {
             const originalText = state.sliceDoc(from, to); // sliceDoc, not doc.sliceString — respects "\r\n"
@@ -296,23 +296,25 @@ const RequestEditor: React.FC = () => {
                 originalText,
                 isActive: true
             };
-            dispatch(addParameter({ highlightRange: newRange }));
+            dispatch(addParameter({ highlightRange: newRange, projectId }));
         }
     };
 
     // Function to remove a highlight range by id
     const removeHighlightRange = (id: string) => {
-        dispatch(removeParameter({ paramId: id }));
+        if (!projectId) return;
+        dispatch(removeParameter({ paramId: id, projectId }));
         // Clear selection if the removed range was selected
         if (currentFuzzerSession.selectedHighlightId === id) {
-            dispatch(setSelectedParameter({ parameterId: null }))
+            dispatch(setSelectedParameter({ parameterId: null, projectId }))
         }
     };
 
     // Function to clear all highlight ranges
     const clearAllHighlights = () => {
-        dispatch(setParameters({ parameters: [] }));
-        dispatch(setSelectedParameter({ parameterId: null }))
+        if (!projectId) return;
+        dispatch(setParameters({ parameters: [], projectId }));
+        dispatch(setSelectedParameter({ parameterId: null, projectId }))
     };
 
     // Function to add highlight for current selection
@@ -355,10 +357,6 @@ const RequestEditor: React.FC = () => {
         }
     }, [currentFuzzerSession.fuzzConfig.rawRequest, activeSessionIndex]);
 
-    // useEffect(() => {
-    //     console.log('Active session or sessions changed:', activeSessionIndex, fuzzerSessions)
-    // }, [activeSessionIndex, fuzzerSessions])
-
     // IMPROVED: Recreate editor when session changes (alternative approach)
     useEffect(() => {
         if (!editorRef.current) return;
@@ -371,12 +369,11 @@ const RequestEditor: React.FC = () => {
 
         const updateListener = EditorView.updateListener.of((update) => {
             if (update.docChanged) {
-                // const code = update.state.sliceDoc(0, update.state.doc.length); // was doc.toString()
                 const state = update.state
                 const doc = state.doc
                 const code = doc.sliceString(0, doc.length, state.lineBreak);
                 // Update Redux state with new content
-                dispatch(setContent({ rawRequest: code }));
+                if (projectId) dispatch(setContent({ rawRequest: code, projectId }));
             }
 
             if (update.selectionSet) {

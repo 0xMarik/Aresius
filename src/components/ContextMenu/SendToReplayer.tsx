@@ -1,25 +1,28 @@
 import { ContextMenuItem, ContextMenuSeparator, ContextMenuSub, ContextMenuSubContent, ContextMenuSubTrigger } from '../ui/context-menu'
 import { FolderPlus, Layers, Repeat } from 'lucide-react'
 import { useAppDispatch, useAppSelector } from '@/hooks/redux';
-import { addCollection, addSessionToCollection, selectColSess, setReaplayerContent } from '@/store/slices/replayerSlice';
-
+import { useProjectId } from '@/hooks/useProjectId';
+import { addCollection, addSessionToCollection, selectColSess, setReaplayerContent, selectReplayerState } from '@/store/slices/replayerSlice';
 
 export function SendToRepeaterSubmenu({ rawRequest }: { rawRequest: string }) {
     const dispatch = useAppDispatch();
-    const collections = useAppSelector((state) => state.replayerstate.collections);
+    const projectId = useProjectId();
+    const { collections } = useAppSelector(selectReplayerState(projectId));
 
     const sendToExisting = (collectionIndex: number) => {
+        if (!projectId) return;
         const newSessionIndex = collections[collectionIndex].sessions.length;
-        dispatch(addSessionToCollection({ collectionIndex, isItReplayerPage: false }));
-        dispatch(selectColSess({ collectionIndex, sessionIndex: newSessionIndex }));
-        dispatch(setReaplayerContent({ rawRequest: rawRequest ?? '' }));
+        dispatch(addSessionToCollection({ collectionIndex, isItReplayerPage: false, projectId }));
+        dispatch(selectColSess({ collectionIndex, sessionIndex: newSessionIndex, projectId }));
+        dispatch(setReaplayerContent({ rawRequest: rawRequest ?? '', projectId }));
     };
 
     const sendToNew = () => {
+        if (!projectId) return;
         const newCollectionIndex = collections.length;
-        dispatch(addCollection());
-        dispatch(selectColSess({ collectionIndex: newCollectionIndex, sessionIndex: 0 }));
-        dispatch(setReaplayerContent({ rawRequest: rawRequest ?? '' }));
+        dispatch(addCollection(projectId));
+        dispatch(selectColSess({ collectionIndex: newCollectionIndex, sessionIndex: 0, projectId }));
+        dispatch(setReaplayerContent({ rawRequest: rawRequest ?? '', projectId }));
     };
 
     return (
@@ -58,4 +61,4 @@ const SendToReplayer = ({ rawRequest, isMultiple }: { rawRequest: string; isMult
     )
 }
 
-export default SendToReplayer
+export default SendToReplayer;
