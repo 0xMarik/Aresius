@@ -179,6 +179,28 @@ const InterceptorPage: React.FC = () => {
     const [isReqPretty, setIsReqPretty] = useState<boolean>(false);
     const [isResPretty, setIsResPretty] = useState<boolean>(false);
 
+    // ── Sequential display-ID assignment ────────────────────────────────────
+    // A stable map from backend item.id → sequential display number shared
+    // across both requests and responses. The counter never resets mid-session
+    // so forwarding request #1 makes the next new item (a response) get #3, etc.
+    const displayIdMapRef = useRef<Map<string, number>>(new Map());
+    const displayIdCounterRef = useRef<number>(0);
+
+    // Assign IDs synchronously during render (before any useMemos) so that
+    // getDisplayId() always returns a valid number when row builders run.
+    // Mutating refs during render is safe here because it is idempotent —
+    // the same item.id always maps to the same counter value.
+    for (const item of queue) {
+        if (!displayIdMapRef.current.has(item.id)) {
+            displayIdCounterRef.current += 1;
+            displayIdMapRef.current.set(item.id, displayIdCounterRef.current);
+        }
+    }
+
+    const getDisplayId = (backendId: string): number =>
+        displayIdMapRef.current.get(backendId) ?? 0;
+    // ────────────────────────────────────────────────────────────────────────
+
     // Filter queue items by type
     const requestItems = useMemo(
         () => queue.filter((item) => item.itemType === 'request'),
@@ -350,9 +372,9 @@ const InterceptorPage: React.FC = () => {
     /* ---------------------------------------------------------------------- */
 
     const requestRows: RequestRowItem[] = useMemo(() => {
-        return requestItems.map((item, idx) => {
+        return requestItems.map((item) => {
             const parsed = parseRequest(item.rawMessage);
-            const numericId = parseInt(item.id, 10) || idx + 1;
+            const numericId = getDisplayId(item.id);
             return {
                 id: numericId,
                 originalId: item.id,
@@ -362,12 +384,12 @@ const InterceptorPage: React.FC = () => {
                 item,
             };
         });
-    }, [requestItems]);
+    }, [requestItems, queue]);
 
     const responseRows: ResponseRowItem[] = useMemo(() => {
-        return responseItems.map((item, idx) => {
+        return responseItems.map((item) => {
             const parsed = parseResponse(item.rawMessage);
-            const numericId = parseInt(item.id, 10) || idx + 1;
+            const numericId = getDisplayId(item.id);
             return {
                 id: numericId,
                 originalId: item.id,
@@ -377,17 +399,17 @@ const InterceptorPage: React.FC = () => {
                 item,
             };
         });
-    }, [responseItems]);
+    }, [responseItems, queue]);
 
     const requestColumns = useMemo<ColumnDef<RequestRowItem, any>[]>(
         () => [
             {
-                accessorKey: 'originalId',
-                id: 'originalId',
+                accessorKey: 'id',
+                id: 'displayId',
                 header: 'ID',
                 cell: ({ row }) => (
                     <span className="font-mono text-xs text-muted-foreground">
-                        {row.original.originalId}
+                        #{row.original.id}
                     </span>
                 ),
                 size: 60,
@@ -446,12 +468,12 @@ const InterceptorPage: React.FC = () => {
     const responseColumns = useMemo<ColumnDef<ResponseRowItem, any>[]>(
         () => [
             {
-                accessorKey: 'originalId',
-                id: 'originalId',
+                accessorKey: 'id',
+                id: 'displayId',
                 header: 'ID',
                 cell: ({ row }) => (
                     <span className="font-mono text-xs text-muted-foreground">
-                        {row.original.originalId}
+                        #{row.original.id}
                     </span>
                 ),
                 size: 60,
