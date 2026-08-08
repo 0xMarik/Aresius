@@ -161,12 +161,17 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 
   const fuzzerReceivedSession = useAppSelector((state) => state.fuzzerstate.receivedSession)
   const replayerReceivedSession = useAppSelector((state) => state.replayerstate.receivedSession);
+  const isFuzzRunning = useAppSelector((state) =>
+    state.fuzzerstate.fuzzerSessions.some((session) =>
+      session.fuzzingHistory.some((h) => h.runState?.status === 'running')
+    )
+  );
 
   const testingItems = React.useMemo(
     () =>
       data.projects.map((item) => {
         if (item.name === "Fuzzer") {
-          return { ...item, badge: fuzzerReceivedSession }
+          return { ...item, badge: fuzzerReceivedSession, isRunning: isFuzzRunning }
         }
         if (item.name === "Replayer") {
           return { ...item, badge: replayerReceivedSession }
@@ -174,7 +179,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         return item;
       }
       ),
-    [fuzzerReceivedSession, replayerReceivedSession]
+    [fuzzerReceivedSession, replayerReceivedSession, isFuzzRunning]
   )
 
   return (

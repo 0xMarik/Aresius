@@ -4,17 +4,23 @@ import { Folder, Plus, SlidersVertical } from 'lucide-react'
 import { useAppDispatch, useAppSelector } from '@/hooks/redux'
 import { addFuzzSession, setSelectedFuzz } from '@/store/slices/fuzzerSlice'
 import { RsTree, TreeNode } from 'rstree-ui'
+import { RunningDot } from '@/components/ui/RunningDot'
 
 // Only compares what the tree renders: session count + each session's
-// history dates. `requests` never enters this, so applyFuzzUpdates
-// churning through fuzzed rows doesn't count as a "change" here.
-const sessionShapeEqual = (a: string[][], b: string[][]) => {
+// history dates and running statuses. `requests` never enters this, so applyFuzzUpdates
+// churning through fuzzed rows doesn't count as a "change" here unless status changes.
+interface HistoryShapeItem {
+    date: string;
+    isRunning: boolean;
+}
+
+const sessionShapeEqual = (a: HistoryShapeItem[][], b: HistoryShapeItem[][]) => {
     if (a === b) return true
-    if (a.length !== b.length) return false
+    if (!a || !b || a.length !== b.length) return false
     for (let i = 0; i < a.length; i++) {
-        if (a[i].length !== b[i].length) return false
+        if (!a[i] || !b[i] || a[i].length !== b[i].length) return false
         for (let j = 0; j < a[i].length; j++) {
-            if (a[i][j] !== b[i][j]) return false
+            if (a[i][j].date !== b[i][j].date || a[i][j].isRunning !== b[i][j].isRunning) return false
         }
     }
     return true
@@ -24,9 +30,12 @@ const FuzzSession = () => {
     console.count('FuzzSession render')
     const dispatch = useAppDispatch();
 
-    const sessionShape = useAppSelector(
-        (state) => state.fuzzerstate.fuzzerSessions.map((s) => s.fuzzingHistory.map((h) => `${h.date}`)),
-        sessionShapeEqual as any
+    const sessionShape = useAppSelector<HistoryShapeItem[][]>(
+        (state) => state.fuzzerstate.fuzzerSessions.map((s) => s.fuzzingHistory.map((h) => ({
+            date: h.date,
+            isRunning: h.runState?.status === 'running',
+        }))),
+        sessionShapeEqual
     )
 
     const activeSessionIndex = useAppSelector((state) => state.fuzzerstate.activeSessionIndex)
@@ -37,16 +46,33 @@ const FuzzSession = () => {
     })
 
     const data: TreeNode<unknown>[] = useMemo(() =>
-        (sessionShape as any[]).map((dates: any, colIndex: any) => ({
-            id: `${colIndex}`,
-            label: `Session ${colIndex + 1}`,
-            icon: <SlidersVertical size={12} />,
-            children: dates.map((date: any, sessIndex: any) => ({
-                id: `${colIndex}-${sessIndex}`,
-                label: date,
-                icon: <div></div>,
-            }))
-        })), [sessionShape])
+        sessionShape.map((historyItems, colIndex) => {
+            const isSessionRunning = historyItems.some((h) => h.isRunning)
+            return {
+                id: `${colIndex}`,
+                label: (
+                    <span className="flex items-center justify-between w-full pr-1">
+                        <span>Session {colIndex + 1}</span>
+                        {isSessionRunning && (
+                            <RunningDot className="ml-auto" />
+                        )}
+                    </span>
+                ) as any,
+                icon: <SlidersVertical size={12} />,
+                children: historyItems.map((h, sessIndex) => ({
+                    id: `${colIndex}-${sessIndex}`,
+                    label: (
+                        <span className="flex items-center justify-between w-full pr-1">
+                            <span>{h.date}</span>
+                            {h.isRunning && (
+                                <RunningDot className="ml-auto" />
+                            )}
+                        </span>
+                    ) as any,
+                    icon: <div></div>,
+                }))
+            }
+        }), [sessionShape])
 
     const selectedIds = useMemo(() => {
         if (activeSessionIndex === null || activeSessionIndex === undefined) return []

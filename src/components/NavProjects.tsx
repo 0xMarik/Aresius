@@ -12,7 +12,9 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  useSidebar,
 } from "@/components/ui/sidebar"
+import { RunningDot } from "@/components/ui/RunningDot"
 
 interface NavItem {
   name: string
@@ -20,6 +22,7 @@ interface NavItem {
   icon: LucideIcon
   isActive?: boolean
   badge?: number
+  isRunning?: boolean
 }
 
 interface NavProjectsProps {
@@ -30,6 +33,8 @@ interface NavProjectsProps {
 
 export function NavProjects({ name, items, defaultOpen = true }: NavProjectsProps) {
   const location = useLocation()
+  const { state: sidebarState } = useSidebar()
+  const isCollapsed = sidebarState === "collapsed"
 
   return (
     <Collapsible defaultOpen={defaultOpen} className="group/collapsible">
@@ -46,14 +51,24 @@ export function NavProjects({ name, items, defaultOpen = true }: NavProjectsProp
               const isActive = location.pathname === item.url
 
               return (
-                <SidebarMenuItem key={item.name}>
+                <SidebarMenuItem key={item.name} className="relative">
+                  {/* Collapsed-mode dot — absolutely positioned on the li, icon stays unwrapped */}
+                  {item.isRunning && isCollapsed && (
+                    <RunningDot className="pointer-events-none absolute top-1 right-1 z-10" />
+                  )}
                   <SidebarMenuButton asChild isActive={isActive} tooltip={item.name}>
-                    <Link to={item.url} className="flex items-center">
+                    <Link to={item.url} className="flex items-center gap-2">
                       <item.icon />
-                      <span className="flex-1">{item.name}</span>
+                      <span className="flex-1 truncate">{item.name}</span>
+
+                      {/* Expanded-mode dot */}
+                      {item.isRunning && !isCollapsed && (
+                        <RunningDot className="ml-auto" />
+                      )}
+
                       {!!item.badge && item.badge > 0 && (
                         <span
-                          className="ml-auto flex h-4.5 min-w-4.5 items-center justify-center rounded-full bg-sidebar-primary px-1 text-[10px] font-medium leading-none text-sidebar-primary-foreground"
+                          className={`flex h-4.5 min-w-4.5 items-center justify-center rounded-full bg-sidebar-primary px-1 text-[10px] font-medium leading-none text-sidebar-primary-foreground ${!item.isRunning ? 'ml-auto' : ''}`}
                           aria-label={`${item.badge} new`}
                         >
                           {item.badge > 99 ? "99+" : item.badge}
