@@ -1,7 +1,7 @@
 import { useAppDispatch, useAppSelector } from '@/hooks/redux';
 import { CodeMirrorEditor } from '../result-table.components';
 import { createColumnHelper, ColumnDef } from '@tanstack/react-table';
-import Table, { isRowSelected, FacetFilter, BaseRow } from '@/components/Table';
+import Table, { isRowSelected, BaseRow } from '@/components/Table';
 import { FuzzerRequest, FuzzerParameter, FuzzConfig } from '@/types/fuzzer.type';
 import { useMemo, useState } from 'react';
 import { parseRequest, parseResponse } from '../utils';
@@ -234,9 +234,7 @@ export const fuzzerColumns: ColumnDef<EnrichedFuzzerRow, any>[] = [
     }),
 ];
 
-export const fuzzerFacetFilters: FacetFilter<EnrichedFuzzerRow>[] = [
-    { id: 'status', label: 'Status', getValue: (r) => r.status },
-];
+
 
 export const fuzzerSearchFn = (row: EnrichedFuzzerRow, q: string) =>
     row.targetUrl.toLowerCase().includes(q) ||
@@ -335,9 +333,6 @@ function FuzzerHistoryBody({
                     <Table
                         data={enrichedRows}
                         columns={fuzzerColumns}
-                        facetFilters={fuzzerFacetFilters}
-                        searchFn={fuzzerSearchFn}
-                        searchPlaceholder="Search target URL, payload, status, code…"
                         emptyLabel={isLoading ? 'Running fuzzer…' : 'No fuzzing results yet'}
                         emptyHint={isLoading ? undefined : 'Run the fuzzer to see results here'}
                         setSelectedRequest={setFocusedId}

@@ -3,6 +3,7 @@ import { ContextMenuItem, ContextMenuShortcut } from "../ui/context-menu";
 import { EditorView } from "codemirror";
 import SendToFuzzer from "../ContextMenu/SendToFuzzer";
 import { useAppSelector } from "@/hooks/redux";
+import { Kbd, KbdGroup } from "../ui/kbd";
 
 const handleCopy = ({ viewRef }: { viewRef: React.MutableRefObject<EditorView | null> }) => {
     const view = viewRef.current;
@@ -31,11 +32,17 @@ const RequestContextMenu = ({ viewRef }: { viewRef: React.MutableRefObject<Edito
             <ContextMenuItem onSelect={() => handleCopy({ viewRef })}>
                 <Copy className="mr-2 h-3.5 w-3.5" />
                 Copy
-                <ContextMenuShortcut>Ctrl+C</ContextMenuShortcut>
+                <ContextMenuShortcut>
+                    <KbdGroup>
+                        <Kbd>Ctrl</Kbd>
+                        <span>+</span>
+                        <Kbd>C</Kbd>
+                    </KbdGroup>
+                </ContextMenuShortcut>
             </ContextMenuItem>
             <SendToFuzzer rawRequest={session?.requestTmp ?? ""} host={session?.url ?? ""} />
             <ContextMenuItem>
-                
+
             </ContextMenuItem>
         </>
     );

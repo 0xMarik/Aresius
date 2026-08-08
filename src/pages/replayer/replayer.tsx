@@ -147,7 +147,7 @@ function Replayer() {
                     />
                 ) : (
                     <div className='h-full flex flex-col'>
-                        <div className='flex items-center h-12 bg-card/40 gap-3 shrink-0'>
+                        <div className='flex items-center h-12 bg-card/40 gap-3 shrink-0 p-2'>
                             {/* <Input placeholder='Enter URL to replay...' className='flex-1 font-mono text-xs h-8 bg-background'
                                 value={url}
                                 onChange={(event) => dispatch(setReaplayerURL({ url: event.target.value }))}

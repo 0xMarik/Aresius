@@ -16,10 +16,8 @@ import {
     ChevronUp,
     ChevronDown,
     ChevronsUpDown,
-    SlidersHorizontal,
     Trash2,
     Layers,
-    Check,
     FolderPlus,
     FolderMinus,
     Circle,
@@ -189,69 +187,6 @@ function DraggableHeaderCell({
     );
 }
 
-/* ================================================================== */
-/*  Small reusable dropdown (unchanged)                                */
-/* ================================================================== */
-
-function Dropdown({
-    label,
-    icon,
-    badge,
-    children,
-}: {
-    label: string;
-    icon: React.ReactNode;
-    badge?: number;
-    children: React.ReactNode;
-}) {
-    const [open, setOpen] = useState(false);
-    const ref = useRef<HTMLDivElement>(null);
-
-    useEffect(() => {
-        function onClick(e: MouseEvent) {
-            if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-        }
-        document.addEventListener('mousedown', onClick);
-        return () => document.removeEventListener('mousedown', onClick);
-    }, []);
-
-    return (
-        <div className="relative" ref={ref}>
-            <button
-                onClick={() => setOpen((o) => !o)}
-                className={`flex items-center gap-1.5 rounded-md border px-2 py-1 text-[12px] ${open
-                    ? 'border-border bg-accent text-accent-foreground'
-                    : 'border-border bg-card text-foreground hover:bg-accent hover:text-accent-foreground'
-                    }`}
-            >
-                {icon}
-                <span className="text-muted-foreground">{label}</span>
-                {!!badge && (
-                    <span className="rounded-full bg-primary px-1.5 text-[10px] font-semibold text-primary-foreground">{badge}</span>
-                )}
-            </button>
-            {open && (
-                <div className="absolute left-0 z-20 mt-1 min-w-[180px] rounded-md border border-border bg-popover text-popover-foreground p-1 shadow-lg">
-                    {children}
-                </div>
-            )}
-        </div>
-    );
-}
-
-function DropdownCheckboxItem({ label, checked, onToggle }: { label: string; checked: boolean; onToggle: () => void }) {
-    return (
-        <button
-            onClick={onToggle}
-            className="flex w-full items-center justify-between rounded px-2 py-1 text-left text-[12px] text-popover-foreground hover:bg-accent hover:text-accent-foreground"
-        >
-            <span className="truncate">{label}</span>
-            <span className={`flex h-3.5 w-3.5 items-center justify-center rounded-sm border ${checked ? 'border-primary bg-primary text-primary-foreground' : 'border-border'}`}>
-                {checked && <Check className="h-2.5 w-2.5 text-primary-foreground" />}
-            </span>
-        </button>
-    );
-}
 
 /* ================================================================== */
 /*  Row component — memoized so selecting one row doesn't force        */

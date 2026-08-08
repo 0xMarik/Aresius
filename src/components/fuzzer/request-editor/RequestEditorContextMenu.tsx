@@ -3,6 +3,7 @@ import { EditorView } from "codemirror";
 import { useAppSelector } from "@/hooks/redux";
 import { ContextMenuItem, ContextMenuShortcut } from "@/components/ui/context-menu";
 import SendToReplayer from "@/components/ContextMenu/SendToReplayer";
+import { Kbd, KbdGroup } from "@/components/ui/kbd";
 
 const handleCopy = ({ viewRef }: { viewRef: React.MutableRefObject<EditorView | null> }) => {
     const view = viewRef.current;
@@ -30,7 +31,13 @@ const RequestEditorContextMenu = ({ viewRef }: { viewRef: React.MutableRefObject
             <ContextMenuItem onSelect={() => handleCopy({ viewRef })}>
                 <Copy className="mr-2 h-3.5 w-3.5" />
                 Copy
-                <ContextMenuShortcut>Ctrl+C</ContextMenuShortcut>
+                <ContextMenuShortcut>
+                    <KbdGroup>
+                        <Kbd>Ctrl</Kbd>
+                        <span>+</span>
+                        <Kbd>C</Kbd>
+                    </KbdGroup>
+                </ContextMenuShortcut>
             </ContextMenuItem>
             <SendToReplayer isMultiple={false} rawRequest={fuzzConfig.rawRequest} />
         </>

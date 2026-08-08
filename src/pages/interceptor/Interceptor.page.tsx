@@ -324,6 +324,27 @@ const InterceptorPage: React.FC = () => {
         }
     };
 
+    // Forward all queued items of the given type (unmodified).
+    // Called when the user disables interception for that type so nothing stays stuck.
+    const handleForwardAllOfType = async (type: 'request' | 'response') => {
+        const items = queue.filter((item) => item.itemType === type);
+        if (items.length === 0) return;
+        setActionLoading(true);
+        try {
+            await Promise.all(
+                items.map((item) =>
+                    invoke('forward_intercept_item', {
+                        payload: { id: item.id, modifiedMessage: null },
+                    }).then(() => dispatch(removeQueueItem(item.id)))
+                )
+            );
+        } catch (err) {
+            console.error(`Failed to forward all ${type}s:`, err);
+        } finally {
+            setActionLoading(false);
+        }
+    };
+
     /* ---------------------------------------------------------------------- */
     /*  DataTable Data Adaptors & Column Definitions                          */
     /* ---------------------------------------------------------------------- */
@@ -537,9 +558,10 @@ const InterceptorPage: React.FC = () => {
                             <Switch
                                 id="top-req-switch"
                                 checked={settings.requestsEnabled}
-                                onCheckedChange={(val) =>
-                                    updateSettings({ ...settings, requestsEnabled: val })
-                                }
+                                onCheckedChange={async (val) => {
+                                    if (!val) await handleForwardAllOfType('request');
+                                    updateSettings({ ...settings, requestsEnabled: val });
+                                }}
                             />
                             <Label htmlFor="top-req-switch" className="cursor-pointer text-[11px] font-medium text-muted-foreground">
                                 Intercept Request
@@ -550,9 +572,10 @@ const InterceptorPage: React.FC = () => {
                             <Switch
                                 id="top-res-switch"
                                 checked={settings.responsesEnabled}
-                                onCheckedChange={(val) =>
-                                    updateSettings({ ...settings, responsesEnabled: val })
-                                }
+                                onCheckedChange={async (val) => {
+                                    if (!val) await handleForwardAllOfType('response');
+                                    updateSettings({ ...settings, responsesEnabled: val });
+                                }}
                             />
                             <Label htmlFor="top-res-switch" className="cursor-pointer text-[11px] font-medium text-muted-foreground">
                                 Intercept Response

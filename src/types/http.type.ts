@@ -1,5 +1,3 @@
-import { EntityId } from "@reduxjs/toolkit"
-
 export interface HttpRequest {
   id: string
   method: string
