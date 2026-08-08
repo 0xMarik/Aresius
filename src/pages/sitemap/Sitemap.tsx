@@ -10,7 +10,7 @@ import { CodeMirrorEditor } from '@/components/result-table.components';
 import { renderHttpHistoryTableContextMenu } from '@/components/HttpHistoryTableContextMenu';
 import { adaptFromReqRes, httpColumns } from '@/pages/HttpHistory';
 import { historySelectors } from '@/store/slices/http-historySlice';
-import { buildSitemapNodeIndex, collectRequestIdsDeduped } from './utils';
+import { buildSitemapNodeIndex, collectRequestIdsDeduped, countUniqueRequests } from './utils';
 import type { EntityId } from '@reduxjs/toolkit';
 import type { HttpHistory } from '@/types/http.type';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -56,7 +56,7 @@ function renderSitemapNode(node: TreeNode) {
             )}
 
             <span className="ml-auto shrink-0 text-[9px] leading-none font-medium px-1.5 py-[3px] rounded-full bg-[--color-terracotta]/10 text-[--color-terracotta]">
-                {d.hitCount}
+                {countUniqueRequests(node)}
             </span>
         </div>
     );

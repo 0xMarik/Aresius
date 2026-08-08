@@ -126,10 +126,14 @@ function mergeEntry(root: MutableNode, entry: HttpHistory, options: BuildSitemap
     mergeEndpoint(currentParent, idPathPrefix, endpointSeg, method, queryParams, bodyFields, String(entry.id));
 }
 
+/**
+ * Stores only the latest (most-recently-seen) request ID on a node.
+ * Older IDs for the same endpoint+query variant are replaced so the
+ * sitemap table always shows exactly one row per unique variant.
+ */
 function pushRequestId(node: { requestIds?: string[] }, requestId: string): void {
-    if (!node.requestIds) node.requestIds = [];
-    const ids = node.requestIds;
-    if (ids[ids.length - 1] !== requestId) ids.push(requestId);
+    // Replace — not append — so only the last request for this variant is kept.
+    node.requestIds = [requestId];
 }
 
 function mergeEndpoint(
@@ -334,7 +338,8 @@ function insertEndpoint(
     const variantChildren = ensureChildren(endpointNode);
     const variantNode = findOrInsertChild(variantChildren, variantId, variantLabel, 'variant');
     variantNode.data!.hitCount += 1;
-    pushRequestId(variantNode.data!, requestId);
+    // Always replace with the latest request ID — one row per variant in the table.
+    variantNode.data!.requestIds = [requestId];
 }
 
 /** Ensures a node has a `children` array, creating one if absent, and returns it. */
@@ -402,6 +407,15 @@ export function collectRequestIds(node: TreeNode): string[] {
 /** Defensive dedup — not load-bearing; the tree shape makes duplicates structurally impossible. */
 export function collectRequestIdsDeduped(node: TreeNode): string[] {
     return Array.from(new Set(collectRequestIds(node)));
+}
+
+/**
+ * Returns the number of unique requests visible under a node — i.e. the count
+ * of deduplicated variant-level request IDs in its subtree.  This is what the
+ * tree badge should display so it always matches the row count in the table.
+ */
+export function countUniqueRequests(node: TreeNode): number {
+    return collectRequestIdsDeduped(node).length;
 }
 
 /** Flat index of node id -> node, built once per tree reference. */
