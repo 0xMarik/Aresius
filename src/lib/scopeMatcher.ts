@@ -1,22 +1,71 @@
 import type { Scope } from '@/store/slices/scopeSlice';
 
 /**
- * Converts a glob-like scope pattern to a RegExp.
- * Supported wildcards:
- *   *  – matches any sequence of characters within a segment (host or path segment)
- *   ** – matches across segment boundaries (not currently supported, treated same as *)
- *
- * Examples:
- *   *.example.com  → matches sub.example.com but not example.com
- *   example.com/*  → matches example.com/api, example.com/login
- *   *.example.com/api/* → matches sub.example.com/api/users
+ * Strips protocol schemes (http://, https://, ws://, wss://, *://, ://) from pattern.
  */
-function patternToRegex(pattern: string): RegExp {
-    // Escape all regex special chars except *
-    const escaped = pattern
+function stripProtocol(pattern: string): string {
+    return pattern.replace(/^([a-zA-Z0-9*]+:\/\/|:\/\/)/, '');
+}
+
+/**
+ * Extract hostname from "host:port" or "host" string (e.g. "example.com:443" -> "example.com", "[::1]:8080" -> "[::1]").
+ */
+export function parseHostname(hostWithPort: string): string {
+    if (!hostWithPort) return '';
+    const trimmed = hostWithPort.trim();
+    if (trimmed.startsWith('[')) {
+        const closeIdx = trimmed.indexOf(']');
+        if (closeIdx !== -1) return trimmed.slice(0, closeIdx + 1);
+    }
+    const colonIdx = trimmed.lastIndexOf(':');
+    if (colonIdx === -1) return trimmed;
+    return trimmed.slice(0, colonIdx);
+}
+
+/**
+ * Converts a glob-like scope host pattern to a RegExp.
+ * Supported wildcards:
+ *   *  – matches any character sequence
+ *   *. – at start of domain matches the domain itself and all subdomains (e.g. *.example.com matches example.com and sub.example.com)
+ */
+function hostPatternToRegex(patternHost: string): RegExp {
+    const p = patternHost.trim();
+    if (p === '*' || p === '*:*') {
+        return /^.*$/i;
+    }
+
+    if (p.startsWith('*.')) {
+        const baseDomain = p.slice(2);
+        const escapedBase = baseDomain.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+        return new RegExp(`^(?:[a-zA-Z0-9_.-]+\\.)?${escapedBase}$`, 'i');
+    }
+
+    if (p.startsWith('.')) {
+        const baseDomain = p.slice(1);
+        const escapedBase = baseDomain.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+        return new RegExp(`^(?:[a-zA-Z0-9_.-]+\\.)?${escapedBase}$`, 'i');
+    }
+
+    const escaped = p
         .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-        .replace(/\*/g, '[^/]*'); // * matches anything except /
+        .replace(/\*/g, '.*');
     return new RegExp(`^${escaped}$`, 'i');
+}
+
+/**
+ * Converts a path pattern to a RegExp.
+ */
+function pathPatternToRegex(patternPath: string): RegExp {
+    const p = patternPath.trim();
+    if (!p || p === '/' || p === '/*') {
+        return /^.*$/i;
+    }
+
+    const escaped = p
+        .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+        .replace(/\*/g, '.*');
+
+    return new RegExp(`^${escaped}(?:/.*)?$`, 'i');
 }
 
 /**
@@ -26,42 +75,55 @@ function patternToRegex(pattern: string): RegExp {
  *   - Host+path:      example.com/api/v1
  *   - Bare host:      example.com
  */
-function parseTarget(url: string): { host: string; path: string } {
-    try {
-        // Try to parse as full URL
-        const u = new URL(url.includes('://') ? url : `https://${url}`);
-        return { host: u.hostname, path: u.pathname };
-    } catch {
-        // Fallback: split on first /
-        const slashIdx = url.indexOf('/');
-        if (slashIdx === -1) return { host: url, path: '/' };
-        return { host: url.slice(0, slashIdx), path: url.slice(slashIdx) };
+export function parseTarget(url: string): { host: string; path: string } {
+    const cleaned = stripProtocol(url.trim());
+    const slashIdx = cleaned.indexOf('/');
+    if (slashIdx === -1) {
+        return { host: cleaned, path: '/' };
     }
+    return {
+        host: cleaned.slice(0, slashIdx),
+        path: cleaned.slice(slashIdx) || '/',
+    };
 }
 
 /**
  * Check whether a single pattern matches a given host + path.
  * The pattern may be:
- *   - host only:        *.example.com
+ *   - host only:        example.com, *.example.com, example.com:8080
+ *   - protocol + host:  https://example.com
  *   - host + path:      *.example.com/api/*
  */
 export function urlMatchesPattern(pattern: string, host: string, path = '/'): boolean {
     const trimmed = pattern.trim();
     if (!trimmed) return false;
 
-    // Separate pattern into host-part and path-part
-    const slashIdx = trimmed.indexOf('/');
-    const patternHost = slashIdx === -1 ? trimmed : trimmed.slice(0, slashIdx);
-    const patternPath = slashIdx === -1 ? null : trimmed.slice(slashIdx);
+    // 1. Strip protocol scheme if present (e.g. https://example.com -> example.com)
+    const cleanedPattern = stripProtocol(trimmed);
 
-    // Match host
-    if (!patternToRegex(patternHost).test(host)) return false;
+    // 2. Separate pattern into host and path
+    const slashIdx = cleanedPattern.indexOf('/');
+    const patternHost = slashIdx === -1 ? cleanedPattern : cleanedPattern.slice(0, slashIdx);
+    const patternPath = slashIdx === -1 ? null : cleanedPattern.slice(slashIdx);
 
-    // If pattern has no path component, any path is allowed
+    if (!patternHost) return false;
+
+    // 3. Determine if patternHost specifies a port
+    const hasPort = patternHost.startsWith('[')
+        ? patternHost.indexOf(']:') !== -1
+        : patternHost.includes(':');
+
+    // 4. Compare host: if pattern has no port, test against host without port
+    const targetHostToTest = hasPort ? host : parseHostname(host);
+    if (!hostPatternToRegex(patternHost).test(targetHostToTest)) {
+        return false;
+    }
+
+    // 5. Compare path (if pattern has no path component, any path is allowed)
     if (patternPath === null) return true;
 
-    // Match path
-    return patternToRegex(patternPath).test(path || '/');
+    const targetPathToTest = path || '/';
+    return pathPatternToRegex(patternPath).test(targetPathToTest);
 }
 
 /**
