@@ -49,9 +49,9 @@ struct HttpHistoryPayload {
     status_code: u16,
     response_length: usize,
     response_time_ms: u64,
-    sent_at_ts_ms: u128,
+    sent_at_ms: u128,
     is_https: bool,
-}
+} 
 
 pub struct CertCache {
     pub certs: Mutex<HashMap<String, (Vec<u8>, Vec<u8>)>>, // domain -> (cert_pem, key_pem)
@@ -282,7 +282,7 @@ async fn handle_connect(
         // must never be what's actually put on the wire. See
         // `outgoing_request_bytes` below for the byte-exact copy that is.
         let decrypted_request = String::from_utf8_lossy(&raw_request).to_string();
-        let sent_at_ts_ms = now_ms();
+        let sent_at_ms = now_ms();
         let request_id = Uuid::new_v4().to_string();
 
         // Byte-exact source of truth for what actually gets forwarded
@@ -301,7 +301,7 @@ async fn handle_connect(
                 host: target.clone(),
                 method_or_status: extract_method_or_status(&decrypted_request, true),
                 raw_message: decrypted_request.clone(),
-                timestamp: sent_at_ts_ms,
+                timestamp: sent_at_ms,
                 is_https: true,
             };
 
@@ -420,7 +420,7 @@ async fn handle_connect(
             status_code: status,
             response_length,
             response_time_ms: response.elapsed.as_millis() as u64,
-            sent_at_ts_ms: sent_at_ts_ms,
+            sent_at_ms: sent_at_ms,
             is_https: true,
         };
         app_handle.emit("http_history", payload.clone()).ok();
@@ -440,7 +440,7 @@ async fn handle_connect(
                     payload.status_code,
                     payload.response_length,
                     payload.response_time_ms,
-                    payload.sent_at_ts_ms,
+                    payload.sent_at_ms,
                     payload.is_https,
                     payload.raw_request,
                     payload.raw_response,
@@ -534,7 +534,7 @@ async fn handle_http_request(
 
         // Display/UI copy ONLY -- see identical note in `handle_connect`.
         let decrypted_request = String::from_utf8_lossy(&raw_request).to_string();
-        let sent_at_ts_ms = now_ms();
+        let sent_at_ms = now_ms();
         let request_id = Uuid::new_v4().to_string();
 
         // Byte-exact source of truth for what actually gets forwarded
@@ -551,7 +551,7 @@ async fn handle_http_request(
                 host: target.clone(),
                 method_or_status: extract_method_or_status(&decrypted_request, true),
                 raw_message: decrypted_request.clone(),
-                timestamp: sent_at_ts_ms,
+                timestamp: sent_at_ms,
                 is_https: false,
             };
 
@@ -656,7 +656,7 @@ async fn handle_http_request(
             status_code: status_code,
             response_length,
             response_time_ms: response.elapsed.as_millis() as u64,
-            sent_at_ts_ms: sent_at_ts_ms,
+            sent_at_ms: sent_at_ms,
             is_https: false,
         };
         app_handle.emit("http_history", payload.clone()).ok();
@@ -676,7 +676,7 @@ async fn handle_http_request(
                     payload.status_code,
                     payload.response_length,
                     payload.response_time_ms,
-                    payload.sent_at_ts_ms,
+                    payload.sent_at_ms,
                     payload.is_https,
                     payload.raw_request,
                     payload.raw_response,
