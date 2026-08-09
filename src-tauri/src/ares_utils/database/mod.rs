@@ -13,34 +13,68 @@ pub const ARES_APPLICATION_ID: i64 = 0x41524553;
 
 /// Call ONCE, right after a brand new file is created.
 pub async fn stamp_ares_file(pool: &SqlitePool) -> Result<(), String> {
-    sqlx::query("PRAGMA application_id = ?")
-        .bind(ARES_APPLICATION_ID)
+    sqlx::query("PRAGMA application_id = 0x41524553")
         .execute(pool)
         .await
         .map_err(|e| e.to_string())?;
     Ok(())
 }
 
-pub struct DbState(RwLock<Option<SqlitePool>>);
+/// Verify that an opened SQLite database file has the Aresius magic bytes fingerprint.
+pub async fn verify_ares_file(pool: &SqlitePool) -> Result<(), String> {
+    let row: (i64,) = sqlx::query_as("PRAGMA application_id")
+        .fetch_one(pool)
+        .await
+        .map_err(|e| format!("Failed to read application_id PRAGMA: {e}"))?;
+
+    // 0x41524553 is ASCII "ARES". 0x41525553 was stamped in test builds before fixing the hex conversion.
+    if row.0 != ARES_APPLICATION_ID && row.0 != 0x41525553 {
+        return Err(format!(
+            "Invalid project file format: application_id mismatch (expected 0x{:X}, got 0x{:X})",
+            ARES_APPLICATION_ID, row.0
+        ));
+    }
+
+    // Auto-fix legacy test files
+    if row.0 == 0x41525553 {
+        let _ = sqlx::query("PRAGMA application_id = 0x41524553").execute(pool).await;
+    }
+
+    Ok(())
+}
+
+pub struct DbState(RwLock<Option<(String, SqlitePool)>>);
 
 impl DbState {
     pub fn new() -> Self {
         Self(RwLock::new(None))
     }
 
-    pub async fn set(&self, pool: SqlitePool) {
+    pub async fn set(&self, id: String, pool: SqlitePool) {
         let mut guard = self.0.write().await;
-        if let Some(old) = guard.take() {
+        if let Some((_, old)) = guard.take() {
             old.close().await;
         }
-        *guard = Some(pool);
+        *guard = Some((id, pool));
+    }
+
+    pub async fn close(&self) {
+        let mut guard = self.0.write().await;
+        if let Some((_, old)) = guard.take() {
+            old.close().await;
+        }
+    }
+
+    pub async fn get_active_id(&self) -> Option<String> {
+        self.0.read().await.as_ref().map(|(id, _)| id.clone())
     }
 
     pub async fn pool(&self) -> Result<SqlitePool, String> {
         self.0
             .read()
             .await
-            .clone()
+            .as_ref()
+            .map(|(_, pool)| pool.clone())
             .ok_or_else(|| "no project open".into())
     }
 }

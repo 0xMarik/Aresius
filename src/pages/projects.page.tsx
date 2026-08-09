@@ -29,9 +29,10 @@ import { Badge } from "@/components/ui/badge"
 import { IconGripVertical } from "@tabler/icons-react"
 import { useAppDispatch, useAppSelector } from "@/hooks/redux"
 import { Project } from "@/types/project.type"
-import { setcurrentProjectId, setProjects, deleteProject } from "@/store/slices/projectSlice"
+import { setcurrentProjectId, setProjects, deleteProject, updateProject } from "@/store/slices/projectSlice"
 import AddProjectDialog from "@/components/add-project-dialog.component"
 import { NoProjectBanner } from "@/components/project-guard"
+import { invoke } from "@tauri-apps/api/core"
 import {
   CheckCircle2,
   FolderOpen,
@@ -39,16 +40,13 @@ import {
   PanelsTopLeft,
   CalendarDays,
   RefreshCw,
+  Clock,
 } from "lucide-react"
 
-// App version from package – we'll just show the app version as a constant
-// In real use this could be read from tauri or a config
 const APP_VERSION = "0.1.0"
 
-/** Rough size estimate based on entry count in redux (placeholder logic) */
 function getProjectSize(project: Project): string {
-  // Could be derived from actual stored data; for now a deterministic placeholder
-  const seed = project.id.charCodeAt(0) + project.id.charCodeAt(4)
+  const seed = project.id.charCodeAt(0) + (project.id.length > 4 ? project.id.charCodeAt(4) : 0)
   const kb = ((seed % 900) + 100).toFixed(0)
   return `${kb} KB`
 }
@@ -121,12 +119,23 @@ export default function Projects() {
   const { projects, currentProjectId } = useAppSelector((state) => state.workspacestate)
   const dispatch = useAppDispatch()
 
-  const changeCurrentProject = (id: string) => {
-    dispatch(setcurrentProjectId(id))
+  const changeCurrentProject = async (id: string) => {
+    try {
+      const updatedProject = await invoke<Project>("select_project", { id })
+      dispatch(setcurrentProjectId(id))
+      dispatch(updateProject(updatedProject))
+    } catch (err) {
+      console.error("Failed to select/mount project:", err)
+    }
   }
 
-  const handleDelete = (id: string) => {
-    dispatch(deleteProject(id))
+  const handleDelete = async (id: string) => {
+    try {
+      await invoke("delete_project", { id })
+      dispatch(deleteProject(id))
+    } catch (err) {
+      console.error("Failed to delete project:", err)
+    }
   }
 
   const data = projects
@@ -166,6 +175,33 @@ export default function Projects() {
                 </Badge>
               )}
             </div>
+            {project.path && (
+              <span className="text-[10px] font-mono text-muted-foreground/70 truncate max-w-[200px]" title={project.path}>
+                {project.path}
+              </span>
+            )}
+          </div>
+        )
+      },
+    },
+    {
+      accessorKey: "lastOpenedAt",
+      header: "Last Opened",
+      cell: (info) => {
+        const val = info.getValue() as number | null | undefined
+        return (
+          <div className="flex items-center gap-1.5 text-muted-foreground">
+            <Clock className="size-3 shrink-0 text-primary/70" />
+            <span>
+              {val
+                ? new Date(val).toLocaleString("en-US", {
+                    month: "short",
+                    day: "numeric",
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })
+                : "Never"}
+            </span>
           </div>
         )
       },
@@ -177,11 +213,13 @@ export default function Projects() {
         <div className="flex items-center gap-1.5 text-muted-foreground">
           <CalendarDays className="size-3 shrink-0" />
           <span>
-            {new Date(info.getValue() as number).toLocaleString("en-US", {
-              month: "short",
-              day: "numeric",
-              year: "numeric",
-            })}
+            {info.getValue()
+              ? new Date(info.getValue() as number).toLocaleString("en-US", {
+                  month: "short",
+                  day: "numeric",
+                  year: "numeric",
+                })
+              : "—"}
           </span>
         </div>
       ),
@@ -193,11 +231,13 @@ export default function Projects() {
         <div className="flex items-center gap-1.5 text-muted-foreground">
           <RefreshCw className="size-3 shrink-0" />
           <span>
-            {new Date(info.getValue() as number).toLocaleString("en-US", {
-              month: "short",
-              day: "numeric",
-              year: "numeric",
-            })}
+            {info.getValue()
+              ? new Date(info.getValue() as number).toLocaleString("en-US", {
+                  month: "short",
+                  day: "numeric",
+                  year: "numeric",
+                })
+              : "—"}
           </span>
         </div>
       ),
@@ -306,7 +346,6 @@ export default function Projects() {
 
   return (
     <div className="p-4 flex flex-col gap-4 min-h-full">
-      {/* NoProjectBanner: shown only when redirected here without a project */}
       <NoProjectBanner />
 
       {/* Header */}
@@ -325,7 +364,6 @@ export default function Projects() {
         </div>
         <AddProjectDialog />
       </div>
-
 
       {/* Table */}
       <div className="rounded-lg border border-border overflow-hidden flex-1">

@@ -66,6 +66,7 @@ type ProjectSummary = {
     path: string,
     createdAt: number,
     updatedAt: number,
+    lastOpenedAt?: number | null,
 }
 
 

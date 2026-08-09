@@ -13,7 +13,10 @@ use tauri::Manager;
 use types::replayer::*;
 
 use crate::ares_utils::database::projects::create_project;
-use crate::ares_utils::database::projects_catalog::{catalog_db_path, list_projects, CatalogState};
+use crate::ares_utils::database::projects_catalog::{
+    catalog_db_path, delete_project, get_default_project_dir, list_projects, select_project,
+    CatalogState,
+};
 use crate::ares_utils::database::{open_project_db, DatabaseType, DbState};
 use crate::fuzzer::combinatorial::execute_combinatorial_fuzzing;
 use crate::fuzzer::echo::execute_echo_fuzzing;
@@ -138,6 +141,9 @@ pub fn run() {
             check_cert_installed,
             create_project,
             list_projects,
+            select_project,
+            delete_project,
+            get_default_project_dir,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

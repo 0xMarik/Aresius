@@ -11,74 +11,141 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Plus } from "lucide-react"
+import { Plus, AlertCircle } from "lucide-react"
 import { Checkbox } from "@/components/ui/checkbox"
 import { useAppDispatch } from "@/hooks/redux"
 import { addProject } from "@/store/slices/projectSlice"
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { invoke } from "@tauri-apps/api/core"
+import { Project } from "@/types/project.type"
 
 const AddProjectDialog = () => {
-    interface AddProjectFormEvent extends React.FormEvent<HTMLFormElement> { }
     const dispatch = useAppDispatch()
     const [open, setOpen] = useState<boolean>(false)
-    const handleSubmit = async (event: AddProjectFormEvent) => {
-        event.preventDefault();
-        const formData = new FormData(event.currentTarget);
-        const name = (formData.get("name") ?? "") as string;
-        const temporary = (formData.get("temporary") ?? false) as boolean;
-        const result = await invoke<any>("create_project", { path: `C:\\Users\\msij\\Documents\\Aresius\\${name}.db`, name });
-        console.log({ result })
-        dispatch(addProject({
-            createdAt: Date.now(),
-            description: "",
-            id: crypto.randomUUID(),
-            name: name,
-            temporary,
-            updatedAt: Date.now()
-        }))
-        setOpen(false)
-    }
-    return (
-        <Dialog open={open} onOpenChange={setOpen} >
+    const [projectName, setProjectName] = useState<string>("New project")
+    const [isTemporary, setIsTemporary] = useState<boolean>(false)
+    const [defaultDir, setDefaultDir] = useState<string>("")
+    const [customPath, setCustomPath] = useState<string>("")
+    const [error, setError] = useState<string | null>(null)
+    const [loading, setLoading] = useState<boolean>(false)
 
+    useEffect(() => {
+        if (open) {
+            setError(null)
+            invoke<string>("get_default_project_dir")
+                .then((dir) => {
+                    setDefaultDir(dir)
+                })
+                .catch((err) => console.error("Failed to get default project dir:", err))
+        }
+    }, [open])
+
+    const handleSubmit = async (event: React.FormEvent) => {
+        event.preventDefault()
+        setError(null)
+        if (!projectName.trim()) {
+            setError("Project name cannot be empty")
+            return
+        }
+
+        const sanitizedName = projectName.trim()
+        const baseDir = customPath.trim() || defaultDir
+        const targetPath = `${baseDir}${baseDir.endsWith('\\') || baseDir.endsWith('/') ? '' : '\\'}${sanitizedName}.ares`
+
+        setLoading(true)
+        try {
+            const project = await invoke<Project>("create_project", {
+                path: targetPath,
+                name: sanitizedName,
+                temporary: isTemporary,
+            })
+
+            dispatch(addProject(project))
+            setOpen(false)
+            setProjectName("New project")
+            setIsTemporary(false)
+            setCustomPath("")
+        } catch (err: any) {
+            setError(typeof err === "string" ? err : err?.message || "Failed to create project")
+        } finally {
+            setLoading(false)
+        }
+    }
+
+    return (
+        <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>
-                <Button variant="default" >
-                    <Plus />Add new project
+                <Button variant="default">
+                    <Plus className="mr-1 size-4" /> Add new project
                 </Button>
             </DialogTrigger>
 
-            <DialogContent className="sm:max-w-[425px]">
+            <DialogContent className="sm:max-w-[440px]">
                 <form onSubmit={handleSubmit}>
                     <DialogHeader>
                         <DialogTitle>Add new Project</DialogTitle>
                         <DialogDescription>
-                            Make changes to your profile here. Click save when you&apos;re
-                            done.
+                            Create a new Aresius project (.ares). The project file will be initialized and stored on catalog.
                         </DialogDescription>
                     </DialogHeader>
 
-                    <div className="grid gap-4">
-                        <div className="grid gap-3">
-
-                            <Label htmlFor="project-name">Project name</Label>
-                            <Input id="project-name" name="name" defaultValue="New project" />
+                    {error && (
+                        <div className="my-2 p-2.5 rounded border border-destructive/30 bg-destructive/10 text-destructive text-xs flex items-center gap-2">
+                            <AlertCircle className="size-4 shrink-0" />
+                            <span>{error}</span>
                         </div>
-                        <div className="flex items-center gap-3">
-                            <Checkbox id="temporary" />
-                            <Label htmlFor="temporary">Temporary</Label>
+                    )}
+
+                    <div className="grid gap-4 py-3">
+                        <div className="grid gap-2">
+                            <Label htmlFor="project-name">Project name</Label>
+                            <Input
+                                id="project-name"
+                                value={projectName}
+                                onChange={(e) => setProjectName(e.target.value)}
+                                placeholder="e.g. Target App Audit"
+                                required
+                            />
+                        </div>
+
+                        <div className="grid gap-2">
+                            <Label htmlFor="project-folder">Directory Location</Label>
+                            <Input
+                                id="project-folder"
+                                value={customPath || defaultDir}
+                                onChange={(e) => setCustomPath(e.target.value)}
+                                placeholder="Default project directory"
+                            />
+                            <p className="text-[11px] text-muted-foreground">
+                                Will save to: <code className="text-foreground">{`${customPath.trim() || defaultDir || '...'}\\${projectName.trim() || 'project'}.ares`}</code>
+                            </p>
+                        </div>
+
+                        <div className="flex items-center gap-2 pt-1">
+                            <Checkbox
+                                id="temporary"
+                                checked={isTemporary}
+                                onCheckedChange={(checked) => setIsTemporary(!!checked)}
+                            />
+                            <Label htmlFor="temporary" className="text-xs cursor-pointer">
+                                Mark as temporary project
+                            </Label>
                         </div>
                     </div>
 
                     <DialogFooter>
                         <DialogClose asChild>
-                            <Button variant="outline">Cancel</Button>
+                            <Button type="button" variant="outline" disabled={loading}>
+                                Cancel
+                            </Button>
                         </DialogClose>
-                        <Button type="submit"><Plus /> Add project</Button>
+                        <Button type="submit" disabled={loading}>
+                            {loading ? "Creating..." : "Create Project"}
+                        </Button>
                     </DialogFooter>
                 </form>
             </DialogContent>
-        </Dialog >
+        </Dialog>
     )
 }
 
