@@ -31,7 +31,6 @@ import { useAppDispatch, useAppSelector } from "@/hooks/redux"
 import { Project } from "@/types/project.type"
 import { setcurrentProjectId, setProjects, deleteProject, updateProject } from "@/store/slices/projectSlice"
 import AddProjectDialog from "@/components/add-project-dialog.component"
-import { NoProjectBanner } from "@/components/project-guard"
 import { invoke } from "@tauri-apps/api/core"
 import {
   CheckCircle2,
@@ -42,6 +41,7 @@ import {
   RefreshCw,
   Clock,
 } from "lucide-react"
+import { useEffect } from "react"
 
 const APP_VERSION = "0.1.0"
 
@@ -119,6 +119,12 @@ export default function Projects() {
   const { projects, currentProjectId } = useAppSelector((state) => state.workspacestate)
   const dispatch = useAppDispatch()
 
+  console.log("%c[Projects Page Render]", "color: #3f51b5; font-weight: bold", { currentProjectId })
+  useEffect(() => {
+    console.log("%c[Projects Page Mounted]", "color: #8bc34a; font-weight: bold")
+    return () => console.log("%c[Projects Page Unmounted]", "color: #9e9e9e; font-weight: bold")
+  }, [])
+
   const changeCurrentProject = async (id: string) => {
     try {
       const updatedProject = await invoke<Project>("select_project", { id })
@@ -195,11 +201,11 @@ export default function Projects() {
             <span>
               {val
                 ? new Date(val).toLocaleString("en-US", {
-                    month: "short",
-                    day: "numeric",
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  })
+                  month: "short",
+                  day: "numeric",
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })
                 : "Never"}
             </span>
           </div>
@@ -215,10 +221,10 @@ export default function Projects() {
           <span>
             {info.getValue()
               ? new Date(info.getValue() as number).toLocaleString("en-US", {
-                  month: "short",
-                  day: "numeric",
-                  year: "numeric",
-                })
+                month: "short",
+                day: "numeric",
+                year: "numeric",
+              })
               : "—"}
           </span>
         </div>
@@ -233,10 +239,10 @@ export default function Projects() {
           <span>
             {info.getValue()
               ? new Date(info.getValue() as number).toLocaleString("en-US", {
-                  month: "short",
-                  day: "numeric",
-                  year: "numeric",
-                })
+                month: "short",
+                day: "numeric",
+                year: "numeric",
+              })
               : "—"}
           </span>
         </div>
@@ -346,7 +352,6 @@ export default function Projects() {
 
   return (
     <div className="p-4 flex flex-col gap-4 min-h-full">
-      <NoProjectBanner />
 
       {/* Header */}
       <div className="flex items-center justify-between">

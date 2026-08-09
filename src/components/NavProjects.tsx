@@ -1,5 +1,7 @@
 import { ChevronRight, type LucideIcon } from "lucide-react"
 import { Link, useLocation } from "react-router-dom"
+import { toast } from "sonner"
+import { useAppSelector } from "@/hooks/redux"
 
 import {
   Collapsible,
@@ -15,6 +17,8 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar"
 import { RunningDot } from "@/components/ui/RunningDot"
+
+const PUBLIC_ROUTES = ["/projects", "/"]
 
 interface NavItem {
   name: string
@@ -35,6 +39,17 @@ export function NavProjects({ name, items, defaultOpen = true }: NavProjectsProp
   const location = useLocation()
   const { state: sidebarState } = useSidebar()
   const isCollapsed = sidebarState === "collapsed"
+  const currentProjectId = useAppSelector((s) => s.workspacestate.currentProjectId)
+
+  const handleLinkClick = (e: React.MouseEvent<HTMLAnchorElement>, url: string) => {
+    const isPublic = PUBLIC_ROUTES.some((r) => url === r)
+    if (!currentProjectId && !isPublic) {
+      e.preventDefault()
+      toast.error("No project selected — please select or create a project before accessing other pages.", {
+        id: "no-project-selected",
+      })
+    }
+  }
 
   return (
     <Collapsible defaultOpen={defaultOpen} className="group/collapsible">
@@ -57,7 +72,11 @@ export function NavProjects({ name, items, defaultOpen = true }: NavProjectsProp
                     <RunningDot className="pointer-events-none absolute top-1 right-1 z-10" />
                   )}
                   <SidebarMenuButton asChild isActive={isActive} tooltip={item.name}>
-                    <Link to={item.url} className="flex items-center gap-2">
+                    <Link
+                      to={item.url}
+                      onClick={(e) => handleLinkClick(e, item.url)}
+                      className="flex items-center gap-2"
+                    >
                       <item.icon />
                       <span className="flex-1 truncate">{item.name}</span>
 

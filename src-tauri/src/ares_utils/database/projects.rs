@@ -30,11 +30,12 @@ pub async fn create_project(
     }
 
     if let Some(parent) = path_buf.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("Failed to create directories: {e}"))?;
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create directories: {e}"))?;
     }
 
     if path_buf.exists() {
-        return Err("A file already exists at this path".into());
+        return Err("A file with the same namealready exists at this path".into());
     }
 
     // 1. Create and open project SQLite database

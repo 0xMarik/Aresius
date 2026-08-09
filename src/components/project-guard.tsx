@@ -1,6 +1,7 @@
-import { Navigate, useLocation } from "react-router-dom"
+import { useEffect } from "react"
+import { Navigate, useLocation, useNavigate } from "react-router-dom"
 import { useAppSelector } from "@/hooks/redux"
-import { FolderOpen } from "lucide-react"
+import { toast } from "sonner"
 
 /** Routes that don't require a project to be selected */
 const PUBLIC_ROUTES = ["/projects", "/"]
@@ -12,16 +13,47 @@ interface ProjectGuardProps {
 /**
  * Synchronously blocks protected routes during render.
  * If no project is selected and the current route is protected,
- * a <Navigate> is returned immediately — the child page never mounts.
+ * a <Navigate> is returned immediately — the child page never mounts (no flash).
+ * Upon redirect to /projects, a toast error is displayed.
  */
 export function ProjectGuard({ children }: ProjectGuardProps) {
   const currentProjectId = useAppSelector((s) => s.workspacestate.currentProjectId)
   const location = useLocation()
+  const navigate = useNavigate()
 
   const isPublic = PUBLIC_ROUTES.some((r) => location.pathname === r)
+  const needsProject = (location.state as any)?.needsProject === true
 
-  // Redirect synchronously — no useEffect, no flash of the protected page
+  console.log("%c[ProjectGuard Render]", "color: #00bcd4; font-weight: bold", {
+    pathname: location.pathname,
+    currentProjectId,
+    isPublic,
+    needsProject,
+    state: location.state,
+  })
+
+  useEffect(() => {
+    console.log("%c[ProjectGuard useEffect]", "color: #ff9800; font-weight: bold", {
+      pathname: location.pathname,
+      needsProject,
+      currentProjectId,
+    })
+    if (needsProject && !currentProjectId) {
+      console.log("%c[ProjectGuard] Triggering toast.error...", "color: #f44336; font-weight: bold")
+      toast.error("No project selected — please select or create a project before accessing other pages.", {
+        id: "no-project-selected",
+      })
+      console.log("%c[ProjectGuard] Clearing location.state...", "color: #9c27b0; font-weight: bold")
+      navigate(location.pathname, { replace: true, state: {} })
+    }
+  }, [needsProject, currentProjectId, location.pathname, navigate])
+
+  // Redirect synchronously — no useEffect delay, no flash of protected page
   if (!currentProjectId && !isPublic) {
+    console.log("%c[ProjectGuard -> BLOCKING & REDIRECTING]", "color: #e91e63; font-weight: bold", {
+      from: location.pathname,
+      to: "/projects",
+    })
     return (
       <Navigate
         to="/projects"
@@ -31,30 +63,16 @@ export function ProjectGuard({ children }: ProjectGuardProps) {
     )
   }
 
+  console.log("%c[ProjectGuard -> ALLOWING ROUTE]", "color: #4caf50; font-weight: bold", {
+    pathname: location.pathname,
+  })
   return <>{children}</>
 }
 
-/**
- * Banner shown on the /projects page when the user was redirected
- * because no project was selected.
- */
 export function NoProjectBanner() {
-  const location = useLocation()
-  const currentProjectId = useAppSelector((s) => s.workspacestate.currentProjectId)
-  const fromGuard = (location.state as any)?.needsProject === true
+  return null
+}
 
-  if (!fromGuard || currentProjectId) return null
-
-  return (
-    <div
-      className="flex items-center gap-3 rounded-lg border border-primary/50 bg-primary/10 px-4 py-2.5 text-[12px] text-primary mb-4"
-      role="alert"
-    >
-      <FolderOpen className="size-4 shrink-0" />
-      <div>
-        <span className="font-semibold">No project selected — </span>
-        <span className="text-primary/80">please select or create a project below before accessing other pages.</span>
-      </div>
-    </div>
-  )
+export function noProjectBanner() {
+  return null
 }
