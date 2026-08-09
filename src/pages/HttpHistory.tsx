@@ -31,7 +31,7 @@ export type HttpTransaction = {
     statusCode: number;
     responseLength: number;
     responseTimeMs: number;
-    sentAtTsMs: number;
+    sentAtMs: number;
     state: RequestState;
     rawRequest: string;
     rawResponse: string;
@@ -60,7 +60,7 @@ export function adaptFromReqRes(items: HttpHistory[]): HttpTransaction[] {
         statusCode: item.statusCode,
         responseLength: item.responseLength,
         responseTimeMs: item.responseTimeMs,
-        sentAtTsMs: item.sentAtTsMs,
+        sentAtMs: item.sentAtMs,
         state: stateFromCode(item.statusCode),
         rawRequest: item.rawRequest,
         rawResponse: item.rawResponse,
@@ -203,8 +203,8 @@ export const httpColumns: ColumnDef<HttpTransaction, any>[] = [
             return <span className={`text-[12px] tabular-nums ${selected ? 'text-primary-foreground/80' : 'text-muted-foreground'}`}>{info.getValue()}</span>;
         },
     }),
-    columnHelper.accessor('sentAtTsMs', {
-        id: 'sentAtTsMs',
+    columnHelper.accessor('sentAtMs', {
+        id: 'sentAtMs',
         header: 'Sent at',
         size: 130,
         minSize: 130,
@@ -235,6 +235,7 @@ const HTTPHisotry = () => {
     const projectId = useProjectId();
     const historySelectors = useMemo(() => getHistorySelectors(projectId), [projectId]);
     const history = useAppSelector(historySelectors.selectAll);
+    console.log({ history })
     const activeScope = useAppSelector(selectActiveScope(projectId));
     const [selectedRequest, setSelectedRequest] = useState<number | null>(null);
     const [scopeFilter, setScopeFilter] = useState<'all' | 'in' | 'out'>('all');
@@ -248,7 +249,7 @@ const HTTPHisotry = () => {
     const rows = useMemo(() => {
         if (scopeFilter === 'all' || !activeScope) return allRows;
         return allRows.filter((row) => {
-            const inScope = isInScope(activeScope, row.host, row.path);
+            const inScope = isInScope(activeScope, row.host, row.path || '/');
             return scopeFilter === 'in' ? inScope : !inScope;
         });
     }, [allRows, activeScope, scopeFilter]);
