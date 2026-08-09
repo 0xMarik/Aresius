@@ -1,24 +1,20 @@
-// Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 mod ares_utils;
-use tokio::time::timeout;
+mod app_setup;
+mod commands;
 mod fuzzer;
-// src-tauri/src/main.rs
+mod proxy;
 mod types;
 
-use std::time::Duration;
-
 use tauri::Manager;
-// use tauri::http::response;
 
-use types::replayer::*;
-
+use crate::ares_utils::certs::certification_installation::install_cert;
+use crate::ares_utils::certs::check_cert_installed::check_cert_installed;
 use crate::ares_utils::database::projects::create_project;
 use crate::ares_utils::database::projects_catalog::{
-    catalog_db_path, delete_project, get_default_project_dir, list_projects, select_project,
-    CatalogState,
+    delete_project, get_default_project_dir, list_projects, select_project,
 };
-use crate::ares_utils::database::{open_project_db, DatabaseType, DbState};
-use crate::ares_utils::shutdown_gracefully;
+use crate::ares_utils::database::DbState;
+use crate::commands::replay_request;
 use crate::fuzzer::combinatorial::execute_combinatorial_fuzzing;
 use crate::fuzzer::echo::execute_echo_fuzzing;
 use crate::fuzzer::engine::{
@@ -26,55 +22,12 @@ use crate::fuzzer::engine::{
 };
 use crate::fuzzer::rotator::execute_rotator_fuzzing;
 use crate::fuzzer::zipped::execute_zipped_fuzzing;
-
-mod proxy;
 use crate::proxy::utils::HistoryIdCounter;
-use crate::proxy::*;
-
-use tracing;
-
-use ares_utils::certs::certification_installation::install_cert;
-use ares_utils::certs::check_cert_installed::check_cert_installed;
-use ares_utils::http_connection::HttpConnection;
-
-#[tauri::command]
-async fn replay_request(url: String, request_tmp: String) -> Result<ReplayerResponse, String> {
-    let req = request_tmp;
-
-    let mut conn = HttpConnection::new(&url)
-        .await
-        .map_err(|e| format!("Connection failed: {e}"))?;
-
-    let result = conn.send_request(&req.as_bytes()).await;
-
-    // Always attempt a clean shutdown, whether or not the request
-    // succeeded. A target that's slow or hostile shouldn't be able to make
-    // this hang forever, so bound it with a short timeout; either way we
-    // don't let a close failure override a response we already have.
-    match timeout(Duration::from_secs(5), conn.close()).await {
-        Ok(Err(e)) => eprintln!("warning: failed to cleanly close connection to {url}: {e}"),
-        Err(_) => eprintln!("warning: close on {url} timed out after 5s"),
-        Ok(Ok(())) => {}
-    }
-
-    let response = result.map_err(|e| format!("Request failed: {e}"))?;
-
-    Ok(ReplayerResponse {
-        response_raw: response.as_text_lossy(),
-        response_time: response.elapsed.as_millis(),
-        request_raw: req,
-        base_url: url.clone(),
-    })
-}
-
-async fn close_splashscreen(app: tauri::AppHandle) {
-    if let Some(splash) = app.get_webview_window("splashscreen") {
-        splash.close().unwrap();
-    }
-    if let Some(main) = app.get_webview_window("main") {
-        main.show().unwrap();
-    }
-}
+use crate::proxy::{CertCache, InterceptState};
+use crate::proxy::{
+    drop_all_intercept_items, drop_intercept_item, forward_intercept_item, get_intercept_queue,
+    get_intercept_settings, set_intercept_settings,
+};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -95,48 +48,9 @@ pub fn run() {
         .manage(DbState::new())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
-        .setup(|app| {
-            if let Some(_splash) = app.get_webview_window("splashscreen") {
-                // splash.set_shadow(false).unwrap();
-                // print!("Closing splashscreen...");
-                let app_handle = app.handle().clone();
-                tauri::async_runtime::spawn(async move {
-                    if let Err(e) = start_http_proxy(app_handle, "0.0.0.0:8080").await {
-                        tracing::error!("Proxy error: {}", e);
-                    }
-                });
-
-                let handle = app.handle().clone();
-                tauri::async_runtime::block_on(async move {
-                    let path = catalog_db_path(&handle).unwrap();
-                    let pool = open_project_db(&path, DatabaseType::Catalog).await.unwrap();
-                    handle.manage(CatalogState::new(pool));
-                });
-
-                let app_handle = app.handle().clone();
-                tauri::async_runtime::spawn(async move {
-                    // thread::sleep(std::time::Duration::from_secs(10));
-                    close_splashscreen(app_handle).await;
-                });
-            }
-
-            let window = app.get_webview_window("main").unwrap();
-            let app_handle = app.handle().clone();
-
-            window.on_window_event(move |event| {
-                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                    api.prevent_close();
-                    let app_handle = app_handle.clone();
-                    tauri::async_runtime::spawn(async move {
-                        shutdown_gracefully(&app_handle).await;
-                        app_handle.exit(0);
-                    });
-                }
-            });
-
-            Ok(())
-        })
+        .setup(app_setup::setup)
         .invoke_handler(tauri::generate_handler![
+            // Fuzzer
             execute_rotator_fuzzing,
             execute_zipped_fuzzing,
             execute_echo_fuzzing,
@@ -145,15 +59,19 @@ pub fn run() {
             resend_fuzz_request,
             resend_failed_fuzz_requests,
             resend_worker_fuzz_requests,
+            // Replayer
             replay_request,
+            // Interceptor
             get_intercept_settings,
             set_intercept_settings,
             get_intercept_queue,
             forward_intercept_item,
             drop_intercept_item,
             drop_all_intercept_items,
+            // Certificates
             install_cert,
             check_cert_installed,
+            // Projects
             create_project,
             list_projects,
             select_project,
