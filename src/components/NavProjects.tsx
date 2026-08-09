@@ -45,8 +45,10 @@ export function NavProjects({ name, items, defaultOpen = true }: NavProjectsProp
     const isPublic = PUBLIC_ROUTES.some((r) => url === r)
     if (!currentProjectId && !isPublic) {
       e.preventDefault()
-      toast.error("No project selected — please select or create a project before accessing other pages.", {
+      toast.error("No project selected", {
         id: "no-project-selected",
+        position: "top-center",
+        description: "Please select or create a project before accessing other pages.",
       })
     }
   }

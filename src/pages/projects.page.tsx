@@ -119,12 +119,6 @@ export default function Projects() {
   const { projects, currentProjectId } = useAppSelector((state) => state.workspacestate)
   const dispatch = useAppDispatch()
 
-  console.log("%c[Projects Page Render]", "color: #3f51b5; font-weight: bold", { currentProjectId })
-  useEffect(() => {
-    console.log("%c[Projects Page Mounted]", "color: #8bc34a; font-weight: bold")
-    return () => console.log("%c[Projects Page Unmounted]", "color: #9e9e9e; font-weight: bold")
-  }, [])
-
   const changeCurrentProject = async (id: string) => {
     try {
       const updatedProject = await invoke<Project>("select_project", { id })

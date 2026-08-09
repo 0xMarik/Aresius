@@ -24,36 +24,17 @@ export function ProjectGuard({ children }: ProjectGuardProps) {
   const isPublic = PUBLIC_ROUTES.some((r) => location.pathname === r)
   const needsProject = (location.state as any)?.needsProject === true
 
-  console.log("%c[ProjectGuard Render]", "color: #00bcd4; font-weight: bold", {
-    pathname: location.pathname,
-    currentProjectId,
-    isPublic,
-    needsProject,
-    state: location.state,
-  })
-
   useEffect(() => {
-    console.log("%c[ProjectGuard useEffect]", "color: #ff9800; font-weight: bold", {
-      pathname: location.pathname,
-      needsProject,
-      currentProjectId,
-    })
     if (needsProject && !currentProjectId) {
-      console.log("%c[ProjectGuard] Triggering toast.error...", "color: #f44336; font-weight: bold")
       toast.error("No project selected — please select or create a project before accessing other pages.", {
         id: "no-project-selected",
       })
-      console.log("%c[ProjectGuard] Clearing location.state...", "color: #9c27b0; font-weight: bold")
       navigate(location.pathname, { replace: true, state: {} })
     }
   }, [needsProject, currentProjectId, location.pathname, navigate])
 
   // Redirect synchronously — no useEffect delay, no flash of protected page
   if (!currentProjectId && !isPublic) {
-    console.log("%c[ProjectGuard -> BLOCKING & REDIRECTING]", "color: #e91e63; font-weight: bold", {
-      from: location.pathname,
-      to: "/projects",
-    })
     return (
       <Navigate
         to="/projects"
@@ -63,9 +44,6 @@ export function ProjectGuard({ children }: ProjectGuardProps) {
     )
   }
 
-  console.log("%c[ProjectGuard -> ALLOWING ROUTE]", "color: #4caf50; font-weight: bold", {
-    pathname: location.pathname,
-  })
   return <>{children}</>
 }
 
