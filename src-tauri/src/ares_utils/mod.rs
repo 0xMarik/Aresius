@@ -5,6 +5,12 @@ pub mod database;
 pub mod http_connection;
 pub mod parse;
 
+// ares_utils/database/mod.rs — or a new ares_utils/lifecycle.rs if you'd rather separate it
+
+use tauri::{AppHandle, Manager};
+
+use crate::ares_utils::database::{projects_catalog::CatalogState, DbState};
+
 #[derive(Debug, Clone)]
 pub struct UrlComponents {
     // pub protocol: String,
@@ -27,4 +33,24 @@ pub fn url_parsing(url_str: &str) -> Option<UrlComponents> {
         port,
     };
     Some(components)
+}
+
+/// Cleanly checkpoints and closes every open SQLite connection (project + catalog)
+/// before the app exits. Call this from the window's CloseRequested handler.
+pub async fn shutdown_gracefully(app: &AppHandle) {
+    let db = app.state::<DbState>();
+    if let Ok(pool) = db.pool().await {
+        sqlx::query("PRAGMA wal_checkpoint(TRUNCATE);")
+            .execute(&pool)
+            .await
+            .ok();
+        pool.close().await;
+    }
+
+    let catalog = app.state::<CatalogState>();
+    sqlx::query("PRAGMA wal_checkpoint(TRUNCATE);")
+        .execute(catalog.pool())
+        .await
+        .ok();
+    catalog.pool().close().await;
 }

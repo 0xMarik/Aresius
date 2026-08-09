@@ -18,6 +18,7 @@ use crate::ares_utils::database::projects_catalog::{
     CatalogState,
 };
 use crate::ares_utils::database::{open_project_db, DatabaseType, DbState};
+use crate::ares_utils::shutdown_gracefully;
 use crate::fuzzer::combinatorial::execute_combinatorial_fuzzing;
 use crate::fuzzer::echo::execute_echo_fuzzing;
 use crate::fuzzer::engine::{
@@ -118,6 +119,20 @@ pub fn run() {
                     close_splashscreen(app_handle).await;
                 });
             }
+
+            let window = app.get_webview_window("main").unwrap();
+            let app_handle = app.handle().clone();
+
+            window.on_window_event(move |event| {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let app_handle = app_handle.clone();
+                    tauri::async_runtime::spawn(async move {
+                        shutdown_gracefully(&app_handle).await;
+                        app_handle.exit(0);
+                    });
+                }
+            });
 
             Ok(())
         })
