@@ -1,6 +1,7 @@
 pub mod body_decoder;
 pub mod certs;
 use url::Url;
+pub mod database;
 pub mod http_connection;
 pub mod parse;
 

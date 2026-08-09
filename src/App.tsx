@@ -27,6 +27,8 @@ import ScopeManager from "./pages/scope/ScopeManager";
 import { ProjectGuard } from "./components/project-guard";
 
 import store from "./store";
+import { invoke } from "@tauri-apps/api/core";
+import { setProjects } from "./store/slices/projectSlice";
 
 interface ReqRes {
     request: string;
@@ -58,7 +60,13 @@ export type FuzzWorkerUpdate = {
     message?: string;
 };
 
-
+type ProjectSummary = {
+    id: string,
+    name: string,
+    path: string,
+    createdAt: number,
+    updatedAt: number,
+}
 
 
 export default function App() {
@@ -127,6 +135,22 @@ export default function App() {
         return () => {
             unlisten.then((f) => f());
         };
+    }, [dispatch]);
+
+    useEffect(() => {
+        invoke<ProjectSummary[]>("list_projects")
+            .then((projects) => {
+                dispatch(setProjects(projects.map(project => {
+                    const projectSummary = {
+                        description: "",
+                        temporary: false,
+
+                        ...project
+                    }
+                    return projectSummary;
+                })))
+            })
+            .catch((err) => console.error("Failed to load projects:", err));
     }, [dispatch]);
 
     return (

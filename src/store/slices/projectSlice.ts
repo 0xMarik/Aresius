@@ -4,14 +4,14 @@ import { createSlice, PayloadAction } from '@reduxjs/toolkit'
 
 const initialState: WorkspaceState = {
     projects: [
-      {
-        id: crypto.randomUUID(),
-        name: "Default Project",
-        description: "This is a default project.",
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-        temporary: false,
-      }
+      // {
+      //   id: crypto.randomUUID(),
+      //   name: "Default Project",
+      //   description: "This is a default project.",
+      //   createdAt: Date.now(),
+      //   updatedAt: Date.now(),
+      //   temporary: false,
+      // }
     ],
     currentProjectId: null,
 }

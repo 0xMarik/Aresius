@@ -14,7 +14,7 @@
 // }
 
 export interface Project {
-  id: `${string}-${string}-${string}-${string}-${string}`
+  id: string
   name: string
   description: string
   createdAt: number
@@ -39,7 +39,7 @@ export interface Project {
 }
 
 export interface WorkspaceState {
-  currentProjectId: `${string}-${string}-${string}-${string}-${string}` | null
+  currentProjectId: string | null
   projects: Project[]
   
   // UI state will be handled by react router

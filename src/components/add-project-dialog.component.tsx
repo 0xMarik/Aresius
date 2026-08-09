@@ -16,16 +16,19 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { useAppDispatch } from "@/hooks/redux"
 import { addProject } from "@/store/slices/projectSlice"
 import { useState } from "react"
+import { invoke } from "@tauri-apps/api/core"
 
 const AddProjectDialog = () => {
     interface AddProjectFormEvent extends React.FormEvent<HTMLFormElement> { }
     const dispatch = useAppDispatch()
     const [open, setOpen] = useState<boolean>(false)
-    const handleSubmit = (event: AddProjectFormEvent) => {
+    const handleSubmit = async (event: AddProjectFormEvent) => {
         event.preventDefault();
         const formData = new FormData(event.currentTarget);
         const name = (formData.get("name") ?? "") as string;
         const temporary = (formData.get("temporary") ?? false) as boolean;
+        const result = await invoke<any>("create_project", { path: `C:\\Users\\msij\\Documents\\Aresius\\${name}.db`, name });
+        console.log({ result })
         dispatch(addProject({
             createdAt: Date.now(),
             description: "",

@@ -36,7 +36,6 @@ import {
   CheckCircle2,
   FolderOpen,
   Trash2,
-  Clock,
   PanelsTopLeft,
   CalendarDays,
   RefreshCw,
@@ -44,7 +43,7 @@ import {
 
 // App version from package – we'll just show the app version as a constant
 // In real use this could be read from tauri or a config
-const APP_VERSION = "0.1.1"
+const APP_VERSION = "0.1.0"
 
 /** Rough size estimate based on entry count in redux (placeholder logic) */
 function getProjectSize(project: Project): string {
@@ -327,27 +326,6 @@ export default function Projects() {
         <AddProjectDialog />
       </div>
 
-      {/* Active project summary card */}
-      {currentProject && (
-        <div className="flex items-center gap-3 rounded-lg border border-border bg-card px-4 py-3">
-          <div className="flex items-center justify-center size-7 rounded-md bg-primary/10 shrink-0">
-            <CheckCircle2 className="size-3.5 text-primary" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-[11px] font-semibold text-foreground truncate">{currentProject.name}</p>
-            <p className="text-[10px] text-muted-foreground flex items-center gap-1">
-              <Clock className="size-2.5" />
-              Last updated {new Date(currentProject.updatedAt).toLocaleString("en-US", {
-                month: "short", day: "numeric", year: "numeric",
-                hour: "numeric", minute: "2-digit", hour12: true,
-              })}
-            </p>
-          </div>
-          <Badge variant="outline" className="h-5 px-2 text-[10px] border-primary/30 text-primary bg-primary/5 shrink-0">
-            Active
-          </Badge>
-        </div>
-      )}
 
       {/* Table */}
       <div className="rounded-lg border border-border overflow-hidden flex-1">

@@ -12,6 +12,9 @@ use tauri::Manager;
 
 use types::replayer::*;
 
+use crate::ares_utils::database::projects::create_project;
+use crate::ares_utils::database::projects_catalog::{catalog_db_path, list_projects, CatalogState};
+use crate::ares_utils::database::{open_project_db, DatabaseType, DbState};
 use crate::fuzzer::combinatorial::execute_combinatorial_fuzzing;
 use crate::fuzzer::echo::execute_echo_fuzzing;
 use crate::fuzzer::engine::{
@@ -85,6 +88,7 @@ pub fn run() {
         .manage(InterceptState::new())
         .manage(CertCache::new())
         .manage(HistoryIdCounter::new())
+        .manage(DbState::new())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
@@ -96,6 +100,13 @@ pub fn run() {
                     if let Err(e) = start_http_proxy(app_handle, "0.0.0.0:8080").await {
                         tracing::error!("Proxy error: {}", e);
                     }
+                });
+
+                let handle = app.handle().clone();
+                tauri::async_runtime::block_on(async move {
+                    let path = catalog_db_path(&handle).unwrap();
+                    let pool = open_project_db(&path, DatabaseType::Catalog).await.unwrap();
+                    handle.manage(CatalogState::new(pool));
                 });
 
                 let app_handle = app.handle().clone();
@@ -125,6 +136,8 @@ pub fn run() {
             drop_all_intercept_items,
             install_cert,
             check_cert_installed,
+            create_project,
+            list_projects,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
