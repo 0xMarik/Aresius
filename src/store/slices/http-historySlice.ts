@@ -25,6 +25,16 @@ const HttpHistorySlice = createSlice({
       }
       historyAdapter.addOne(state[projectId], historyItem);
     },
+    setHistoryBulk: (
+      state,
+      action: PayloadAction<{ items: HttpHistory[]; projectId: string }>
+    ) => {
+      const { items, projectId } = action.payload;
+      state[projectId] = historyAdapter.setAll(
+        historyAdapter.getInitialState(),
+        items
+      );
+    },
   },
   extraReducers: (builder) => {
     builder.addCase(deleteProject, (state, action) => {
@@ -33,7 +43,7 @@ const HttpHistorySlice = createSlice({
   },
 });
 
-export const { addToHttpHistory } = HttpHistorySlice.actions;
+export const { addToHttpHistory, setHistoryBulk } = HttpHistorySlice.actions;
 
 const EMPTY_HISTORY: HttpHistory[] = [];
 const emptyState = historyAdapter.getInitialState();

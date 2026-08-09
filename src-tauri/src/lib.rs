@@ -5,10 +5,9 @@ mod fuzzer;
 mod proxy;
 mod types;
 
-use tauri::Manager;
-
 use crate::ares_utils::certs::certification_installation::install_cert;
 use crate::ares_utils::certs::check_cert_installed::check_cert_installed;
+use crate::ares_utils::database::http_history::get_http_history;
 use crate::ares_utils::database::projects::create_project;
 use crate::ares_utils::database::projects_catalog::{
     delete_project, get_default_project_dir, list_projects, select_project,
@@ -77,6 +76,8 @@ pub fn run() {
             select_project,
             delete_project,
             get_default_project_dir,
+            // HTTP History
+            get_http_history,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

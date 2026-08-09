@@ -36,6 +36,7 @@ export type HttpHistory = {
     responseTimeMs: number;
     sentAtTsMs: number;
     state: RequestState;
+    isHttps: boolean;
     rawRequest: string;
     rawResponse: string;
 };

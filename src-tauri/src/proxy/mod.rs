@@ -1,5 +1,7 @@
 use crate::ares_utils::body_decoder;
 use crate::ares_utils::certs::*;
+use crate::ares_utils::database::http_history::save_http_history;
+use crate::ares_utils::database::DbState;
 use crate::ares_utils::http_connection::read_request_message;
 use crate::ares_utils::http_connection::ConnectionOptions;
 use crate::ares_utils::http_connection::HttpConnection;
@@ -48,6 +50,7 @@ struct HttpHistoryPayload {
     response_length: usize,
     response_time_ms: u64,
     sent_at_ts_ms: u128,
+    is_https: bool,
 }
 
 pub struct CertCache {
@@ -405,25 +408,45 @@ async fn handle_connect(
         let response_length = response_body.as_bytes().len();
 
         let history_counter: tauri::State<HistoryIdCounter> = app_handle.state();
-        app_handle
-            .emit(
-                "http_history",
-                HttpHistoryPayload {
-                    id: history_counter.next(),
-                    raw_request: String::from_utf8_lossy(&outgoing_request_bytes).to_string(),
-                    raw_response: final_response_text,
-                    host: target.clone(),
-                    method: req_meta.method,
-                    path: req_meta.path,
-                    query: req_meta.query,
-                    extension: req_meta.extension,
-                    status_code: status,
-                    response_length,
-                    response_time_ms: response.elapsed.as_millis() as u64,
-                    sent_at_ts_ms: sent_at_ts_ms,
-                },
-            )
-            .ok();
+        let payload = HttpHistoryPayload {
+            id: history_counter.next(),
+            raw_request: String::from_utf8_lossy(&outgoing_request_bytes).to_string(),
+            raw_response: final_response_text,
+            host: target.clone(),
+            method: req_meta.method,
+            path: req_meta.path,
+            query: req_meta.query,
+            extension: req_meta.extension,
+            status_code: status,
+            response_length,
+            response_time_ms: response.elapsed.as_millis() as u64,
+            sent_at_ts_ms: sent_at_ts_ms,
+            is_https: true,
+        };
+        app_handle.emit("http_history", payload.clone()).ok();
+
+        // Persist to the project database (fire-and-forget -- never blocks the proxy).
+        let db_state: tauri::State<DbState> = app_handle.state();
+        if let Ok(pool) = db_state.pool().await {
+            if let Some(project_id) = db_state.get_active_id().await {
+                tokio::spawn(save_http_history(
+                    pool,
+                    project_id,
+                    payload.host,
+                    payload.method,
+                    payload.path,
+                    payload.query,
+                    payload.extension,
+                    payload.status_code,
+                    payload.response_length,
+                    payload.response_time_ms,
+                    payload.sent_at_ts_ms,
+                    payload.is_https,
+                    payload.raw_request,
+                    payload.raw_response,
+                ));
+            }
+        }
 
         if let Err(e) = client_tls.write_all(&outgoing_response_bytes).await {
             tracing::debug!("Client write failed for {}: {}", target, e);
@@ -621,25 +644,45 @@ async fn handle_http_request(
         let response_length = response_body.as_bytes().len();
 
         let history_counter: tauri::State<HistoryIdCounter> = app_handle.state();
-        app_handle
-            .emit(
-                "http_history",
-                HttpHistoryPayload {
-                    id: history_counter.next(),
-                    raw_request: String::from_utf8_lossy(&outgoing_request_bytes).to_string(),
-                    raw_response: final_response_text,
-                    host: target.clone(),
-                    method: req_meta.method,
-                    path: req_meta.path,
-                    query: req_meta.query,
-                    extension: req_meta.extension,
-                    status_code: status_code,
-                    response_length,
-                    response_time_ms: response.elapsed.as_millis() as u64,
-                    sent_at_ts_ms: sent_at_ts_ms,
-                },
-            )
-            .ok();
+        let payload = HttpHistoryPayload {
+            id: history_counter.next(),
+            raw_request: String::from_utf8_lossy(&outgoing_request_bytes).to_string(),
+            raw_response: final_response_text,
+            host: target.clone(),
+            method: req_meta.method,
+            path: req_meta.path,
+            query: req_meta.query,
+            extension: req_meta.extension,
+            status_code: status_code,
+            response_length,
+            response_time_ms: response.elapsed.as_millis() as u64,
+            sent_at_ts_ms: sent_at_ts_ms,
+            is_https: false,
+        };
+        app_handle.emit("http_history", payload.clone()).ok();
+
+        // Persist to the project database (fire-and-forget -- never blocks the proxy).
+        let db_state: tauri::State<DbState> = app_handle.state();
+        if let Ok(pool) = db_state.pool().await {
+            if let Some(project_id) = db_state.get_active_id().await {
+                tokio::spawn(save_http_history(
+                    pool,
+                    project_id,
+                    payload.host,
+                    payload.method,
+                    payload.path,
+                    payload.query,
+                    payload.extension,
+                    payload.status_code,
+                    payload.response_length,
+                    payload.response_time_ms,
+                    payload.sent_at_ts_ms,
+                    payload.is_https,
+                    payload.raw_request,
+                    payload.raw_response,
+                ));
+            }
+        }
 
         if client_stream
             .write_all(&outgoing_response_bytes)
