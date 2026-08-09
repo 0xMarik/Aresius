@@ -97,15 +97,15 @@ pub async fn delete_project(
     catalog: tauri::State<'_, CatalogState>,
     db: tauri::State<'_, DbState>,
 ) -> Result<(), String> {
+    if db.get_active_id().await.as_deref() == Some(&id) {
+        return Err("Cannot delete active project. Please select or switch to another project first.".to_string());
+    }
+
     let path_opt: Option<(String,)> = sqlx::query_as("SELECT path FROM project_catalog WHERE id = ?")
         .bind(&id)
         .fetch_optional(catalog.pool())
         .await
         .map_err(|e| e.to_string())?;
-
-    if db.get_active_id().await.as_deref() == Some(&id) {
-        db.close().await;
-    }
 
     sqlx::query("DELETE FROM project_catalog WHERE id = ?")
         .bind(&id)

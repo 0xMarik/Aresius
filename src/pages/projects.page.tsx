@@ -32,6 +32,7 @@ import { Project } from "@/types/project.type"
 import { setcurrentProjectId, setProjects, deleteProject, updateProject } from "@/store/slices/projectSlice"
 import AddProjectDialog from "@/components/add-project-dialog.component"
 import { invoke } from "@tauri-apps/api/core"
+import { toast } from "sonner"
 import {
   CheckCircle2,
   FolderOpen,
@@ -129,11 +130,22 @@ export default function Projects() {
   }
 
   const handleDelete = async (id: string) => {
+    if (id === currentProjectId) {
+      toast.error("Cannot delete the active project. ", {
+        id: "active-project-delete-error",
+        description: "Please select or switch to another project first.",
+        position: "top-center"
+      })
+      return
+    }
+
     try {
       await invoke("delete_project", { id })
       dispatch(deleteProject(id))
-    } catch (err) {
+      toast.success("Project deleted successfully")
+    } catch (err: any) {
       console.error("Failed to delete project:", err)
+      toast.error(typeof err === "string" ? err : "Failed to delete project")
     }
   }
 
