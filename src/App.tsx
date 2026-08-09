@@ -24,7 +24,6 @@ import SitemapTree from "./pages/sitemap/Sitemap";
 import { updateSiteMap } from "./store/slices/sitemapSlice";
 import { HttpHistory } from "./types/http.type";
 import ScopeManager from "./pages/scope/ScopeManager";
-import { ProjectGuard } from "./components/project-guard";
 
 import store from "./store";
 import { invoke } from "@tauri-apps/api/core";
@@ -165,18 +164,16 @@ export default function App() {
                     } as React.CSSProperties} >
                         <AppSidebar />
                         <SidebarInset className="min-h-0 overflow-auto flex flex-col">
-                            <ProjectGuard>
-                                <Routes>
-                                    <Route path="/" element={<Navigate to="/projects" replace />} />
-                                    <Route path="/projects" element={<Projects />} />
-                                    <Route path="/site-map" element={<SitemapTree />} />
-                                    <Route path="/scope" element={<ScopeManager />} />
-                                    <Route path="/interceptor" element={<Interceptor />} />
-                                    <Route path="/replayer" element={<Replayer />} />
-                                    <Route path="/http-history" element={<HTTPHisotry />} />
-                                    <Route path="/fuzzer" element={<Fuzzer />} />
-                                </Routes>
-                            </ProjectGuard>
+                            <Routes>
+                                <Route path="/" element={<Navigate to="/projects" replace />} />
+                                <Route path="/projects" element={<Projects />} />
+                                <Route path="/site-map" element={<SitemapTree />} />
+                                <Route path="/scope" element={<ScopeManager />} />
+                                <Route path="/interceptor" element={<Interceptor />} />
+                                <Route path="/replayer" element={<Replayer />} />
+                                <Route path="/http-history" element={<HTTPHisotry />} />
+                                <Route path="/fuzzer" element={<Fuzzer />} />
+                            </Routes>
                         </SidebarInset>
                     </SidebarProvider>
                 </div>

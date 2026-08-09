@@ -41,7 +41,6 @@ import {
   RefreshCw,
   Clock,
 } from "lucide-react"
-import { useEffect } from "react"
 
 const APP_VERSION = "0.1.0"
 
