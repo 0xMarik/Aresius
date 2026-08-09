@@ -97,6 +97,12 @@ pub async fn delete_project(
     catalog: tauri::State<'_, CatalogState>,
     db: tauri::State<'_, DbState>,
 ) -> Result<(), String> {
+    let path_opt: Option<(String,)> = sqlx::query_as("SELECT path FROM project_catalog WHERE id = ?")
+        .bind(&id)
+        .fetch_optional(catalog.pool())
+        .await
+        .map_err(|e| e.to_string())?;
+
     if db.get_active_id().await.as_deref() == Some(&id) {
         db.close().await;
     }
@@ -106,6 +112,17 @@ pub async fn delete_project(
         .execute(catalog.pool())
         .await
         .map_err(|e| e.to_string())?;
+
+    if let Some((path_str,)) = path_opt {
+        let path = PathBuf::from(&path_str);
+        if path.exists() {
+            if path.is_dir() {
+                let _ = std::fs::remove_dir_all(&path);
+            } else {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+    }
 
     Ok(())
 }
