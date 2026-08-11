@@ -7,8 +7,19 @@ import { EditorState } from '@codemirror/state';
 // import { http } from '@codemirror/legacy-modes/mode/http';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { http } from './http-parser.component';
-import { fullHeightTheme } from './Fuzzer/request-editor/RequestEditor';
+import { ScrollArea } from './ui/scroll-area';
 
+const fullHeightTheme = EditorView.theme({
+    '&': {
+        height: '100%',
+        display: 'flex',
+        flexDirection: 'column',
+    },
+    '.cm-scroller': {
+        flex: 1,
+        overflow: 'auto',
+    },
+});
 
 export const CodeMirrorEditor: React.FC<{ value: string }> = ({ value }) => {
     const editorRef = useRef<HTMLDivElement>(null);
@@ -26,8 +37,8 @@ export const CodeMirrorEditor: React.FC<{ value: string }> = ({ value }) => {
                     fullHeightTheme,
                     http(),
                     oneDark,
-                    EditorView.editable.of(false),
                     EditorState.readOnly.of(true),
+
                 ],
             });
 
@@ -60,5 +71,7 @@ export const CodeMirrorEditor: React.FC<{ value: string }> = ({ value }) => {
         }
     }, [value]);
 
-    return <div ref={editorRef} className="h-full overflow-auto " />;
+    return (<ScrollArea className="h-full ">
+        <div ref={editorRef} className="overflow-auto h-full" />
+    </ScrollArea>);
 };

@@ -77,7 +77,7 @@ export default function App() {
         // Listen for HTTP requests from Rust
         const setupListener = async () => {
             const unlisten = await listen('http_history', (event) => {
-                console.log({ historyItem: event.payload })
+
                 const projectId = store.getState().workspacestate.currentProjectId;
                 if (projectId) {
                     dispatch(addToHttpHistory({ historyItem: event.payload as HttpHistory, projectId }));

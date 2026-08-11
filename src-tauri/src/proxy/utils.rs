@@ -8,7 +8,11 @@ impl HistoryIdCounter {
     }
 
     pub fn next(&self) -> u32 {
-        self.0.fetch_add(1, Ordering::Relaxed)
+        self.0.fetch_add(1, Ordering::SeqCst)
+    }
+
+    pub fn set_next(&self, value: u32) {
+        self.0.store(value, Ordering::SeqCst);
     }
 }
 

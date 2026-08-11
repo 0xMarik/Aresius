@@ -20,6 +20,7 @@ import HistoryRequests from "@/components/Replayer/HistoryRequests";
 import RequestCodeEditor from "@/components/Replayer/RequestCodeEditor";
 import { Loader2, Play, Repeat } from "lucide-react";
 import ReplayerSession from "@/components/Replayer/ReplayerSession";
+import { ScrollArea } from "@/components/ui/scroll-area";
 
 const fullHeightTheme = EditorView.theme({
     '&': {
@@ -69,7 +70,6 @@ const ResponseCodeEditor = () => {
                 ...(isDark ? [oneDark] : []),
                 fullHeightTheme,
                 EditorView.lineWrapping,
-                EditorView.editable.of(false),
                 EditorState.readOnly.of(true),
             ],
         });
@@ -89,8 +89,10 @@ const ResponseCodeEditor = () => {
     }, [history, selectedHistoryIndex, selectedCollectionIndex, selectedSessionIndex, isDark]);
 
     return (
-        <div ref={editorRef} className="h-full w-full">
-        </div>
+        <ScrollArea className="h-full">
+            <div ref={editorRef} className="h-full w-full">
+            </div>
+        </ScrollArea>
     )
 }
 

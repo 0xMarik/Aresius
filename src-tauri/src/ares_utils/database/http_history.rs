@@ -1,13 +1,13 @@
 use sqlx::SqlitePool;
 
-use crate::ares_utils::database::DbState;
+use crate::{ares_utils::database::DbState, proxy::utils::HistoryIdCounter};
 
 /// Mirrors the `http_history` table row exactly as returned by SELECT *.
 /// `id` is the auto-incremented rowid assigned by SQLite on insert.
 #[derive(Debug, sqlx::FromRow, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HttpHistoryRow {
-    pub id: i64,
+    pub id: u32,
     pub project_id: String,
     pub host: String,
     pub method: String,
@@ -89,17 +89,20 @@ pub async fn save_http_history(
     Ok(())
 }
 
-/// Tauri command: returns all HTTP history rows for the active project,
-/// ordered chronologically. Called once when a project is opened so the
-/// frontend can pre-populate its Redux store from persisted data.
 #[tauri::command]
-pub async fn get_http_history(db: tauri::State<'_, DbState>) -> Result<Vec<HttpHistoryRow>, String> {
+pub async fn get_http_history(
+    db: tauri::State<'_, DbState>,
+    history_counter: tauri::State<'_, HistoryIdCounter>,
+) -> Result<Vec<HttpHistoryRow>, String> {
     let pool = db.pool().await?;
 
-    sqlx::query_as::<_, HttpHistoryRow>(
-        "SELECT * FROM http_history ORDER BY sent_at_ms ASC",
-    )
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| e.to_string())
+    let rows = sqlx::query_as::<_, HttpHistoryRow>("SELECT * FROM http_history ORDER BY id ASC")
+        .fetch_all(&pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let next_id = rows.iter().map(|r| r.id).max().map(|m| m + 1).unwrap_or(0);
+    history_counter.set_next(next_id);
+
+    Ok(rows)
 }
