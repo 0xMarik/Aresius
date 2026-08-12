@@ -99,13 +99,6 @@ async fn get_cancel_flag(session: u32, history: u32) -> Option<Arc<AtomicBool>> 
         .cloned()
 }
 
-async fn cleanup_run(session: u32, history: u32) {
-    cancellations()
-        .lock()
-        .await
-        .remove(&run_key(session, history));
-}
-
 struct CleanupGuard {
     session: u32,
     history: u32,
