@@ -233,7 +233,7 @@ async fn process_chunk(
         fuzz_history,
         worker_id,
         "connected",
-        0,
+        worker_completed_offset,
         worker_total,
         None,
     );
@@ -250,7 +250,7 @@ async fn process_chunk(
                 fuzz_history,
                 worker_id,
                 "dropped",
-                0,
+                worker_completed_offset,
                 worker_total,
                 Some(msg.clone()),
             );
@@ -277,7 +277,7 @@ async fn process_chunk(
         fuzz_history,
         worker_id,
         "running",
-        0,
+        worker_completed_offset,
         worker_total,
         None,
     );
