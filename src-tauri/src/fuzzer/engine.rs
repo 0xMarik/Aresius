@@ -666,31 +666,152 @@ pub async fn resend_fuzz_request(
     Ok(())
 }
 
+#[derive(Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FuzzWorkerResumeGroup {
+    pub worker_id: u32,
+    pub targets: Vec<FuzzTarget>,
+    pub worker_already_completed: u32,
+    pub worker_original_total: u32,
+}
+
 #[tauri::command]
 pub async fn resend_failed_fuzz_requests(
     app: AppHandle,
     url: String,
-    targets: Vec<FuzzTarget>,
+    worker_groups: Vec<FuzzWorkerResumeGroup>,
     selected_session: u32,
     fuzz_history: u32,
-    num_tasks: usize,
     delay_ms: u64,
+    already_completed: u32,
+    overall_total: u32,
 ) -> Result<(), String> {
-    if targets.is_empty() {
+    let worker_groups: Vec<_> = worker_groups
+        .into_iter()
+        .filter(|g| !g.targets.is_empty())
+        .collect();
+
+    if worker_groups.is_empty() {
         return Err("No targets to resend".to_string());
     }
 
-    let config = FuzzRunConfig {
-        url,
-        delay_ms,
-        num_tasks,
-        selected_session,
-        fuzz_history,
-        register_cancel: true,
-    };
-
     tokio::spawn(async move {
-        run_fuzz_targets(app, config, targets).await;
+        let total = overall_total;
+        let completed = Arc::new(AtomicU32::new(already_completed));
+        let cancel = register_run(selected_session, fuzz_history).await;
+        let _cleanup_guard = CleanupGuard {
+            session: selected_session,
+            history: fuzz_history,
+            flag: Arc::clone(&cancel),
+        };
+
+        let any_worker_dropped = Arc::new(AtomicBool::new(false));
+        let (tx, mut rx) = mpsc::unbounded_channel::<FuzzUpdate>();
+
+        emit_progress(
+            &app,
+            selected_session,
+            fuzz_history,
+            completed.load(Ordering::Relaxed),
+            total,
+            "running",
+            false,
+        );
+
+        let agg_app = app.clone();
+        let agg_cancel = Arc::clone(&cancel);
+        let agg_completed = Arc::clone(&completed);
+        let agg_conn_dropped = Arc::clone(&any_worker_dropped);
+        let aggregator = tokio::spawn(async move {
+            let mut ticker = interval(Duration::from_millis(500));
+            let mut buffer = Vec::new();
+            loop {
+                tokio::select! {
+                    _ = ticker.tick() => {
+                        if !buffer.is_empty() {
+                            let _ = agg_app.emit("fuzz-update-batch", &buffer);
+                            buffer.clear();
+                        }
+                        let done = agg_completed.load(Ordering::Relaxed);
+                        let status = if agg_cancel.load(Ordering::Relaxed) && done < total { "cancelled" } else { "running" };
+                        emit_progress(&agg_app, selected_session, fuzz_history, done, total, status, agg_conn_dropped.load(Ordering::Relaxed));
+                    }
+                    maybe_update = rx.recv() => {
+                        match maybe_update {
+                            Some(update) => buffer.push(update),
+                            None => {
+                                if !buffer.is_empty() {
+                                    let _ = agg_app.emit("fuzz-update-batch", &buffer);
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        let mut handles = vec![];
+        for group in worker_groups {
+            let app = app.clone();
+            let url = url.clone();
+            let tx = tx.clone();
+            let cancel = Arc::clone(&cancel);
+            let completed = Arc::clone(&completed);
+            let worker_dropped = Arc::new(AtomicBool::new(false));
+            let worker_dropped_for_agg = Arc::clone(&worker_dropped);
+            let any_dropped = Arc::clone(&any_worker_dropped);
+
+            let handle = tokio::spawn(async move {
+                process_chunk(
+                    app,
+                    group.worker_id,
+                    group.targets,
+                    url,
+                    delay_ms,
+                    selected_session,
+                    fuzz_history,
+                    tx,
+                    cancel,
+                    completed,
+                    worker_dropped,
+                    group.worker_already_completed,
+                    Some(group.worker_original_total),
+                )
+                .await;
+                if worker_dropped_for_agg.load(Ordering::Relaxed) {
+                    any_dropped.store(true, Ordering::Relaxed);
+                }
+            });
+            handles.push(handle);
+        }
+
+        drop(tx);
+        for handle in handles {
+            let _ = handle.await;
+        }
+        aggregator.await.ok();
+
+        let final_completed = completed.load(Ordering::Relaxed);
+        let conn_dropped = any_worker_dropped.load(Ordering::Relaxed);
+        let cancelled = cancel.load(Ordering::Relaxed);
+        let status = if cancelled && final_completed < total {
+            "cancelled"
+        } else if conn_dropped {
+            "connection_dropped"
+        } else {
+            "completed"
+        };
+
+        emit_progress(
+            &app,
+            selected_session,
+            fuzz_history,
+            final_completed.min(total),
+            total,
+            status,
+            conn_dropped,
+        );
     });
 
     Ok(())
