@@ -38,7 +38,9 @@ pub async fn verify_ares_file(pool: &SqlitePool) -> Result<(), String> {
 
     // Auto-fix legacy test files
     if row.0 == 0x41525553 {
-        let _ = sqlx::query("PRAGMA application_id = 0x41524553").execute(pool).await;
+        let _ = sqlx::query("PRAGMA application_id = 0x41524553")
+            .execute(pool)
+            .await;
     }
 
     Ok(())
@@ -59,12 +61,12 @@ impl DbState {
         *guard = Some((id, pool));
     }
 
-    pub async fn close(&self) {
-        let mut guard = self.0.write().await;
-        if let Some((_, old)) = guard.take() {
-            old.close().await;
-        }
-    }
+    // pub async fn close(&self) {
+    //     let mut guard = self.0.write().await;
+    //     if let Some((_, old)) = guard.take() {
+    //         old.close().await;
+    //     }
+    // }
 
     pub async fn get_active_id(&self) -> Option<String> {
         self.0.read().await.as_ref().map(|(id, _)| id.clone())

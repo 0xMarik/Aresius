@@ -76,6 +76,8 @@ pub struct FuzzRunConfig {
 
 static FUZZ_CANCELLATIONS: OnceLock<Mutex<HashMap<String, Arc<AtomicBool>>>> = OnceLock::new();
 
+const TIME_TO_UPDATE: Duration = Duration::from_millis(900);
+
 fn cancellations() -> &'static Mutex<HashMap<String, Arc<AtomicBool>>> {
     FUZZ_CANCELLATIONS.get_or_init(|| Mutex::new(HashMap::new()))
 }
@@ -102,7 +104,7 @@ async fn get_cancel_flag(session: u32, history: u32) -> Option<Arc<AtomicBool>> 
 struct CleanupGuard {
     session: u32,
     history: u32,
-    flag: Arc<AtomicBool>, // NEW
+    flag: Arc<AtomicBool>,
 }
 
 impl Drop for CleanupGuard {
@@ -513,7 +515,7 @@ pub async fn run_fuzz_targets(app: AppHandle, config: FuzzRunConfig, targets: Ve
     let agg_cancel = Arc::clone(&cancel);
 
     let aggregator = tokio::spawn(async move {
-        let mut ticker = interval(Duration::from_millis(500));
+        let mut ticker = interval(TIME_TO_UPDATE);
         let mut buffer = Vec::new();
         loop {
             tokio::select! {
@@ -716,7 +718,7 @@ pub async fn resend_failed_fuzz_requests(
         let agg_completed = Arc::clone(&completed);
         let agg_conn_dropped = Arc::clone(&any_worker_dropped);
         let aggregator = tokio::spawn(async move {
-            let mut ticker = interval(Duration::from_millis(500));
+            let mut ticker = interval(TIME_TO_UPDATE);
             let mut buffer = Vec::new();
             loop {
                 tokio::select! {
@@ -854,7 +856,7 @@ pub async fn resend_worker_fuzz_requests(
         let agg_cancel = Arc::clone(&cancel);
         let agg_completed = Arc::clone(&completed);
         let aggregator = tokio::spawn(async move {
-            let mut ticker = interval(Duration::from_millis(500));
+            let mut ticker = interval(TIME_TO_UPDATE);
             let mut buffer = Vec::new();
             loop {
                 tokio::select! {
