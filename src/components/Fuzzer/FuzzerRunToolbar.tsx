@@ -93,7 +93,6 @@ export function FuzzerRunToolbar({
         if (targets.length === 0) return;
 
         dispatch(markFailedRequestsPending({ sessionIndex, historyIndex, projectId }));
-
         try {
             await invoke('resend_failed_fuzz_requests', {
                 url: targetUrl,
@@ -102,6 +101,8 @@ export function FuzzerRunToolbar({
                 fuzzHistory: historyIndex,
                 numTasks: numThreads,
                 delayMs,
+                alreadyCompleted: runState.completed,   // resume point, not 0
+                overallTotal: runState.total,           // original run size, not targets.length
             });
         } catch (err) {
             console.error('Failed to resend requests:', err);
@@ -120,6 +121,9 @@ export function FuzzerRunToolbar({
 
         if (targets.length === 0) return;
 
+        // capture before dispatch, same reasoning as the session-level values
+        const worker = workers.find((w) => w.workerId === workerId);
+
         dispatch(markWorkerRequestsPending({ sessionIndex, historyIndex, workerId, projectId }));
 
         try {
@@ -130,6 +134,10 @@ export function FuzzerRunToolbar({
                 fuzzHistory: historyIndex,
                 workerId,
                 delayMs,
+                alreadyCompleted: runState.completed,
+                overallTotal: runState.total,
+                workerAlreadyCompleted: worker?.completed ?? 0,
+                workerOriginalTotal: worker?.total ?? targets.length,
             });
         } catch (err) {
             console.error('Failed to resend worker requests:', err);

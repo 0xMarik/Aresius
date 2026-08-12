@@ -106,27 +106,27 @@ async fn cleanup_run(session: u32, history: u32) {
         .remove(&run_key(session, history));
 }
 
-/// RAII guard that removes the cancellation entry for a run when dropped,
-/// whether that happens via normal completion or via an unwind from a panic
-/// anywhere in `run_fuzz_targets`. Without this, a panic partway through a
-/// run (e.g. from a downstream bug) leaves a stale entry in `cancellations()`
-/// forever: `cancel_fuzzing` calls against that key silently no-op, and a
-/// future run reusing the same (session, history) pair would silently
-/// clobber an orphaned flag instead of starting clean.
 struct CleanupGuard {
     session: u32,
     history: u32,
+    flag: Arc<AtomicBool>, // NEW
 }
 
 impl Drop for CleanupGuard {
     fn drop(&mut self) {
         let session = self.session;
         let history = self.history;
-        // Drop can't be async, so spawn the cleanup. If the runtime is
-        // already shutting down this may not run, but that's no worse than
-        // process exit clearing the in-memory map anyway.
+        let flag = Arc::clone(&self.flag);
         tokio::spawn(async move {
-            cleanup_run(session, history).await;
+            let key = run_key(session, history);
+            let mut map = cancellations().lock().await;
+            if map
+                .get(&key)
+                .map(|f| Arc::ptr_eq(f, &flag))
+                .unwrap_or(false)
+            {
+                map.remove(&key);
+            }
         });
     }
 }
@@ -223,8 +223,10 @@ async fn process_chunk(
     cancel: Arc<AtomicBool>,
     completed: Arc<AtomicU32>,
     worker_dropped: Arc<AtomicBool>,
+    worker_completed_offset: u32,
+    worker_total_override: Option<u32>,
 ) {
-    let worker_total = chunk.len() as u32;
+    let worker_total = worker_total_override.unwrap_or(chunk.len() as u32);
     emit_worker_update(
         &app,
         selected_session,
@@ -263,7 +265,7 @@ async fn process_chunk(
                     true,
                 )
                 .await;
-                completed.fetch_add(1, Ordering::Relaxed);
+                // completed.fetch_add(1, Ordering::Relaxed);
             }
             return;
         }
@@ -281,7 +283,7 @@ async fn process_chunk(
     );
 
     let mut dropped = false;
-    let mut worker_completed = 0u32;
+    let mut worker_completed = worker_completed_offset;
 
     for (idx, target) in chunk.iter().enumerate() {
         if cancel.load(Ordering::Relaxed) {
@@ -299,7 +301,7 @@ async fn process_chunk(
                 true,
             )
             .await;
-            completed.fetch_add(1, Ordering::Relaxed);
+            // completed.fetch_add(1, Ordering::Relaxed);
             worker_completed += 1;
             continue;
         }
@@ -489,6 +491,7 @@ pub async fn run_fuzz_targets(app: AppHandle, config: FuzzRunConfig, targets: Ve
         Some(CleanupGuard {
             session: selected_session,
             history: fuzz_history,
+            flag: Arc::clone(&cancel),
         })
     } else {
         None
@@ -584,6 +587,8 @@ pub async fn run_fuzz_targets(app: AppHandle, config: FuzzRunConfig, targets: Ve
                 cancel,
                 completed,
                 worker_dropped,
+                0, // fresh worker chunk, nothing done yet
+                None,
             )
             .await;
             if worker_dropped_for_agg.load(Ordering::Relaxed) {
@@ -700,6 +705,10 @@ pub async fn resend_worker_fuzz_requests(
     fuzz_history: u32,
     worker_id: u32,
     delay_ms: u64,
+    already_completed: u32,
+    overall_total: u32,
+    worker_already_completed: u32,
+    worker_original_total: u32,
 ) -> Result<(), String> {
     if targets.is_empty() {
         return Err("No targets to resend for this worker".to_string());
@@ -716,12 +725,13 @@ pub async fn resend_worker_fuzz_requests(
 
     // Re-run as a single-worker chunk so status events stay scoped to worker_id.
     tokio::spawn(async move {
-        let total = targets.len() as u32;
-        let completed = Arc::new(AtomicU32::new(0));
+        let total = overall_total;
+        let completed = Arc::new(AtomicU32::new(already_completed));
         let cancel = register_run(selected_session, fuzz_history).await;
         let _cleanup_guard = CleanupGuard {
             session: selected_session,
             history: fuzz_history,
+            flag: Arc::clone(&cancel),
         };
         let worker_dropped = Arc::new(AtomicBool::new(false));
         let (tx, mut rx) = mpsc::unbounded_channel::<FuzzUpdate>();
@@ -782,6 +792,8 @@ pub async fn resend_worker_fuzz_requests(
             cancel.clone(),
             Arc::clone(&completed),
             Arc::clone(&worker_dropped),
+            worker_already_completed,
+            Some(worker_original_total),
         )
         .await;
 
