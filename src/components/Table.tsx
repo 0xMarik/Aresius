@@ -410,6 +410,9 @@ interface RowsViewportProps<TData extends BaseRow> {
     onAssignToGroup: (ids: number[], groupId: string) => void;
     onUngroup: (ids: number[]) => void;
     onRemove: (ids: number[]) => void;
+    totalCount?: number;
+    windowOffset?: number;
+    onScrollWindowChange?: (startIndex: number, count: number) => void;
 }
 
 function RowsViewportInner<TData extends BaseRow>({
@@ -428,6 +431,9 @@ function RowsViewportInner<TData extends BaseRow>({
     onAssignToGroup,
     onUngroup,
     onRemove,
+    totalCount,
+    windowOffset,
+    onScrollWindowChange,
 }: RowsViewportProps<TData>) {
     const scrollContainerRef = useRef<HTMLDivElement>(null);
 
@@ -437,12 +443,39 @@ function RowsViewportInner<TData extends BaseRow>({
     const estimateSize = useCallback(() => ROW_HEIGHT, []);
 
     const rowVirtualizer = useVirtualizer({
-        count: visibleRows.length,
+        count: totalCount !== undefined ? totalCount : visibleRows.length,
         getScrollElement,
         estimateSize,
-        overscan: 12,
+        overscan: 25,
     });
     const virtualItems = rowVirtualizer.getVirtualItems();
+
+    useEffect(() => {
+        if (onScrollWindowChange && virtualItems.length > 0) {
+            const start = virtualItems[0].index;
+            const count = virtualItems.length;
+            onScrollWindowChange(start, count);
+        }
+    }, [virtualItems, onScrollWindowChange]);
+
+    const totalRowCount = totalCount !== undefined ? totalCount : visibleRows.length;
+    const totalRowCountRef = useRef(totalRowCount);
+    useEffect(() => {
+        totalRowCountRef.current = totalRowCount;
+    }, [totalRowCount]);
+
+    // Observe container resize (e.g. ResizablePanel drag) and remeasure virtualizer
+    useEffect(() => {
+        const el = scrollContainerRef.current;
+        if (!el) return;
+        const observer = new ResizeObserver(() => {
+            rowVirtualizerRef.current?.measure();
+        });
+        observer.observe(el);
+        return () => {
+            observer.disconnect();
+        };
+    }, []);
 
     // Kept in refs so the keyboard-nav effect below never needs to be
     // re-subscribed, and so it always reads live data.
@@ -509,29 +542,7 @@ function RowsViewportInner<TData extends BaseRow>({
         return [rowId];
     }, []);
 
-    // Arrow-key navigation.
-    //
-    // Multiple keydowns in the same frame are coalesced into a single
-    // commit via rAF (holding the key down shouldn't queue more renders
-    // than the browser can paint).
-    //
-    // FIX (was: Maximum update depth exceeded / flushSync-inside-flushSync):
-    // @tanstack/react-virtual's React adapter wraps its own re-render in
-    // flushSync whenever a scroll/measurement update needs to land
-    // synchronously. Previously `setSelectedIds` and `scrollToIndex` were
-    // both called inside a single flushSync(...) callback, so calling
-    // scrollToIndex triggered the virtualizer's *own* internal flushSync
-    // while React was still mid-commit from our outer one — a nested
-    // flush that can cascade into repeated correction passes and blow
-    // past React's nested-update guard.
-    //
-    // The fix is to NOT nest them: flushSync only the selection state
-    // (forces it to commit synchronously), then call scrollToIndex
-    // afterwards, outside that flushSync. Both still run synchronously,
-    // back-to-back, in the same tick/frame — before the browser paints —
-    // so the highlight and the newly-mounted row still land together.
-    // scrollToIndex manages its own internal flushSync independently now,
-    // instead of being nested inside ours.
+    // Arrow-key navigation across full totalRowCount
     useEffect(() => {
         let pendingIndex: number | null = null;
         let rafId: number | null = null;
@@ -540,33 +551,32 @@ function RowsViewportInner<TData extends BaseRow>({
             rafId = null;
             const idx = pendingIndex;
             pendingIndex = null;
-            if (idx === null) return;
-            const nextId = visibleIdsRef.current[idx];
-            if (nextId === undefined) return;
-            lastClickedId.current = nextId;
+            if (idx === null || idx < 0 || idx >= totalRowCountRef.current) return;
+
+            lastClickedId.current = idx;
 
             flushSync(() => {
-                setSelectedIds(new Set([nextId]));
+                setSelectedIds(new Set([idx]));
             });
             rowVirtualizerRef.current?.scrollToIndex(idx, { align: 'auto' });
         }
 
         function onKeyDown(e: KeyboardEvent) {
             if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
-            const ids = visibleIdsRef.current;
-            if (ids.length === 0) return;
+            const count = totalRowCountRef.current;
+            if (count === 0) return;
             e.preventDefault();
 
             const baseIndex =
                 pendingIndex !== null
                     ? pendingIndex
                     : lastClickedId.current !== null
-                        ? idIndexRef.current.get(lastClickedId.current) ?? -1
+                        ? lastClickedId.current
                         : -1;
 
             const nextIndex =
                 e.key === 'ArrowDown'
-                    ? Math.min(baseIndex + 1, ids.length - 1)
+                    ? Math.min(baseIndex + 1, count - 1)
                     : Math.max(baseIndex - 1, 0);
 
             pendingIndex = Math.max(nextIndex, 0);
@@ -599,7 +609,26 @@ function RowsViewportInner<TData extends BaseRow>({
         >
             <div style={{ height: rowVirtualizer.getTotalSize(), position: 'relative', width: '100%' }}>
                 {virtualItems.map((virtualItem) => {
-                    const row = visibleRows[virtualItem.index];
+                    const sliceIndex = windowOffset !== undefined ? virtualItem.index - windowOffset : virtualItem.index;
+                    const row = visibleRows[sliceIndex];
+                    if (!row) {
+                        return (
+                            <div
+                                key={`placeholder-${virtualItem.index}`}
+                                style={{
+                                    position: 'absolute',
+                                    top: 0,
+                                    left: 0,
+                                    width: '100%',
+                                    height: virtualItem.size,
+                                    transform: `translateY(${virtualItem.start}px)`,
+                                }}
+                                className="flex items-center px-4 border-b border-border/40 text-xs text-muted-foreground/60 bg-accent/10 animate-pulse"
+                            >
+                                <span>Loading row #{virtualItem.index + 1}...</span>
+                            </div>
+                        );
+                    }
                     const rowId = row.original.id;
                     const groupId = row.original.group;
                     const group = groupId ? groupMap.get(groupId) : undefined;
@@ -678,6 +707,9 @@ interface DataTableProps<TData extends BaseRow> {
      *  Ungroup / Remove menu. Pass an empty fragment-returning function
      *  to suppress the menu without losing the built-in group state. */
     renderRowContextMenu?: (ctx: RowContextMenuContext<TData>) => React.ReactNode;
+    totalCount?: number;
+    windowOffset?: number;
+    onScrollWindowChange?: (startIndex: number, count: number) => void;
 }
 
 export default function DataTable<TData extends BaseRow>({
@@ -692,6 +724,9 @@ export default function DataTable<TData extends BaseRow>({
     minColumnWidth = 60,
     maxColumnWidth = 800,
     renderRowContextMenu,
+    totalCount,
+    windowOffset,
+    onScrollWindowChange,
 }: DataTableProps<TData>) {
     const [rows, setRows] = useState<TData[]>(data);
 
@@ -1204,6 +1239,9 @@ export default function DataTable<TData extends BaseRow>({
                     onAssignToGroup={assignToGroup}
                     onUngroup={ungroupIds}
                     onRemove={removeIds}
+                    totalCount={totalCount}
+                    windowOffset={windowOffset}
+                    onScrollWindowChange={onScrollWindowChange}
                 />
             </div>
         </div>

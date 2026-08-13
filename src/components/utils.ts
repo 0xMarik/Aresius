@@ -14,7 +14,10 @@ interface ParsedResponse {
 }
 
 
-export const parseResponse = (rawResponse: string): ParsedResponse => {
+export const parseResponse = (rawResponse?: string | null): ParsedResponse => {
+    if (!rawResponse || typeof rawResponse !== 'string') {
+        return { statusCode: 0, statusText: '', headers: {}, body: '' };
+    }
     const lines = rawResponse.split('\n');
     const statusLine = lines[0] || '';
     const statusMatch = statusLine.match(/HTTP\/[\d.]+\s+(\d+)\s*(.*)/);
@@ -43,7 +46,10 @@ export const parseResponse = (rawResponse: string): ParsedResponse => {
     return { statusCode, statusText, headers, body };
 };
 
-export const parseRequest = (rawRequest: string): ParsedRequest => {
+export const parseRequest = (rawRequest?: string | null): ParsedRequest => {
+    if (!rawRequest || typeof rawRequest !== 'string') {
+        return { method: 'GET', path: '/', headers: {}, body: '' };
+    }
     const lines = rawRequest.split('\n');
     const requestLine = lines[0] || '';
     const [method = 'GET', path = '/'] = requestLine.split(' ');

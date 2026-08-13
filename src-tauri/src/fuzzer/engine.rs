@@ -15,6 +15,142 @@ pub struct FuzzTarget {
     pub request: String,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FuzzerRequestRow {
+    pub fuzz_request_id: String,
+    pub raw_request: String,
+    pub response: Option<ReqRes>,
+    pub request_date: String,
+    pub status: String,
+    pub error_message: Option<String>,
+    pub connection_dropped: bool,
+    pub worker_id: Option<u32>,
+}
+
+#[derive(Debug)]
+pub struct FuzzerRunData {
+    pub rows: Vec<FuzzerRequestRow>,
+    pub id_map: HashMap<String, usize>,
+}
+
+static FUZZ_STORE: OnceLock<Mutex<HashMap<String, FuzzerRunData>>> = OnceLock::new();
+
+fn fuzz_store() -> &'static Mutex<HashMap<String, FuzzerRunData>> {
+    FUZZ_STORE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+pub async fn init_fuzz_store(session: u32, history: u32, targets: &[FuzzTarget]) {
+    let key = run_key(session, history);
+    let mut id_map = HashMap::with_capacity(targets.len());
+    let mut rows = Vec::with_capacity(targets.len());
+    let now = chrono::Utc::now().to_rfc3339();
+
+    for (idx, target) in targets.iter().enumerate() {
+        id_map.insert(target.id.clone(), idx);
+        rows.push(FuzzerRequestRow {
+            fuzz_request_id: target.id.clone(),
+            raw_request: target.request.clone(),
+            response: None,
+            request_date: now.clone(),
+            status: "pending".to_string(),
+            error_message: None,
+            connection_dropped: false,
+            worker_id: None,
+        });
+    }
+
+    fuzz_store().lock().await.insert(key, FuzzerRunData { rows, id_map });
+}
+
+pub async fn update_store_completed(session: u32, history: u32, id: &str, req_res: ReqRes) {
+    let key = run_key(session, history);
+    let mut store = fuzz_store().lock().await;
+    if let Some(run_data) = store.get_mut(&key) {
+        if let Some(&idx) = run_data.id_map.get(id) {
+            if let Some(row) = run_data.rows.get_mut(idx) {
+                row.status = "completed".to_string();
+                row.raw_request = req_res.request.clone();
+                row.response = Some(req_res);
+                row.error_message = None;
+                row.connection_dropped = false;
+            }
+        }
+    }
+}
+
+pub async fn update_store_error(
+    session: u32,
+    history: u32,
+    id: &str,
+    message: String,
+    connection_dropped: bool,
+    request: String,
+) {
+    let key = run_key(session, history);
+    let mut store = fuzz_store().lock().await;
+    if let Some(run_data) = store.get_mut(&key) {
+        if let Some(&idx) = run_data.id_map.get(id) {
+            if let Some(row) = run_data.rows.get_mut(idx) {
+                row.status = "error".to_string();
+                row.error_message = Some(message);
+                row.connection_dropped = connection_dropped;
+                if !request.is_empty() {
+                    row.raw_request = request;
+                }
+            }
+        }
+    }
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FuzzerWindowResult {
+    pub total: usize,
+    pub items: Vec<FuzzerRequestRow>,
+}
+
+#[tauri::command]
+pub async fn get_fuzzer_history_window(
+    selected_session: u32,
+    fuzz_history: u32,
+    offset: usize,
+    limit: usize,
+) -> Result<FuzzerWindowResult, String> {
+    let key = run_key(selected_session, fuzz_history);
+    let store = fuzz_store().lock().await;
+    if let Some(run_data) = store.get(&key) {
+        let total = run_data.rows.len();
+        let start = offset.min(total);
+        let end = (offset + limit).min(total);
+        let items = run_data.rows[start..end].to_vec();
+        Ok(FuzzerWindowResult { total, items })
+    } else {
+        Ok(FuzzerWindowResult { total: 0, items: vec![] })
+    }
+}
+
+#[tauri::command]
+pub async fn get_fuzzer_request_by_id(
+    selected_session: u32,
+    fuzz_history: u32,
+    request_id: String,
+) -> Result<Option<FuzzerRequestRow>, String> {
+    let key = run_key(selected_session, fuzz_history);
+    let store = fuzz_store().lock().await;
+    if let Some(run_data) = store.get(&key) {
+        if let Some(&idx) = run_data.id_map.get(&request_id) {
+            Ok(run_data.rows.get(idx).cloned())
+        } else if let Ok(idx) = request_id.parse::<usize>() {
+            Ok(run_data.rows.get(idx).cloned())
+        } else {
+            Ok(None)
+        }
+    } else {
+        Ok(None)
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct FuzzUpdateCompleted {
@@ -196,6 +332,7 @@ async fn send_error(
     fuzz_history: u32,
     connection_dropped: bool,
 ) {
+    update_store_error(selected_session, fuzz_history, id, message.clone(), connection_dropped, request.to_string()).await;
     let _ = tx.send(FuzzUpdate::Error(FuzzUpdateError {
         id: id.to_string(),
         message,
@@ -308,6 +445,7 @@ async fn process_chunk(
                     response: response.as_text_lossy(),
                     response_time: response.elapsed.as_millis(),
                 };
+                update_store_completed(selected_session, fuzz_history, &target.id, req_res.clone()).await;
                 let _ = tx.send(FuzzUpdate::Completed(FuzzUpdateCompleted {
                     id: target.id.clone(),
                     req_res,
@@ -327,6 +465,7 @@ async fn process_chunk(
                                 response: response.as_text_lossy(),
                                 response_time: response.elapsed.as_millis(),
                             };
+                            update_store_completed(selected_session, fuzz_history, &target.id, req_res.clone()).await;
                             let _ = tx.send(FuzzUpdate::Completed(FuzzUpdateCompleted {
                                 id: target.id.clone(),
                                 req_res,
@@ -456,6 +595,8 @@ pub async fn run_fuzz_targets(app: AppHandle, config: FuzzRunConfig, targets: Ve
     let total = targets.len() as u32;
     let selected_session = config.selected_session;
     let fuzz_history = config.fuzz_history;
+
+    init_fuzz_store(selected_session, fuzz_history, &targets).await;
 
     // Guard against the empty-targets panic: `targets.chunks(chunk_size)`
     // below computes chunk_size = 0 when targets is empty (ceil-div of 0 by

@@ -55,7 +55,7 @@ pub struct HighlightRange {
     pub is_active: bool,
 }
 
-#[derive(Serialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ReqRes {
     pub request: String,

@@ -5,7 +5,7 @@ import { CodeMirrorEditor } from '../result-table.components';
 import { createColumnHelper, ColumnDef } from '@tanstack/react-table';
 import Table, { isRowSelected, BaseRow } from '@/components/Table';
 import { FuzzerRequest, FuzzerParameter, FuzzConfig } from '@/types/fuzzer.type';
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { parseRequest, parseResponse } from '../utils';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '../ui/resizable';
 import { renderFuzzerHistoryTableContextMenu } from './FuzzerHistoryTableContextMenu';
@@ -13,6 +13,7 @@ import { FuzzerRunToolbar, resendSingleFuzzRequest } from './FuzzerRunToolbar';
 import { initialFuzzRunState } from '@/types/fuzzer.type';
 import { Button } from '../ui/button';
 import { RotateCcw } from 'lucide-react';
+import { invoke } from '@tauri-apps/api/core';
 
 /**
  * Each row corresponds to a single FuzzerRequest (one fuzzed HTTP call),
@@ -34,8 +35,8 @@ export type EnrichedFuzzerRow = FuzzerRow & {
     payloadPreview: string;
 };
 
-export function adaptFuzzerRequests(requests: FuzzerRequest[]): FuzzerRow[] {
-    return requests.map((r, idx) => ({ ...r, id: idx }));
+export function adaptFuzzerRequests(requests: FuzzerRequest[], offset = 0): FuzzerRow[] {
+    return requests.map((r, idx) => ({ ...r, id: offset + idx }));
 }
 
 /**
@@ -91,20 +92,30 @@ export function enrichFuzzerRow(
     row: FuzzerRow,
     fuzzConfigSnapshot: FuzzConfig,
 ): EnrichedFuzzerRow {
-    const parsedRequest = parseRequest(row.rawRequest);
-    const parsedResponse = row.response ? parseResponse(row.response.rawResponse) : null;
+    const rawReqStr = row.rawRequest ?? '';
+    const rawRespStr = row.response?.rawResponse ?? (row.response as any)?.response ?? '';
+    const respTime = row.response?.responseTime ?? (row.response as any)?.responseTime ?? (row.response as any)?.response_time ?? 0;
+
+    const normalizedResponse = (row.response || rawRespStr) ? {
+        rawResponse: rawRespStr,
+        responseTime: Number(respTime),
+    } : null;
+
+    const parsedRequest = parseRequest(rawReqStr);
+    const parsedResponse = normalizedResponse && rawRespStr ? parseResponse(rawRespStr) : null;
 
     const payloadValues = extractPayloadValues(
         fuzzConfigSnapshot.rawRequest,
-        row.rawRequest,
+        rawReqStr,
         fuzzConfigSnapshot.parameters,
     );
 
     return {
         ...row,
+        response: normalizedResponse,
         parsedRequest,
         parsedResponse,
-        contentLength: row.response?.rawResponse?.length ?? 0,
+        contentLength: rawRespStr.length,
         statusCode: parsedResponse?.statusCode,
         targetUrl: fuzzConfigSnapshot.metadata.targetUrl,
         payloadValues,
@@ -227,9 +238,19 @@ export const fuzzerColumns: ColumnDef<EnrichedFuzzerRow, any>[] = [
         size: 96,
         cell: (info) => {
             const selected = isRowSelected(info);
+            const val = info.getValue();
+            let dateObj: Date;
+            if (typeof val === 'number') {
+                dateObj = new Date(val);
+            } else if (val && !isNaN(Number(val))) {
+                dateObj = new Date(Number(val));
+            } else {
+                dateObj = new Date(val);
+            }
+            const timeStr = !isNaN(dateObj.getTime()) ? dateObj.toLocaleTimeString() : '—';
             return (
                 <span className={`text-[12px] tabular-nums ${selected ? 'text-primary-foreground/80' : 'text-muted-foreground'}`}>
-                    {new Date(info.getValue()).toLocaleTimeString()}
+                    {timeStr}
                 </span>
             );
         },
@@ -298,21 +319,140 @@ function FuzzerHistoryBody({
 }) {
     const dispatch = useAppDispatch();
     const projectId = useProjectId();
-    const rows = useMemo(() => adaptFuzzerRequests(requests), [requests]);
+
+    const BUFFER = 100;
+    const THRESHOLD = 30;
+
+    const [windowState, setWindowState] = useState<{
+        offset: number;
+        limit: number;
+        items: FuzzerRequest[];
+        totalFromBackend: number;
+    }>({ offset: 0, limit: 250, items: [], totalFromBackend: 0 });
+
+    const [fetchedFocusedResult, setFetchedFocusedResult] = useState<EnrichedFuzzerRow | null>(null);
+
+    const handleScrollWindowChange = useCallback((startIdx: number, count: number) => {
+        setWindowState((prev) => {
+            const currentOffset = prev.offset;
+            const currentLimit = prev.limit;
+            const currentEnd = currentOffset + currentLimit;
+            const visibleEnd = startIdx + count;
+
+            const distFromTop = startIdx - currentOffset;
+            const distFromBottom = currentEnd - visibleEnd;
+
+            if (prev.items.length > 0 && distFromTop >= THRESHOLD && distFromBottom >= THRESHOLD) {
+                return prev;
+            }
+
+            const newOffset = Math.max(0, startIdx - BUFFER);
+            const newTargetEnd = startIdx + count + BUFFER;
+            const newLimit = newTargetEnd - newOffset;
+
+            if (newOffset === prev.offset && newLimit === prev.limit && prev.items.length > 0) {
+                return prev;
+            }
+
+            return { ...prev, offset: newOffset, limit: newLimit };
+        });
+    }, []);
+
+    useEffect(() => {
+        let canceled = false;
+        invoke<{ total: number; items: FuzzerRequest[] }>('get_fuzzer_history_window', {
+            selectedSession: sessionIndex,
+            fuzzHistory: historyIndex,
+            offset: windowState.offset,
+            limit: windowState.limit,
+        })
+            .then((res) => {
+                if (canceled) return;
+                if (res && res.items) {
+                    setWindowState((prev) => ({
+                        ...prev,
+                        items: res.items,
+                        totalFromBackend: res.total,
+                    }));
+                }
+            })
+            .catch(() => {
+                // Fallback gracefully if backend store isn't available
+            });
+
+        return () => {
+            canceled = true;
+        };
+    }, [sessionIndex, historyIndex, windowState.offset, windowState.limit, runState.completed]);
+
+    const effectiveRequests = useMemo(() => {
+        if (windowState.items.length > 0) return windowState.items;
+        return requests.slice(windowState.offset, windowState.offset + windowState.limit);
+    }, [windowState.items, requests, windowState.offset, windowState.limit]);
+
+    const effectiveTotal = useMemo(() => {
+        if (windowState.totalFromBackend > 0) return windowState.totalFromBackend;
+        if (runState.total > 0) return runState.total;
+        return requests.length;
+    }, [windowState.totalFromBackend, runState.total, requests.length]);
+
+    const rows = useMemo(
+        () => adaptFuzzerRequests(effectiveRequests, windowState.offset),
+        [effectiveRequests, windowState.offset]
+    );
 
     const enrichedRows = useMemo(
         () => rows.map((r) => enrichFuzzerRow(r, fuzzConfigSnapshot)),
-        [rows, fuzzConfigSnapshot],
+        [rows, fuzzConfigSnapshot]
     );
 
-    const focusedResult = useMemo(() => {
-        if (focusedId === null) return null;
-        return enrichedRows.find((r) => r.id === focusedId) ?? null;
-    }, [focusedId, enrichedRows]);
+    useEffect(() => {
+        if (focusedId === null) {
+            setFetchedFocusedResult(null);
+            return;
+        }
+
+        const foundInWindow = enrichedRows.find((r) => r.id === focusedId);
+        if (foundInWindow) {
+            setFetchedFocusedResult(foundInWindow);
+            return;
+        }
+
+        if (fetchedFocusedResult && fetchedFocusedResult.id === focusedId) {
+            return;
+        }
+
+        let canceled = false;
+        invoke<FuzzerRequest | null>('get_fuzzer_request_by_id', {
+            selectedSession: sessionIndex,
+            fuzzHistory: historyIndex,
+            requestId: String(focusedId),
+        })
+            .then((res) => {
+                if (canceled) return;
+                if (res) {
+                    const row = adaptFuzzerRequests([res], focusedId)[0];
+                    setFetchedFocusedResult(enrichFuzzerRow(row, fuzzConfigSnapshot));
+                }
+            })
+            .catch(() => {
+                const fallbackReq = requests[focusedId];
+                if (fallbackReq) {
+                    const row = adaptFuzzerRequests([fallbackReq], focusedId)[0];
+                    setFetchedFocusedResult(enrichFuzzerRow(row, fuzzConfigSnapshot));
+                }
+            });
+
+        return () => {
+            canceled = true;
+        };
+    }, [focusedId, enrichedRows, sessionIndex, historyIndex, fuzzConfigSnapshot, requests, fetchedFocusedResult]);
+
+    const focusedResult = fetchedFocusedResult;
 
     const failedCount = useMemo(
         () => requests.filter((r) => r.status === 'error' || r.status === 'cancelled' || r.connectionDropped).length,
-        [requests],
+        [requests]
     );
 
     const canResendFocused = focusedResult && (
@@ -337,6 +477,9 @@ function FuzzerHistoryBody({
                     <Table
                         data={enrichedRows}
                         columns={fuzzerColumns}
+                        totalCount={effectiveTotal}
+                        windowOffset={windowState.offset}
+                        onScrollWindowChange={handleScrollWindowChange}
                         emptyLabel={isLoading ? 'Running fuzzer…' : 'No fuzzing results yet'}
                         emptyHint={isLoading ? undefined : 'Run the fuzzer to see results here'}
                         setSelectedRequest={setFocusedId}

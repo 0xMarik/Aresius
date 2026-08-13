@@ -40,3 +40,27 @@ export type HttpHistory = {
     rawRequest: string;
     rawResponse: string;
 };
+
+export type HttpTransaction = HttpHistory;
+
+export type HttpHistorySummaryRow = {
+    id: number;
+    host: string;
+    method: string;
+    path: string;
+    query?: string | null;
+    extension?: string | null;
+    statusCode: number;
+    responseLength: number;
+    responseTimeMs: number;
+    sentAtMs: number;
+    isHttps: boolean;
+};
+
+export function stateFromCode(code: number): RequestState {
+    if (code < 200) return 'Info';
+    if (code < 300) return 'Success';
+    if (code < 400) return 'Redirect';
+    if (code < 500) return 'Client Error';
+    return 'Server Error';
+}

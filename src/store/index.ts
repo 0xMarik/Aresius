@@ -32,7 +32,10 @@ const store = configureStore({
     scope: scopeReducer,
   },
   middleware: (getDefaultMiddleware) =>
-    getDefaultMiddleware().concat(loggerMiddleware, projectDataMiddleware),
+    getDefaultMiddleware({
+      serializableCheck: false,
+      immutableCheck: false,
+    }).concat(loggerMiddleware, projectDataMiddleware),
 })
 
 export type RootState = ReturnType<typeof store.getState>
