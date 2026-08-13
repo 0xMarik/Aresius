@@ -133,16 +133,20 @@ const replayerSlice = createSlice({
                 }
             }
         },
-        addCollection: (state, action: PayloadAction<string>) => {
-            const projectId = action.payload;
+        addCollection: (state, action: PayloadAction<string | { projectId: string; initialRequest?: string; initialUrl?: string; initialUrlIsValid?: boolean }>) => {
+            const payload = typeof action.payload === 'string'
+                ? { projectId: action.payload }
+                : action.payload;
+            const { projectId, initialRequest, initialUrl, initialUrlIsValid } = payload;
             const bucket = getBucket(state, projectId);
             const newColIndex = bucket.collections.length;
             const colId = crypto.randomUUID();
             const sessId = crypto.randomUUID();
             const colName = `Collection ${newColIndex + 1}`;
             const sessName = 'Session 1';
-            const defaultReq = 'GET / HTTP/1.1\r\n\r\n';
-            const defaultUrl = 'https://';
+            const req = initialRequest ?? 'GET / HTTP/1.1\r\n\r\n';
+            const url = initialUrl ?? 'https://';
+            const isValid = initialUrlIsValid ?? (url !== 'https://');
 
             bucket.collections.push({
                 id: colId,
@@ -152,10 +156,10 @@ const replayerSlice = createSlice({
                         id: sessId,
                         name: sessName,
                         history: [],
-                        requestTmp: defaultReq,
-                        url: defaultUrl,
+                        requestTmp: req,
+                        url: url,
                         selectedHistoryIndex: null,
-                        urlIsValid: false,
+                        urlIsValid: isValid,
                     }
                 ],
                 selectedSessionIndex: 0,
@@ -173,8 +177,8 @@ const replayerSlice = createSlice({
                         collectionId: colId,
                         sessionId: sessId,
                         name: sessName,
-                        baseUrl: defaultUrl,
-                        requestTmp: defaultReq,
+                        baseUrl: url,
+                        requestTmp: req,
                         sortOrder: 0,
                     }).catch(console.error);
                 }).catch(console.error);
@@ -188,8 +192,8 @@ const replayerSlice = createSlice({
                 bucket.collections[collectionIndex].selectedSessionIndex = sessionIndex;
             }
         },
-        addSessionToCollection: (state, action: PayloadAction<{ collectionIndex: number; isItReplayerPage: boolean; projectId: string }>) => {
-            const { collectionIndex, isItReplayerPage, projectId } = action.payload;
+        addSessionToCollection: (state, action: PayloadAction<{ collectionIndex: number; isItReplayerPage: boolean; projectId: string; initialRequest?: string; initialUrl?: string; initialUrlIsValid?: boolean }>) => {
+            const { collectionIndex, isItReplayerPage, projectId, initialRequest, initialUrl, initialUrlIsValid } = action.payload;
             const bucket = getBucket(state, projectId);
             const targetColIndex = (collectionIndex >= 0 && collectionIndex < bucket.collections.length)
                 ? collectionIndex
@@ -199,17 +203,18 @@ const replayerSlice = createSlice({
                 const newSessionIndex = collection.sessions.length;
                 const sessId = crypto.randomUUID();
                 const sessName = `Session ${newSessionIndex + 1}`;
-                const defaultReq = 'GET / HTTP/1.1\r\n\r\n';
-                const defaultUrl = 'https://';
+                const req = initialRequest ?? 'GET / HTTP/1.1\r\n\r\n';
+                const url = initialUrl ?? 'https://';
+                const isValid = initialUrlIsValid ?? (url !== 'https://');
 
                 collection.sessions.push({
                     id: sessId,
                     name: sessName,
                     history: [],
-                    requestTmp: defaultReq,
-                    url: defaultUrl,
+                    requestTmp: req,
+                    url: url,
                     selectedHistoryIndex: null,
-                    urlIsValid: false,
+                    urlIsValid: isValid,
                 });
                 collection.selectedSessionIndex = newSessionIndex;
                 bucket.selectedCollectionIndex = targetColIndex;
@@ -219,8 +224,8 @@ const replayerSlice = createSlice({
                         collectionId: collection.id,
                         sessionId: sessId,
                         name: sessName,
-                        baseUrl: defaultUrl,
-                        requestTmp: defaultReq,
+                        baseUrl: url,
+                        requestTmp: req,
                         sortOrder: newSessionIndex,
                     }).catch(console.error);
                 }

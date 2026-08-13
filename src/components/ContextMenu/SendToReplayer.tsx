@@ -2,7 +2,22 @@ import { ContextMenuItem, ContextMenuSeparator, ContextMenuSub, ContextMenuSubCo
 import { FolderPlus, Layers, Repeat } from 'lucide-react'
 import { useAppDispatch, useAppSelector } from '@/hooks/redux';
 import { useProjectId } from '@/hooks/useProjectId';
-import { addCollection, addSessionToCollection, selectColSess, setReaplayerContent, selectReplayerState } from '@/store/slices/replayerSlice';
+import { addCollection, addSessionToCollection, selectReplayerState } from '@/store/slices/replayerSlice';
+import { parseRequest } from '@/components/utils';
+
+function getUrlFromRawRequest(rawRequest?: string): { url: string; urlIsValid: boolean } {
+    if (!rawRequest) return { url: 'https://', urlIsValid: false };
+    const req = parseRequest(rawRequest);
+    const hostHeader = Object.entries(req.headers || {}).find(
+        ([k]) => k.toLowerCase() === 'host'
+    )?.[1]?.trim();
+
+    if (hostHeader) {
+        const url = hostHeader.includes('://') ? hostHeader : `https://${hostHeader}`;
+        return { url, urlIsValid: true };
+    }
+    return { url: 'https://', urlIsValid: false };
+}
 
 export function SendToRepeaterSubmenu({ rawRequest }: { rawRequest: string }) {
     const dispatch = useAppDispatch();
@@ -11,18 +26,26 @@ export function SendToRepeaterSubmenu({ rawRequest }: { rawRequest: string }) {
 
     const sendToExisting = (collectionIndex: number) => {
         if (!projectId) return;
-        const newSessionIndex = collections[collectionIndex].sessions.length;
-        dispatch(addSessionToCollection({ collectionIndex, isItReplayerPage: false, projectId }));
-        dispatch(selectColSess({ collectionIndex, sessionIndex: newSessionIndex, projectId }));
-        dispatch(setReaplayerContent({ rawRequest: rawRequest ?? '', projectId }));
+        const { url, urlIsValid } = getUrlFromRawRequest(rawRequest);
+        dispatch(addSessionToCollection({
+            collectionIndex,
+            isItReplayerPage: false,
+            projectId,
+            initialRequest: rawRequest ?? '',
+            initialUrl: url,
+            initialUrlIsValid: urlIsValid,
+        }));
     };
 
     const sendToNew = () => {
         if (!projectId) return;
-        const newCollectionIndex = collections.length;
-        dispatch(addCollection(projectId));
-        dispatch(selectColSess({ collectionIndex: newCollectionIndex, sessionIndex: 0, projectId }));
-        dispatch(setReaplayerContent({ rawRequest: rawRequest ?? '', projectId }));
+        const { url, urlIsValid } = getUrlFromRawRequest(rawRequest);
+        dispatch(addCollection({
+            projectId,
+            initialRequest: rawRequest ?? '',
+            initialUrl: url,
+            initialUrlIsValid: urlIsValid,
+        }));
     };
 
     return (
