@@ -1,6 +1,6 @@
 import { useAppDispatch, useAppSelector } from '@/hooks/redux';
 import { useProjectId } from '@/hooks/useProjectId';
-import { markFailedRequestsPending, markRequestPending, markWorkerRequestsPending, selectFuzzerState } from '@/store/slices/fuzzerSlice';
+import { markFailedRequestsPending, markRequestPending, markWorkerRequestsPending } from '@/store/slices/fuzzerSlice';
 import { FuzzRunState } from '@/types/fuzzer.type';
 import { invoke } from '@tauri-apps/api/core';
 import { Activity, AlertTriangle, ChevronDown, Cpu, RotateCcw, Square, WifiOff } from 'lucide-react';
@@ -38,7 +38,6 @@ export function FuzzerRunToolbar({
 }: FuzzerRunToolbarProps) {
     const dispatch = useAppDispatch();
     const projectId = useProjectId();
-    const { fuzzerSessions } = useAppSelector(selectFuzzerState(projectId));
     const activeScope = useAppSelector(selectActiveScope(projectId));
 
     // Determine if the fuzzer target is outside the active scope
@@ -81,49 +80,15 @@ export function FuzzerRunToolbar({
 
     const handleResendAllFailed = async () => {
         if (!projectId) return;
-        const history = fuzzerSessions[sessionIndex]?.fuzzingHistory[historyIndex];
-        if (!history) return;
-
-        const failedRequests = history.requests.filter(
-            (r) => r.status === 'error' || r.connectionDropped || r.status === 'cancelled'
-        );
-
-        if (failedRequests.length === 0) return;
-
-        // Group failed requests by the worker that originally owned them, so each
-        // worker resumes its own counter/total instead of the run flattening
-        // back into a single fresh chunk starting at 0.
-        const targetsByWorker = new Map<number, { id: string; request: string }[]>();
-        for (const r of failedRequests) {
-            if (!r.rawRequest) continue;
-            const workerId = r.workerId ?? 0;
-            const list = targetsByWorker.get(workerId) ?? [];
-            list.push({ id: r.fuzzRequestId, request: r.rawRequest });
-            targetsByWorker.set(workerId, list);
-        }
-
-        const workerGroups = Array.from(targetsByWorker.entries()).map(([workerId, targets]) => {
-            const worker = workers.find((w) => w.workerId === workerId);
-            return {
-                workerId,
-                targets,
-                workerAlreadyCompleted: worker?.completed ?? 0,
-                workerOriginalTotal: worker?.total ?? targets.length,
-            };
-        });
-
-        if (workerGroups.length === 0) return;
-
         dispatch(markFailedRequestsPending({ sessionIndex, historyIndex, projectId }));
         try {
             await invoke('resend_failed_fuzz_requests', {
                 url: targetUrl,
-                workerGroups,
                 selectedSession: sessionIndex,
                 fuzzHistory: historyIndex,
                 delayMs,
-                alreadyCompleted: runState.completed,   // resume point, not 0
-                overallTotal: runState.total,           // original run size, not targets.length
+                alreadyCompleted: runState.completed,
+                overallTotal: runState.total,
             });
         } catch (err) {
             console.error('Failed to resend requests:', err);
@@ -132,33 +97,17 @@ export function FuzzerRunToolbar({
 
     const handleResendWorker = async (workerId: number) => {
         if (!projectId) return;
-        const history = fuzzerSessions[sessionIndex]?.fuzzingHistory[historyIndex];
-        if (!history) return;
-
-        const targets = history.requests
-            .filter((r) => r.workerId === workerId && (r.status === 'error' || r.connectionDropped || r.status === 'cancelled'))
-            .map((r) => ({ id: r.fuzzRequestId, request: r.rawRequest }))
-            .filter((t) => t.request);
-
-        if (targets.length === 0) return;
-
-        // capture before dispatch, same reasoning as the session-level values
-        const worker = workers.find((w) => w.workerId === workerId);
-
         dispatch(markWorkerRequestsPending({ sessionIndex, historyIndex, workerId, projectId }));
 
         try {
             await invoke('resend_worker_fuzz_requests', {
                 url: targetUrl,
-                targets,
                 selectedSession: sessionIndex,
                 fuzzHistory: historyIndex,
                 workerId,
                 delayMs,
                 alreadyCompleted: runState.completed,
                 overallTotal: runState.total,
-                workerAlreadyCompleted: worker?.completed ?? 0,
-                workerOriginalTotal: worker?.total ?? targets.length,
             });
         } catch (err) {
             console.error('Failed to resend worker requests:', err);

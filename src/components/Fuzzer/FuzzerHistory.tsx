@@ -286,7 +286,6 @@ const FuzzerHistoryCompo = ({ isLoading, sessionIndex, historyIndex }: ParamsTyp
         <FuzzerHistoryBody
             sessionIndex={sessionIndex}
             historyIndex={historyIndex}
-            requests={historyEntry.requests}
             fuzzConfigSnapshot={historyEntry.fuzzConfigSnapshot}
             runState={historyEntry.runState ?? initialFuzzRunState()}
             isLoading={isLoading}
@@ -301,7 +300,6 @@ const FuzzerHistoryCompo = ({ isLoading, sessionIndex, historyIndex }: ParamsTyp
 function FuzzerHistoryBody({
     sessionIndex,
     historyIndex,
-    requests,
     fuzzConfigSnapshot,
     runState,
     isLoading,
@@ -310,7 +308,6 @@ function FuzzerHistoryBody({
 }: {
     sessionIndex: number;
     historyIndex: number;
-    requests: FuzzerRequest[];
     fuzzConfigSnapshot: FuzzConfig;
     runState: import('@/types/fuzzer.type').FuzzRunState;
     isLoading: boolean;
@@ -386,15 +383,13 @@ function FuzzerHistoryBody({
     }, [sessionIndex, historyIndex, windowState.offset, windowState.limit, runState.completed, runState.status]);
 
     const effectiveRequests = useMemo(() => {
-        if (windowState.items.length > 0) return windowState.items;
-        return requests.slice(windowState.offset, windowState.offset + windowState.limit);
-    }, [windowState.items, requests, windowState.offset, windowState.limit]);
+        return windowState.items;
+    }, [windowState.items]);
 
     const effectiveTotal = useMemo(() => {
         if (windowState.totalFromBackend > 0) return windowState.totalFromBackend;
-        if (runState.total > 0) return runState.total;
-        return requests.length;
-    }, [windowState.totalFromBackend, runState.total, requests.length]);
+        return runState.total;
+    }, [windowState.totalFromBackend, runState.total]);
 
     const rows = useMemo(
         () => adaptFuzzerRequests(effectiveRequests, windowState.offset),
@@ -436,23 +431,18 @@ function FuzzerHistoryBody({
                 }
             })
             .catch(() => {
-                const fallbackReq = requests[focusedId];
-                if (fallbackReq) {
-                    const row = adaptFuzzerRequests([fallbackReq], focusedId)[0];
-                    setFetchedFocusedResult(enrichFuzzerRow(row, fuzzConfigSnapshot));
-                }
             });
 
         return () => {
             canceled = true;
         };
-    }, [focusedId, enrichedRows, sessionIndex, historyIndex, fuzzConfigSnapshot, requests, fetchedFocusedResult]);
+    }, [focusedId, enrichedRows, sessionIndex, historyIndex, fuzzConfigSnapshot, fetchedFocusedResult]);
 
     const focusedResult = fetchedFocusedResult;
 
     const failedCount = useMemo(
-        () => requests.filter((r) => r.status === 'error' || r.status === 'cancelled' || r.connectionDropped).length,
-        [requests]
+        () => (runState.workers ?? []).filter((w) => w.status === 'dropped' || !!w.errorMessage).length,
+        [runState.workers]
     );
 
     const canResendFocused = focusedResult && (

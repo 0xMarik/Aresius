@@ -191,7 +191,7 @@ export default function PayloadConfigurator() {
                     id="numThreads"
                     type="number"
                     min={1}
-                    max={20}
+                    max={100}
                     value={session.fuzzConfig.numThreads}
                     onChange={(event) => {
                         if (projectId) dispatch(setNumThreads({ numThreads: parseInt(event.target.value), projectId }));

@@ -40,13 +40,20 @@ fn fuzz_store() -> &'static Mutex<HashMap<String, FuzzerRunData>> {
     FUZZ_STORE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-pub async fn init_fuzz_store(session: u32, history: u32, targets: &[FuzzTarget]) {
+pub async fn init_fuzz_store(session: u32, history: u32, targets: &[FuzzTarget], num_tasks: usize) {
     let key = run_key(session, history);
     let mut id_map = HashMap::with_capacity(targets.len());
     let mut rows = Vec::with_capacity(targets.len());
     let now = chrono::Utc::now().to_rfc3339();
+    let num_tasks = num_tasks.max(1);
+    let chunk_size = if !targets.is_empty() {
+        (targets.len() + num_tasks - 1) / num_tasks
+    } else {
+        1
+    };
 
     for (idx, target) in targets.iter().enumerate() {
+        let worker_id = (idx / chunk_size) as u32;
         id_map.insert(target.id.clone(), idx);
         rows.push(FuzzerRequestRow {
             fuzz_request_id: target.id.clone(),
@@ -56,7 +63,7 @@ pub async fn init_fuzz_store(session: u32, history: u32, targets: &[FuzzTarget])
             status: "pending".to_string(),
             error_message: None,
             connection_dropped: false,
-            worker_id: None,
+            worker_id: Some(worker_id),
         });
     }
 
@@ -594,7 +601,8 @@ pub async fn run_fuzz_targets(app: AppHandle, config: FuzzRunConfig, targets: Ve
     let selected_session = config.selected_session;
     let fuzz_history = config.fuzz_history;
 
-    init_fuzz_store(selected_session, fuzz_history, &targets).await;
+    let num_tasks = config.num_tasks.max(1);
+    init_fuzz_store(selected_session, fuzz_history, &targets, num_tasks).await;
 
     if targets.is_empty() {
         emit_progress(
@@ -882,17 +890,77 @@ pub struct FuzzWorkerResumeGroup {
     pub worker_original_total: u32,
 }
 
+async fn get_failed_worker_groups(session: u32, history: u32) -> Vec<FuzzWorkerResumeGroup> {
+    let key = run_key(session, history);
+    let store = fuzz_store().lock().await;
+    let mut map: HashMap<u32, (Vec<FuzzTarget>, u32, u32)> = HashMap::new();
+
+    if let Some(run_data) = store.get(&key) {
+        for row in run_data.rows.iter() {
+            let w_id = row.worker_id.unwrap_or(0);
+            let entry = map.entry(w_id).or_insert_with(|| (Vec::new(), 0, 0));
+            entry.2 += 1; // total
+            if row.status == "completed" {
+                entry.1 += 1; // completed
+            } else if row.status == "error" || row.connection_dropped || row.status == "cancelled" || row.status == "pending" {
+                entry.0.push(FuzzTarget {
+                    id: row.fuzz_request_id.clone(),
+                    request: row.raw_request.clone(),
+                });
+            }
+        }
+    }
+
+    map.into_iter()
+        .map(|(worker_id, (targets, worker_already_completed, worker_original_total))| {
+            FuzzWorkerResumeGroup {
+                worker_id,
+                targets,
+                worker_already_completed,
+                worker_original_total,
+            }
+        })
+        .collect()
+}
+
+async fn get_failed_worker_targets(session: u32, history: u32, worker_id: u32) -> (Vec<FuzzTarget>, u32, u32) {
+    let key = run_key(session, history);
+    let store = fuzz_store().lock().await;
+    let mut targets = Vec::new();
+    let mut already_completed = 0;
+    let mut original_total = 0;
+
+    if let Some(run_data) = store.get(&key) {
+        for row in run_data.rows.iter() {
+            if row.worker_id == Some(worker_id) || (row.worker_id.is_none() && worker_id == 0) {
+                original_total += 1;
+                if row.status == "completed" {
+                    already_completed += 1;
+                } else if row.status == "error" || row.connection_dropped || row.status == "cancelled" || row.status == "pending" {
+                    targets.push(FuzzTarget {
+                        id: row.fuzz_request_id.clone(),
+                        request: row.raw_request.clone(),
+                    });
+                }
+            }
+        }
+    }
+
+    (targets, already_completed, original_total)
+}
+
 #[tauri::command]
 pub async fn resend_failed_fuzz_requests(
     app: AppHandle,
     url: String,
-    worker_groups: Vec<FuzzWorkerResumeGroup>,
     selected_session: u32,
     fuzz_history: u32,
     delay_ms: u64,
     already_completed: u32,
     overall_total: u32,
 ) -> Result<(), String> {
+    let worker_groups = get_failed_worker_groups(selected_session, fuzz_history).await;
+
     let worker_groups: Vec<_> = worker_groups
         .into_iter()
         .filter(|g| !g.targets.is_empty())
@@ -952,10 +1020,6 @@ pub async fn resend_failed_fuzz_requests(
             loop {
                 tokio::select! {
                     _ = ticker.tick() => {
-                        if !buffer.is_empty() {
-                            let _ = agg_app.emit("fuzz-update-batch", &buffer);
-                            buffer.clear();
-                        }
                         let done = agg_completed.load(Ordering::Relaxed);
                         let is_cancelled = agg_cancel.load(Ordering::Relaxed);
                         if is_cancelled {
@@ -989,9 +1053,6 @@ pub async fn resend_failed_fuzz_requests(
                         match maybe_update {
                             Some(update) => buffer.push(update),
                             None => {
-                                if !buffer.is_empty() {
-                                    let _ = agg_app.emit("fuzz-update-batch", &buffer);
-                                }
                                 break;
                             }
                         }
@@ -1076,16 +1137,16 @@ pub async fn resend_failed_fuzz_requests(
 pub async fn resend_worker_fuzz_requests(
     app: AppHandle,
     url: String,
-    targets: Vec<FuzzTarget>,
     selected_session: u32,
     fuzz_history: u32,
     worker_id: u32,
     delay_ms: u64,
     already_completed: u32,
     overall_total: u32,
-    worker_already_completed: u32,
-    worker_original_total: u32,
 ) -> Result<(), String> {
+    let (targets, worker_already_completed, worker_original_total) =
+        get_failed_worker_targets(selected_session, fuzz_history, worker_id).await;
+
     if targets.is_empty() {
         return Err("No targets to resend for this worker".to_string());
     }
@@ -1127,10 +1188,6 @@ pub async fn resend_worker_fuzz_requests(
             loop {
                 tokio::select! {
                     _ = ticker.tick() => {
-                        if !buffer.is_empty() {
-                            let _ = agg_app.emit("fuzz-update-batch", &buffer);
-                            buffer.clear();
-                        }
                         let done = agg_completed.load(Ordering::Relaxed);
                         let is_cancelled = agg_cancel.load(Ordering::Relaxed);
                         if is_cancelled {
@@ -1174,9 +1231,6 @@ pub async fn resend_worker_fuzz_requests(
                         match maybe_update {
                             Some(update) => buffer.push(update),
                             None => {
-                                if !buffer.is_empty() {
-                                    let _ = agg_app.emit("fuzz-update-batch", &buffer);
-                                }
                                 break;
                             }
                         }

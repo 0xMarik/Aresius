@@ -19,7 +19,7 @@ import { addToHttpHistory } from "./store/slices/http-historySlice";
 import Interceptor from "./pages/interceptor/Interceptor.page";
 import { useInterceptPoller } from "./hooks/useInterceptPoller";
 import MenubarDemo from "./components/MenuBar";
-import { applyFuzzUpdates, updateFuzzProgress, updateFuzzWorkerProgress } from "./store/slices/fuzzerSlice";
+import { updateFuzzProgress, updateFuzzWorkerProgress } from "./store/slices/fuzzerSlice";
 import SitemapTree from "./pages/sitemap/Sitemap";
 import { updateSiteMap } from "./store/slices/sitemapSlice";
 import { HttpHistory } from "./types/http.type";
@@ -97,19 +97,6 @@ export default function App() {
     }, [dispatch]);
 
 
-
-    useEffect(() => {
-        const unlisten = listen<FuzzUpdate[]>("fuzz-update-batch", (event) => {
-            const projectId = store.getState().workspacestate.currentProjectId;
-            if (projectId) {
-                dispatch(applyFuzzUpdates({ updates: event.payload, projectId }));
-            }
-        });
-
-        return () => {
-            unlisten.then((f) => f());
-        };
-    }, [dispatch]);
 
     useEffect(() => {
         const unlisten = listen<FuzzProgressUpdate>("fuzz-progress", (event) => {
