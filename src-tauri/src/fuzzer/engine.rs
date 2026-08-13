@@ -103,6 +103,34 @@ pub async fn update_store_error(
     }
 }
 
+pub async fn update_store_cancelled(session: u32, history: u32) {
+    let key = run_key(session, history);
+    let mut store = fuzz_store().lock().await;
+    if let Some(run_data) = store.get_mut(&key) {
+        for row in run_data.rows.iter_mut() {
+            if row.status == "pending" {
+                row.status = "cancelled".to_string();
+            }
+        }
+    }
+}
+
+pub async fn update_store_pending(session: u32, history: u32, ids: &[String]) {
+    let key = run_key(session, history);
+    let mut store = fuzz_store().lock().await;
+    if let Some(run_data) = store.get_mut(&key) {
+        for id in ids {
+            if let Some(&idx) = run_data.id_map.get(id) {
+                if let Some(row) = run_data.rows.get_mut(idx) {
+                    row.status = "pending".to_string();
+                    row.error_message = None;
+                    row.connection_dropped = false;
+                }
+            }
+        }
+    }
+}
+
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FuzzerWindowResult {
@@ -666,7 +694,11 @@ pub async fn run_fuzz_targets(app: AppHandle, config: FuzzRunConfig, targets: Ve
                         buffer.clear();
                     }
                     let done = agg_completed.load(Ordering::Relaxed);
-                    let status = if agg_cancel.load(Ordering::Relaxed) && done < total {
+                    let is_cancelled = agg_cancel.load(Ordering::Relaxed);
+                    if is_cancelled {
+                        update_store_cancelled(selected_session, fuzz_history).await;
+                    }
+                    let status = if is_cancelled && done < total {
                         "cancelled"
                     } else {
                         "running"
@@ -746,6 +778,10 @@ pub async fn run_fuzz_targets(app: AppHandle, config: FuzzRunConfig, targets: Ve
     let conn_dropped = any_worker_dropped.load(Ordering::Relaxed);
     let cancelled = cancel.load(Ordering::Relaxed);
 
+    if cancelled {
+        update_store_cancelled(selected_session, fuzz_history).await;
+    }
+
     let status = if cancelled && final_completed < total {
         "cancelled"
     } else if conn_dropped {
@@ -769,9 +805,41 @@ pub async fn run_fuzz_targets(app: AppHandle, config: FuzzRunConfig, targets: Ve
 }
 
 #[tauri::command]
-pub async fn cancel_fuzzing(selected_session: u32, fuzz_history: u32) -> Result<(), String> {
+pub async fn cancel_fuzzing(
+    app: AppHandle,
+    selected_session: u32,
+    fuzz_history: u32,
+) -> Result<(), String> {
     if let Some(flag) = get_cancel_flag(selected_session, fuzz_history).await {
         flag.store(true, Ordering::Relaxed);
+        update_store_cancelled(selected_session, fuzz_history).await;
+
+        let key = run_key(selected_session, fuzz_history);
+        let (completed, total) = {
+            let store = fuzz_store().lock().await;
+            if let Some(run_data) = store.get(&key) {
+                let completed = run_data
+                    .rows
+                    .iter()
+                    .filter(|r| r.status == "completed" || r.status == "error")
+                    .count() as u32;
+                let total = run_data.rows.len() as u32;
+                (completed, total)
+            } else {
+                (0, 0)
+            }
+        };
+
+        emit_progress(
+            &app,
+            selected_session,
+            fuzz_history,
+            completed,
+            total,
+            "cancelled",
+            false,
+        );
+
         Ok(())
     } else {
         Err("No active fuzz run found".to_string())
@@ -786,6 +854,9 @@ pub async fn resend_fuzz_request(
     selected_session: u32,
     fuzz_history: u32,
 ) -> Result<(), String> {
+    let id = target.id.clone();
+    update_store_pending(selected_session, fuzz_history, &[id]).await;
+
     let config = FuzzRunConfig {
         url,
         delay_ms: 0,
@@ -831,6 +902,12 @@ pub async fn resend_failed_fuzz_requests(
         return Err("No targets to resend".to_string());
     }
 
+    let ids: Vec<String> = worker_groups
+        .iter()
+        .flat_map(|g| g.targets.iter().map(|t| t.id.clone()))
+        .collect();
+    update_store_pending(selected_session, fuzz_history, &ids).await;
+
     tokio::spawn(async move {
         let total = overall_total;
         let completed = Arc::new(AtomicU32::new(already_completed));
@@ -869,7 +946,11 @@ pub async fn resend_failed_fuzz_requests(
                             buffer.clear();
                         }
                         let done = agg_completed.load(Ordering::Relaxed);
-                        let status = if agg_cancel.load(Ordering::Relaxed) && done < total { "cancelled" } else { "running" };
+                        let is_cancelled = agg_cancel.load(Ordering::Relaxed);
+                        if is_cancelled {
+                            update_store_cancelled(selected_session, fuzz_history).await;
+                        }
+                        let status = if is_cancelled && done < total { "cancelled" } else { "running" };
                         emit_progress(&agg_app, selected_session, fuzz_history, done, total, status, agg_conn_dropped.load(Ordering::Relaxed));
                     }
                     maybe_update = rx.recv() => {
@@ -931,6 +1012,9 @@ pub async fn resend_failed_fuzz_requests(
         let final_completed = completed.load(Ordering::Relaxed);
         let conn_dropped = any_worker_dropped.load(Ordering::Relaxed);
         let cancelled = cancel.load(Ordering::Relaxed);
+        if cancelled {
+            update_store_cancelled(selected_session, fuzz_history).await;
+        }
         let status = if cancelled && final_completed < total {
             "cancelled"
         } else if conn_dropped {
@@ -971,6 +1055,9 @@ pub async fn resend_worker_fuzz_requests(
         return Err("No targets to resend for this worker".to_string());
     }
 
+    let ids: Vec<String> = targets.iter().map(|t| t.id.clone()).collect();
+    update_store_pending(selected_session, fuzz_history, &ids).await;
+
     let config = FuzzRunConfig {
         url,
         delay_ms,
@@ -1007,7 +1094,11 @@ pub async fn resend_worker_fuzz_requests(
                             buffer.clear();
                         }
                         let done = agg_completed.load(Ordering::Relaxed);
-                        let status = if agg_cancel.load(Ordering::Relaxed) && done < total {
+                        let is_cancelled = agg_cancel.load(Ordering::Relaxed);
+                        if is_cancelled {
+                            update_store_cancelled(selected_session, fuzz_history).await;
+                        }
+                        let status = if is_cancelled && done < total {
                             "cancelled"
                         } else {
                             "running"
@@ -1059,6 +1150,9 @@ pub async fn resend_worker_fuzz_requests(
 
         let conn_dropped = worker_dropped.load(Ordering::Relaxed);
         let cancelled = cancel.load(Ordering::Relaxed);
+        if cancelled {
+            update_store_cancelled(selected_session, fuzz_history).await;
+        }
         let done = completed.load(Ordering::Relaxed);
         let status = if cancelled && done < total {
             "cancelled"

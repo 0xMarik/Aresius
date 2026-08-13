@@ -383,7 +383,7 @@ function FuzzerHistoryBody({
         return () => {
             canceled = true;
         };
-    }, [sessionIndex, historyIndex, windowState.offset, windowState.limit, runState.completed]);
+    }, [sessionIndex, historyIndex, windowState.offset, windowState.limit, runState.completed, runState.status]);
 
     const effectiveRequests = useMemo(() => {
         if (windowState.items.length > 0) return windowState.items;
