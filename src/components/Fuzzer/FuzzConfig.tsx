@@ -5,7 +5,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import { useAppDispatch, useAppSelector } from "@/hooks/redux";
 import { useProjectId } from "@/hooks/useProjectId";
-import { Textarea } from "@/components/ui/textarea";
+import { PayloadCodeEditor } from "./PayloadCodeEditor";
 import { loadValuesParam, setDelayMs, setNumThreads, setSelectedParameter, selectFuzzerState } from "@/store/slices/fuzzerSlice";
 import { FuzzingAttackType } from "@/types/fuzzer.type";
 import { IconUpload } from "@tabler/icons-react";
@@ -50,9 +50,9 @@ export default function PayloadConfigurator() {
             : parameters.findIndex(param => param.highlightRange.id === selectedParam.highlightRange.id);
     }, [selectedParam, isOnePayload, parameters]);
 
-    const handleValues = (event: any) => {
+    const handleValuesChange = (val: string) => {
         if (paramIndex === -1 || !projectId) return;
-        dispatch(loadValuesParam({ paramIndex, values: event.target.value, projectId }));
+        dispatch(loadValuesParam({ paramIndex, values: val, projectId }));
     };
 
     const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -142,10 +142,10 @@ export default function PayloadConfigurator() {
 
                 <Label>Selected File</Label>
                 <div className="space-y-2">
-                    <Textarea
-                        className="h-48"
+                    <PayloadCodeEditor
                         value={selectedParam.values.join("\n") || ""}
-                        onChange={handleValues}
+                        onChange={handleValuesChange}
+                        height="200px"
                     />
 
                     <div className="flex gap-2 w-full">

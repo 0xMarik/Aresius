@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { basicSetup, EditorView } from 'codemirror';
 import { EditorState } from '@codemirror/state';
 import { oneDark } from '@codemirror/theme-one-dark';
+import { codeMirrorScrollTheme } from '@/components/codemirror-scroll.theme';
 import { http } from '@/components/http-parser.component';
 import { BaseRow } from '@/components/Table';
 import { Button } from '@/components/ui/button';
@@ -96,6 +97,7 @@ const RawMessageEditor: React.FC<RawMessageEditorProps> = ({
                 basicSetup,
                 http(),
                 oneDark,
+                codeMirrorScrollTheme,
                 EditorView.theme({
                     '&': {
                         height: '100%',

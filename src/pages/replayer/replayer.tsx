@@ -4,6 +4,7 @@ import { EditorState, } from '@codemirror/state';
 import { useEffect, useRef } from 'react'
 import { http } from '@/components/http-parser.component';
 import { oneDark } from '@codemirror/theme-one-dark';
+import { getCodeMirrorScrollTheme } from '@/components/codemirror-scroll.theme';
 import { useTheme } from '@/components/theme-provider';
 import { useAppDispatch, useAppSelector } from '@/hooks/redux';
 import { useProjectId } from '@/hooks/useProjectId';
@@ -20,7 +21,6 @@ import HistoryRequests from "@/components/Replayer/HistoryRequests";
 import RequestCodeEditor from "@/components/Replayer/RequestCodeEditor";
 import { Loader2, Play, Repeat } from "lucide-react";
 import ReplayerSession from "@/components/Replayer/ReplayerSession";
-import { ScrollArea } from "@/components/ui/scroll-area";
 
 const fullHeightTheme = EditorView.theme({
     '&': {
@@ -69,6 +69,7 @@ const ResponseCodeEditor = () => {
                 http(),
                 ...(isDark ? [oneDark] : []),
                 fullHeightTheme,
+                getCodeMirrorScrollTheme(isDark),
                 EditorView.lineWrapping,
                 EditorState.readOnly.of(true),
             ],
@@ -89,10 +90,8 @@ const ResponseCodeEditor = () => {
     }, [history, selectedHistoryIndex, selectedCollectionIndex, selectedSessionIndex, isDark]);
 
     return (
-        <ScrollArea className="h-full">
-            <div ref={editorRef} className="h-full w-full">
-            </div>
-        </ScrollArea>
+        <div ref={editorRef} className="h-full w-full">
+        </div>
     )
 }
 

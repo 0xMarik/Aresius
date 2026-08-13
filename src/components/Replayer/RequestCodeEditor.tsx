@@ -7,6 +7,7 @@ import { EditorState } from '@codemirror/state';
 import { http } from "../http-parser.component";
 import { oneDark } from "@codemirror/theme-one-dark";
 import { useTheme } from "@/components/theme-provider";
+import { getCodeMirrorScrollTheme } from "@/components/codemirror-scroll.theme";
 import CoreContextMenu from "../ContextMenu/CoreContextMenu";
 import RequestContextMenu from "./RequestContextMenu";
 
@@ -63,6 +64,7 @@ const RequestCodeEditor = () => {
                 http(),
                 ...(isDark ? [oneDark] : []),
                 fullHeightTheme,
+                getCodeMirrorScrollTheme(isDark),
                 updateListener,
                 EditorView.lineWrapping,
             ],

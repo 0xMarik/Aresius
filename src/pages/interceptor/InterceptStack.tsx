@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { EditorView } from 'codemirror';
 import { EditorState } from '@codemirror/state';
 import { oneDark } from '@codemirror/theme-one-dark';
+import { codeMirrorScrollTheme } from '@/components/codemirror-scroll.theme';
 import { http } from '@/components/http-parser.component';
 import DataTable, { BaseRow } from '@/components/Table';
 import { Button } from '@/components/ui/button';
@@ -85,6 +86,7 @@ export const InterceptStack: React.FC<InterceptStackProps> = ({
                 extensions: [
                     http(),
                     oneDark,
+                    codeMirrorScrollTheme,
                     EditorView.lineWrapping,
                     EditorView.theme({
                         '&': { height: '100%', fontSize: '12px', backgroundColor: '#0d1117' },

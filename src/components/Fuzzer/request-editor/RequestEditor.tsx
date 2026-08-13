@@ -14,6 +14,7 @@ import { useProjectId } from "@/hooks/useProjectId";
 import { addParameter, removeParameter, setParameters, setSelectedParameter, setContent, selectFuzzerState } from '@/store/slices/fuzzerSlice'
 import { FuzzerParameter, HighlightRange } from "@/types/fuzzer.type";
 import { oneDark } from '@codemirror/theme-one-dark';
+import { codeMirrorScrollTheme } from "@/components/codemirror-scroll.theme";
 import CoreContextMenu from "@/components/ContextMenu/CoreContextMenu";
 import RequestEditorContextMenu from "./RequestEditorContextMenu";
 
@@ -398,6 +399,7 @@ const RequestEditor: React.FC = () => {
                 javascript(),
                 oneDark,
                 fullHeightTheme,
+                codeMirrorScrollTheme,
                 updateListener,
                 fuzzerHighlighter,
                 readOnlyTransactionFilter,

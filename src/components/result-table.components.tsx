@@ -7,7 +7,7 @@ import { EditorState } from '@codemirror/state';
 // import { http } from '@codemirror/legacy-modes/mode/http';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { http } from './http-parser.component';
-import { ScrollArea } from './ui/scroll-area';
+import { codeMirrorScrollTheme } from './codemirror-scroll.theme';
 
 const fullHeightTheme = EditorView.theme({
     '&': {
@@ -30,15 +30,13 @@ export const CodeMirrorEditor: React.FC<{ value: string }> = ({ value }) => {
             const state = EditorState.create({
                 doc: value,
                 extensions: [
-                    // EditorState.lineSeparator.of("\r\n"),
-                    // no need cause the response should interprete both \n and \r\n as return to a new line
                     basicSetup,
                     EditorView.lineWrapping,
                     fullHeightTheme,
+                    codeMirrorScrollTheme,
                     http(),
                     oneDark,
                     EditorState.readOnly.of(true),
-
                 ],
             });
 
@@ -71,7 +69,5 @@ export const CodeMirrorEditor: React.FC<{ value: string }> = ({ value }) => {
         }
     }, [value]);
 
-    return (<ScrollArea className="h-full ">
-        <div ref={editorRef} className="overflow-auto h-full" />
-    </ScrollArea>);
+    return <div ref={editorRef} className="h-full w-full" />;
 };
