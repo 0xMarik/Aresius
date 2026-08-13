@@ -1,7 +1,7 @@
-import React, { useState } from 'react'
+import React, { useState, useMemo } from 'react'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
-import { useAppDispatch } from '@/hooks/redux'
+import { useAppDispatch, useAppSelector } from '@/hooks/redux'
 import { useProjectId } from '@/hooks/useProjectId'
 import {
     addCollection,
@@ -10,7 +10,8 @@ import {
     removeCollection,
     removeSession,
     renameCollection,
-    renameSession
+    renameSession,
+    selectReplayerState,
 } from '@/store/slices/replayerSlice'
 import { RsTree, TreeNode, HighlightedText, TreeNodeRenderProps } from 'rstree-ui';
 import { ChevronDownIcon, Plus, Folder, File, MoreHorizontal, Pencil, Trash2 } from 'lucide-react';
@@ -37,8 +38,32 @@ interface RemoveTarget {
 const ReplayerSession = ({ collections }: { collections: ReplayerCollection[] }) => {
     const dispatch = useAppDispatch()
     const projectId = useProjectId()
+    const { selectedCollectionIndex } = useAppSelector(selectReplayerState(projectId));
+    const selectedSessionIndex = collections[selectedCollectionIndex]?.selectedSessionIndex ?? null;
 
-    const [selectedIds, setSelectedIds] = React.useState<string[]>([]);
+    const activeSelectedId = useMemo(() => {
+        if (selectedCollectionIndex < 0 || selectedCollectionIndex >= collections.length) return null;
+        const col = collections[selectedCollectionIndex];
+        if (!col) return null;
+        if (selectedSessionIndex !== null && selectedSessionIndex >= 0 && selectedSessionIndex < col.sessions.length) {
+            return `${selectedCollectionIndex}-${selectedSessionIndex}`;
+        }
+        return `${selectedCollectionIndex}`;
+    }, [selectedCollectionIndex, selectedSessionIndex, collections]);
+
+    const selectedIds = useMemo(() => (activeSelectedId ? [activeSelectedId] : []), [activeSelectedId]);
+
+    const [expandedIds, setExpandedIds] = useState<string[]>(() =>
+        collections.map((_, i) => `${i}`)
+    );
+
+    React.useEffect(() => {
+        if (selectedCollectionIndex >= 0 && selectedCollectionIndex < collections.length) {
+            const colId = `${selectedCollectionIndex}`;
+            setExpandedIds((prev) => (prev.includes(colId) ? prev : [...prev, colId]));
+        }
+    }, [selectedCollectionIndex, collections.length]);
+
     const [searchTerm, setSearchTerm] = useState('')
 
     // Inline edit state
@@ -61,11 +86,21 @@ const ReplayerSession = ({ collections }: { collections: ReplayerCollection[] })
     }))
 
     const handleSelection = (value: string[]) => {
-        if (value !== undefined && value.length === 1 && value[0].includes("-") && projectId) {
-            const newValue = value[0]?.split("-") || [];
-            dispatch(selectColSess({ collectionIndex: Number(newValue[0]), sessionIndex: Number(newValue[1]), projectId }));
+        if (!value || value.length === 0 || !projectId) return;
+        const selectedId = value[0];
+        if (selectedId.includes('-')) {
+            const parts = selectedId.split('-');
+            const colIdx = Number(parts[0]);
+            const sessIdx = Number(parts[1]);
+            dispatch(selectColSess({ collectionIndex: colIdx, sessionIndex: sessIdx, projectId }));
+        } else {
+            const colIdx = Number(selectedId);
+            const col = collections[colIdx];
+            const sessIdx = col?.selectedSessionIndex !== null && col?.selectedSessionIndex !== undefined
+                ? col.selectedSessionIndex
+                : (col?.sessions.length ? 0 : null);
+            dispatch(selectColSess({ collectionIndex: colIdx, sessionIndex: sessIdx, projectId }));
         }
-        setSelectedIds(value)
     }
 
     const handleConfirmRemove = () => {
@@ -196,7 +231,10 @@ const ReplayerSession = ({ collections }: { collections: ReplayerCollection[] })
                 <Button className=' w-full' onClick={
                     () => {
                         if (projectId) {
-                            dispatch(addSessionToCollection({ collectionIndex: Number((selectedIds[0] ?? "0-0").split('-')[0]), isItReplayerPage: true, projectId }));
+                            const targetColIdx = (selectedCollectionIndex >= 0 && selectedCollectionIndex < collections.length)
+                                ? selectedCollectionIndex
+                                : 0;
+                            dispatch(addSessionToCollection({ collectionIndex: targetColIdx, isItReplayerPage: true, projectId }));
                         }
                     }}><Plus /> New Session</Button>
                 <DropdownMenu>
@@ -235,6 +273,8 @@ const ReplayerSession = ({ collections }: { collections: ReplayerCollection[] })
   "
                     selectedIds={selectedIds}
                     onSelect={handleSelection}
+                    expandedIds={expandedIds}
+                    onExpand={setExpandedIds}
                     showIcons={false}
                     virtualizeEnabled={true}
                 />

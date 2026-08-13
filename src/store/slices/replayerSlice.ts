@@ -12,8 +12,16 @@ interface ReplayerState {
 const defaultReplayerState = (): ReplayerState => ({
     collections: [
         {
-            sessions: [],
-            selectedSessionIndex: null,
+            sessions: [
+                {
+                    history: [],
+                    requestTmp: 'GET / HTTP/1.1\r\n\r\n',
+                    url: 'https://',
+                    selectedHistoryIndex: null,
+                    urlIsValid: false,
+                }
+            ],
+            selectedSessionIndex: 0,
         },
     ],
     selectedCollectionIndex: 0,
@@ -39,7 +47,7 @@ const replayerSlice = createSlice({
             const { rawRequest, projectId } = action.payload;
             const bucket = getBucket(state, projectId);
             const collection = bucket.collections[bucket.selectedCollectionIndex];
-            if (collection.selectedSessionIndex !== null) {
+            if (collection && collection.selectedSessionIndex !== null) {
                 collection.sessions[collection.selectedSessionIndex].requestTmp = rawRequest;
             }
         },
@@ -47,7 +55,7 @@ const replayerSlice = createSlice({
             const { url, urlIsValid, projectId } = action.payload;
             const bucket = getBucket(state, projectId);
             const collection = bucket.collections[bucket.selectedCollectionIndex];
-            if (collection.selectedSessionIndex !== null) {
+            if (collection && collection.selectedSessionIndex !== null) {
                 const session = collection.sessions[collection.selectedSessionIndex];
                 session.url = url;
                 session.urlIsValid = urlIsValid;
@@ -57,7 +65,7 @@ const replayerSlice = createSlice({
             const { historyItem, projectId } = action.payload;
             const bucket = getBucket(state, projectId);
             const collection = bucket.collections[bucket.selectedCollectionIndex];
-            if (collection.selectedSessionIndex !== null) {
+            if (collection && collection.selectedSessionIndex !== null) {
                 const session = collection.sessions[collection.selectedSessionIndex];
                 session.requestTmp = historyItem.requestRaw;
                 session.history = [historyItem, ...session.history];
@@ -67,7 +75,7 @@ const replayerSlice = createSlice({
             const { historyIndex, projectId } = action.payload;
             const bucket = getBucket(state, projectId);
             const collection = bucket.collections[bucket.selectedCollectionIndex];
-            if (collection.selectedSessionIndex !== null) {
+            if (collection && collection.selectedSessionIndex !== null) {
                 const session = collection.sessions[collection.selectedSessionIndex];
                 session.requestTmp = session.history[historyIndex].requestRaw;
                 session.selectedHistoryIndex = historyIndex;
@@ -75,6 +83,7 @@ const replayerSlice = createSlice({
         },
         addCollection: (state, action: PayloadAction<string>) => {
             const bucket = getBucket(state, action.payload);
+            const newColIndex = bucket.collections.length;
             bucket.collections.push({
                 sessions: [
                     {
@@ -87,24 +96,35 @@ const replayerSlice = createSlice({
                 ],
                 selectedSessionIndex: 0,
             });
+            bucket.selectedCollectionIndex = newColIndex;
         },
-        selectColSess: (state, action: PayloadAction<{ collectionIndex: number; sessionIndex: number; projectId: string }>) => {
+        selectColSess: (state, action: PayloadAction<{ collectionIndex: number; sessionIndex: number | null; projectId: string }>) => {
             const { collectionIndex, sessionIndex, projectId } = action.payload;
             const bucket = getBucket(state, projectId);
-            bucket.selectedCollectionIndex = collectionIndex;
-            bucket.collections[collectionIndex].selectedSessionIndex = sessionIndex;
+            if (collectionIndex >= 0 && collectionIndex < bucket.collections.length) {
+                bucket.selectedCollectionIndex = collectionIndex;
+                bucket.collections[collectionIndex].selectedSessionIndex = sessionIndex;
+            }
         },
         addSessionToCollection: (state, action: PayloadAction<{ collectionIndex: number; isItReplayerPage: boolean; projectId: string }>) => {
             const { collectionIndex, isItReplayerPage, projectId } = action.payload;
             const bucket = getBucket(state, projectId);
-            const collection = bucket.collections[collectionIndex];
-            collection.sessions.push({
-                history: [],
-                requestTmp: 'GET / HTTP/1.1\r\n\r\n',
-                url: 'https://',
-                selectedHistoryIndex: null,
-                urlIsValid: false,
-            });
+            const targetColIndex = (collectionIndex >= 0 && collectionIndex < bucket.collections.length)
+                ? collectionIndex
+                : bucket.selectedCollectionIndex;
+            const collection = bucket.collections[targetColIndex];
+            if (collection) {
+                const newSessionIndex = collection.sessions.length;
+                collection.sessions.push({
+                    history: [],
+                    requestTmp: 'GET / HTTP/1.1\r\n\r\n',
+                    url: 'https://',
+                    selectedHistoryIndex: null,
+                    urlIsValid: false,
+                });
+                collection.selectedSessionIndex = newSessionIndex;
+                bucket.selectedCollectionIndex = targetColIndex;
+            }
             bucket.receivedSession = !isItReplayerPage ? bucket.receivedSession + 1 : bucket.receivedSession;
         },
         resetReplayerReceivedSession: (state, action: PayloadAction<string>) => {
