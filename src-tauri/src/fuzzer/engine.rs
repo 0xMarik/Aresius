@@ -240,7 +240,15 @@ pub struct FuzzRunConfig {
 
 static FUZZ_CANCELLATIONS: OnceLock<Mutex<HashMap<String, Arc<AtomicBool>>>> = OnceLock::new();
 
-const TIME_TO_UPDATE: Duration = Duration::from_millis(900);
+const TIME_TO_UPDATE: Duration = Duration::from_millis(500);
+
+#[derive(Clone)]
+pub struct WorkerHandleInfo {
+    pub worker_id: u32,
+    pub completed: Arc<AtomicU32>,
+    pub total: u32,
+    pub dropped: Arc<AtomicBool>,
+}
 
 fn cancellations() -> &'static Mutex<HashMap<String, Arc<AtomicBool>>> {
     FUZZ_CANCELLATIONS.get_or_init(|| Mutex::new(HashMap::new()))
@@ -383,10 +391,12 @@ async fn process_chunk(
     cancel: Arc<AtomicBool>,
     completed: Arc<AtomicU32>,
     worker_dropped: Arc<AtomicBool>,
+    worker_completed_counter: Arc<AtomicU32>,
     worker_completed_offset: u32,
     worker_total_override: Option<u32>,
 ) {
     let worker_total = worker_total_override.unwrap_or(chunk.len() as u32);
+    worker_completed_counter.store(worker_completed_offset, Ordering::Relaxed);
     emit_worker_update(
         &app,
         selected_session,
@@ -425,7 +435,6 @@ async fn process_chunk(
                     true,
                 )
                 .await;
-                // completed.fetch_add(1, Ordering::Relaxed);
             }
             return;
         }
@@ -461,8 +470,8 @@ async fn process_chunk(
                 true,
             )
             .await;
-            // completed.fetch_add(1, Ordering::Relaxed);
             worker_completed += 1;
+            worker_completed_counter.store(worker_completed, Ordering::Relaxed);
             continue;
         }
 
@@ -502,16 +511,7 @@ async fn process_chunk(
                             }));
                             completed.fetch_add(1, Ordering::Relaxed);
                             worker_completed += 1;
-                            emit_worker_update(
-                                &app,
-                                selected_session,
-                                fuzz_history,
-                                worker_id,
-                                "running",
-                                worker_completed,
-                                worker_total,
-                                None,
-                            );
+                            worker_completed_counter.store(worker_completed, Ordering::Relaxed);
                             if delay > 0 {
                                 sleep(Duration::from_millis(delay)).await;
                             }
@@ -533,6 +533,7 @@ async fn process_chunk(
                             dropped = true;
                             completed.fetch_add(1, Ordering::Relaxed);
                             worker_completed += 1;
+                            worker_completed_counter.store(worker_completed, Ordering::Relaxed);
                             emit_worker_update(
                                 &app,
                                 selected_session,
@@ -562,13 +563,15 @@ async fn process_chunk(
                 if is_conn_err {
                     worker_dropped.store(true, Ordering::Relaxed);
                     dropped = true;
+                    worker_completed += 1;
+                    worker_completed_counter.store(worker_completed, Ordering::Relaxed);
                     emit_worker_update(
                         &app,
                         selected_session,
                         fuzz_history,
                         worker_id,
                         "dropped",
-                        worker_completed + 1,
+                        worker_completed,
                         worker_total,
                         Some(msg),
                     );
@@ -578,44 +581,11 @@ async fn process_chunk(
 
         completed.fetch_add(1, Ordering::Relaxed);
         worker_completed += 1;
-        emit_worker_update(
-            &app,
-            selected_session,
-            fuzz_history,
-            worker_id,
-            if dropped { "dropped" } else { "running" },
-            worker_completed,
-            worker_total,
-            None,
-        );
+        worker_completed_counter.store(worker_completed, Ordering::Relaxed);
 
         if delay > 0 && idx + 1 < chunk.len() {
             sleep(Duration::from_millis(delay)).await;
         }
-    }
-
-    if !worker_dropped.load(Ordering::Relaxed) && !cancel.load(Ordering::Relaxed) {
-        emit_worker_update(
-            &app,
-            selected_session,
-            fuzz_history,
-            worker_id,
-            "completed",
-            worker_total,
-            worker_total,
-            None,
-        );
-    } else if cancel.load(Ordering::Relaxed) && !worker_dropped.load(Ordering::Relaxed) {
-        emit_worker_update(
-            &app,
-            selected_session,
-            fuzz_history,
-            worker_id,
-            "completed",
-            worker_completed,
-            worker_total,
-            None,
-        );
     }
 }
 
@@ -626,11 +596,6 @@ pub async fn run_fuzz_targets(app: AppHandle, config: FuzzRunConfig, targets: Ve
 
     init_fuzz_store(selected_session, fuzz_history, &targets).await;
 
-    // Guard against the empty-targets panic: `targets.chunks(chunk_size)`
-    // below computes chunk_size = 0 when targets is empty (ceil-div of 0 by
-    // anything is 0), and `slice::chunks(0)` panics with
-    // "chunk size must be non-zero". Bail out early with a clean
-    // "completed" progress event instead of crashing the worker thread.
     if targets.is_empty() {
         emit_progress(
             &app,
@@ -650,7 +615,6 @@ pub async fn run_fuzz_targets(app: AppHandle, config: FuzzRunConfig, targets: Ve
         Arc::new(AtomicBool::new(false))
     };
 
-    // Ensures cancellations() is cleaned up even if something below panics.
     let _cleanup_guard = if config.register_cancel {
         Some(CleanupGuard {
             session: selected_session,
@@ -678,10 +642,22 @@ pub async fn run_fuzz_targets(app: AppHandle, config: FuzzRunConfig, targets: Ve
     let chunk_size = (targets.len() + num_tasks - 1) / num_tasks;
     let (tx, mut rx) = mpsc::unbounded_channel::<FuzzUpdate>();
 
+    let mut worker_infos = Vec::new();
+    for (worker_id, chunk) in targets.chunks(chunk_size).enumerate() {
+        let worker_total = chunk.len() as u32;
+        worker_infos.push(WorkerHandleInfo {
+            worker_id: worker_id as u32,
+            completed: Arc::new(AtomicU32::new(0)),
+            total: worker_total,
+            dropped: Arc::new(AtomicBool::new(false)),
+        });
+    }
+
     let agg_app = app.clone();
     let agg_completed = Arc::clone(&completed);
     let agg_conn_dropped = Arc::clone(&any_worker_dropped);
     let agg_cancel = Arc::clone(&cancel);
+    let agg_workers = worker_infos.clone();
 
     let aggregator = tokio::spawn(async move {
         let mut ticker = interval(TIME_TO_UPDATE);
@@ -712,6 +688,27 @@ pub async fn run_fuzz_targets(app: AppHandle, config: FuzzRunConfig, targets: Ve
                         status,
                         agg_conn_dropped.load(Ordering::Relaxed),
                     );
+                    for w in &agg_workers {
+                        let w_done = w.completed.load(Ordering::Relaxed);
+                        let w_dropped = w.dropped.load(Ordering::Relaxed);
+                        let w_status = if w_dropped {
+                            "dropped"
+                        } else if w_done >= w.total || is_cancelled {
+                            "completed"
+                        } else {
+                            "running"
+                        };
+                        emit_worker_update(
+                            &agg_app,
+                            selected_session,
+                            fuzz_history,
+                            w.worker_id,
+                            w_status,
+                            w_done,
+                            w.total,
+                            None,
+                        );
+                    }
                 }
                 maybe_update = rx.recv() => {
                     match maybe_update {
@@ -737,7 +734,9 @@ pub async fn run_fuzz_targets(app: AppHandle, config: FuzzRunConfig, targets: Ve
         let tx = tx.clone();
         let cancel = Arc::clone(&cancel);
         let completed = Arc::clone(&completed);
-        let worker_dropped = Arc::new(AtomicBool::new(false));
+        let worker_info = &worker_infos[worker_id];
+        let worker_dropped = Arc::clone(&worker_info.dropped);
+        let worker_completed_counter = Arc::clone(&worker_info.completed);
         let worker_dropped_for_agg = Arc::clone(&worker_dropped);
         let any_dropped = Arc::clone(&any_worker_dropped);
         let app = app.clone();
@@ -755,6 +754,7 @@ pub async fn run_fuzz_targets(app: AppHandle, config: FuzzRunConfig, targets: Ve
                 cancel,
                 completed,
                 worker_dropped,
+                worker_completed_counter,
                 0, // fresh worker chunk, nothing done yet
                 None,
             )
@@ -921,6 +921,16 @@ pub async fn resend_failed_fuzz_requests(
         let any_worker_dropped = Arc::new(AtomicBool::new(false));
         let (tx, mut rx) = mpsc::unbounded_channel::<FuzzUpdate>();
 
+        let mut worker_infos = Vec::new();
+        for group in &worker_groups {
+            worker_infos.push(WorkerHandleInfo {
+                worker_id: group.worker_id,
+                completed: Arc::new(AtomicU32::new(group.worker_already_completed)),
+                total: group.worker_original_total,
+                dropped: Arc::new(AtomicBool::new(false)),
+            });
+        }
+
         emit_progress(
             &app,
             selected_session,
@@ -935,6 +945,7 @@ pub async fn resend_failed_fuzz_requests(
         let agg_cancel = Arc::clone(&cancel);
         let agg_completed = Arc::clone(&completed);
         let agg_conn_dropped = Arc::clone(&any_worker_dropped);
+        let agg_workers = worker_infos.clone();
         let aggregator = tokio::spawn(async move {
             let mut ticker = interval(TIME_TO_UPDATE);
             let mut buffer = Vec::new();
@@ -952,6 +963,27 @@ pub async fn resend_failed_fuzz_requests(
                         }
                         let status = if is_cancelled && done < total { "cancelled" } else { "running" };
                         emit_progress(&agg_app, selected_session, fuzz_history, done, total, status, agg_conn_dropped.load(Ordering::Relaxed));
+                        for w in &agg_workers {
+                            let w_done = w.completed.load(Ordering::Relaxed);
+                            let w_dropped = w.dropped.load(Ordering::Relaxed);
+                            let w_status = if w_dropped {
+                                "dropped"
+                            } else if w_done >= w.total || is_cancelled {
+                                "completed"
+                            } else {
+                                "running"
+                            };
+                            emit_worker_update(
+                                &agg_app,
+                                selected_session,
+                                fuzz_history,
+                                w.worker_id,
+                                w_status,
+                                w_done,
+                                w.total,
+                                None,
+                            );
+                        }
                     }
                     maybe_update = rx.recv() => {
                         match maybe_update {
@@ -969,13 +1001,15 @@ pub async fn resend_failed_fuzz_requests(
         });
 
         let mut handles = vec![];
-        for group in worker_groups {
+        for (idx, group) in worker_groups.into_iter().enumerate() {
             let app = app.clone();
             let url = url.clone();
             let tx = tx.clone();
             let cancel = Arc::clone(&cancel);
             let completed = Arc::clone(&completed);
-            let worker_dropped = Arc::new(AtomicBool::new(false));
+            let worker_info = &worker_infos[idx];
+            let worker_dropped = Arc::clone(&worker_info.dropped);
+            let worker_completed_counter = Arc::clone(&worker_info.completed);
             let worker_dropped_for_agg = Arc::clone(&worker_dropped);
             let any_dropped = Arc::clone(&any_worker_dropped);
 
@@ -992,6 +1026,7 @@ pub async fn resend_failed_fuzz_requests(
                     cancel,
                     completed,
                     worker_dropped,
+                    worker_completed_counter,
                     group.worker_already_completed,
                     Some(group.worker_original_total),
                 )
@@ -1078,11 +1113,14 @@ pub async fn resend_worker_fuzz_requests(
             flag: Arc::clone(&cancel),
         };
         let worker_dropped = Arc::new(AtomicBool::new(false));
+        let worker_completed_counter = Arc::new(AtomicU32::new(worker_already_completed));
         let (tx, mut rx) = mpsc::unbounded_channel::<FuzzUpdate>();
 
         let agg_app = app.clone();
         let agg_cancel = Arc::clone(&cancel);
         let agg_completed = Arc::clone(&completed);
+        let agg_worker_completed = Arc::clone(&worker_completed_counter);
+        let agg_worker_dropped = Arc::clone(&worker_dropped);
         let aggregator = tokio::spawn(async move {
             let mut ticker = interval(TIME_TO_UPDATE);
             let mut buffer = Vec::new();
@@ -1112,6 +1150,25 @@ pub async fn resend_worker_fuzz_requests(
                             status,
                             false,
                         );
+                        let w_done = agg_worker_completed.load(Ordering::Relaxed);
+                        let w_dropped = agg_worker_dropped.load(Ordering::Relaxed);
+                        let w_status = if w_dropped {
+                            "dropped"
+                        } else if w_done >= worker_original_total || is_cancelled {
+                            "completed"
+                        } else {
+                            "running"
+                        };
+                        emit_worker_update(
+                            &agg_app,
+                            selected_session,
+                            fuzz_history,
+                            worker_id,
+                            w_status,
+                            w_done,
+                            worker_original_total,
+                            None,
+                        );
                     }
                     maybe_update = rx.recv() => {
                         match maybe_update {
@@ -1140,6 +1197,7 @@ pub async fn resend_worker_fuzz_requests(
             cancel.clone(),
             Arc::clone(&completed),
             Arc::clone(&worker_dropped),
+            worker_completed_counter,
             worker_already_completed,
             Some(worker_original_total),
         )
