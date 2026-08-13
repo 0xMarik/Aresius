@@ -1,7 +1,21 @@
-import { ReplayerCollection, ReplayerHistoryItem } from "@/types/replayer.type";
-import { createSlice, PayloadAction } from "@reduxjs/toolkit";
+import { ReplayerCollection, ReplayerFullData, ReplayerHistoryItem } from "@/types/replayer.type";
+import { createAsyncThunk, createSlice, PayloadAction } from "@reduxjs/toolkit";
 import type { RootState } from "@/store";
 import { deleteProject } from "./projectSlice";
+import { invoke } from "@tauri-apps/api/core";
+
+export const fetchReplayerData = createAsyncThunk(
+    'replayer/fetchReplayerData',
+    async (projectId: string) => {
+        try {
+            const data = await invoke<ReplayerFullData>('get_replayer_data', { projectId });
+            return { projectId, data };
+        } catch (err) {
+            console.error('Failed to fetch replayer data:', err);
+            return { projectId, data: null };
+        }
+    }
+);
 
 interface ReplayerState {
     collections: ReplayerCollection[];
@@ -48,7 +62,11 @@ const replayerSlice = createSlice({
             const bucket = getBucket(state, projectId);
             const collection = bucket.collections[bucket.selectedCollectionIndex];
             if (collection && collection.selectedSessionIndex !== null) {
-                collection.sessions[collection.selectedSessionIndex].requestTmp = rawRequest;
+                const session = collection.sessions[collection.selectedSessionIndex];
+                session.requestTmp = rawRequest;
+                if (session.id) {
+                    invoke('update_replayer_session_draft', { sessionId: session.id, requestTmp: rawRequest, baseUrl: null }).catch(console.error);
+                }
             }
         },
         setReaplayerURL: (state, action: PayloadAction<{ url: string; urlIsValid: boolean; projectId: string }>) => {
@@ -59,6 +77,9 @@ const replayerSlice = createSlice({
                 const session = collection.sessions[collection.selectedSessionIndex];
                 session.url = url;
                 session.urlIsValid = urlIsValid;
+                if (session.id) {
+                    invoke('update_replayer_session_draft', { sessionId: session.id, requestTmp: null, baseUrl: url }).catch(console.error);
+                }
             }
         },
         addReplayerHistory: (state, action: PayloadAction<{ historyItem: ReplayerHistoryItem; projectId: string }>) => {
@@ -67,8 +88,34 @@ const replayerSlice = createSlice({
             const collection = bucket.collections[bucket.selectedCollectionIndex];
             if (collection && collection.selectedSessionIndex !== null) {
                 const session = collection.sessions[collection.selectedSessionIndex];
+                const historyId = historyItem.id || crypto.randomUUID();
+                const createdAt = historyItem.createdAt || new Date().toISOString();
+                const responseTime = historyItem.responseTime ?? historyItem.requestTime ?? 0;
+                const baseUrl = historyItem.baseUrl || session.url || '';
+                const itemWithId = {
+                    ...historyItem,
+                    id: historyId,
+                    createdAt,
+                    responseTime,
+                    requestTime: responseTime,
+                    baseUrl,
+                };
                 session.requestTmp = historyItem.requestRaw;
-                session.history = [historyItem, ...session.history];
+                session.history = [itemWithId, ...session.history];
+                session.selectedHistoryIndex = 0;
+
+                if (session.id) {
+                    invoke('add_replayer_history_entry', {
+                        sessionId: session.id,
+                        historyId,
+                        requestRaw: historyItem.requestRaw,
+                        responseRaw: historyItem.responseRaw,
+                        responseTime,
+                        createdAt,
+                    }).catch(console.error);
+
+                    invoke('update_replayer_session_draft', { sessionId: session.id, requestTmp: historyItem.requestRaw, baseUrl: null }).catch(console.error);
+                }
             }
         },
         selectedHisotryIndex: (state, action: PayloadAction<{ historyIndex: number; projectId: string }>) => {
@@ -77,19 +124,36 @@ const replayerSlice = createSlice({
             const collection = bucket.collections[bucket.selectedCollectionIndex];
             if (collection && collection.selectedSessionIndex !== null) {
                 const session = collection.sessions[collection.selectedSessionIndex];
-                session.requestTmp = session.history[historyIndex].requestRaw;
-                session.selectedHistoryIndex = historyIndex;
+                if (session.history[historyIndex]) {
+                    session.requestTmp = session.history[historyIndex].requestRaw;
+                    session.selectedHistoryIndex = historyIndex;
+                    if (session.id) {
+                        invoke('update_replayer_session_draft', { sessionId: session.id, requestTmp: session.history[historyIndex].requestRaw, baseUrl: null }).catch(console.error);
+                    }
+                }
             }
         },
         addCollection: (state, action: PayloadAction<string>) => {
-            const bucket = getBucket(state, action.payload);
+            const projectId = action.payload;
+            const bucket = getBucket(state, projectId);
             const newColIndex = bucket.collections.length;
+            const colId = crypto.randomUUID();
+            const sessId = crypto.randomUUID();
+            const colName = `Collection ${newColIndex + 1}`;
+            const sessName = 'Session 1';
+            const defaultReq = 'GET / HTTP/1.1\r\n\r\n';
+            const defaultUrl = 'https://';
+
             bucket.collections.push({
+                id: colId,
+                name: colName,
                 sessions: [
                     {
+                        id: sessId,
+                        name: sessName,
                         history: [],
-                        requestTmp: 'GET / HTTP/1.1\r\n\r\n',
-                        url: 'https://',
+                        requestTmp: defaultReq,
+                        url: defaultUrl,
                         selectedHistoryIndex: null,
                         urlIsValid: false,
                     }
@@ -97,6 +161,24 @@ const replayerSlice = createSlice({
                 selectedSessionIndex: 0,
             });
             bucket.selectedCollectionIndex = newColIndex;
+
+            if (projectId) {
+                invoke('create_replayer_collection', {
+                    projectId,
+                    collectionId: colId,
+                    name: colName,
+                    sortOrder: newColIndex,
+                }).then(() => {
+                    invoke('create_replayer_session', {
+                        collectionId: colId,
+                        sessionId: sessId,
+                        name: sessName,
+                        baseUrl: defaultUrl,
+                        requestTmp: defaultReq,
+                        sortOrder: 0,
+                    }).catch(console.error);
+                }).catch(console.error);
+            }
         },
         selectColSess: (state, action: PayloadAction<{ collectionIndex: number; sessionIndex: number | null; projectId: string }>) => {
             const { collectionIndex, sessionIndex, projectId } = action.payload;
@@ -115,15 +197,33 @@ const replayerSlice = createSlice({
             const collection = bucket.collections[targetColIndex];
             if (collection) {
                 const newSessionIndex = collection.sessions.length;
+                const sessId = crypto.randomUUID();
+                const sessName = `Session ${newSessionIndex + 1}`;
+                const defaultReq = 'GET / HTTP/1.1\r\n\r\n';
+                const defaultUrl = 'https://';
+
                 collection.sessions.push({
+                    id: sessId,
+                    name: sessName,
                     history: [],
-                    requestTmp: 'GET / HTTP/1.1\r\n\r\n',
-                    url: 'https://',
+                    requestTmp: defaultReq,
+                    url: defaultUrl,
                     selectedHistoryIndex: null,
                     urlIsValid: false,
                 });
                 collection.selectedSessionIndex = newSessionIndex;
                 bucket.selectedCollectionIndex = targetColIndex;
+
+                if (collection.id) {
+                    invoke('create_replayer_session', {
+                        collectionId: collection.id,
+                        sessionId: sessId,
+                        name: sessName,
+                        baseUrl: defaultUrl,
+                        requestTmp: defaultReq,
+                        sortOrder: newSessionIndex,
+                    }).catch(console.error);
+                }
             }
             bucket.receivedSession = !isItReplayerPage ? bucket.receivedSession + 1 : bucket.receivedSession;
         },
@@ -134,7 +234,10 @@ const replayerSlice = createSlice({
             const { collectionIndex, projectId } = action.payload;
             const bucket = getBucket(state, projectId);
             if (collectionIndex >= 0 && collectionIndex < bucket.collections.length) {
-                bucket.collections.splice(collectionIndex, 1);
+                const removed = bucket.collections.splice(collectionIndex, 1)[0];
+                if (removed?.id) {
+                    invoke('delete_replayer_collection', { collectionId: removed.id }).catch(console.error);
+                }
                 if (bucket.collections.length === 0) {
                     bucket.collections.push({ sessions: [], selectedSessionIndex: null });
                     bucket.selectedCollectionIndex = 0;
@@ -148,7 +251,10 @@ const replayerSlice = createSlice({
             const bucket = getBucket(state, projectId);
             const collection = bucket.collections[collectionIndex];
             if (collection && sessionIndex >= 0 && sessionIndex < collection.sessions.length) {
-                collection.sessions.splice(sessionIndex, 1);
+                const removed = collection.sessions.splice(sessionIndex, 1)[0];
+                if (removed?.id) {
+                    invoke('delete_replayer_session', { sessionId: removed.id }).catch(console.error);
+                }
                 if (collection.selectedSessionIndex === sessionIndex) {
                     collection.selectedSessionIndex = collection.sessions.length > 0
                         ? Math.min(sessionIndex, collection.sessions.length - 1)
@@ -161,21 +267,59 @@ const replayerSlice = createSlice({
         renameCollection: (state, action: PayloadAction<{ collectionIndex: number; name: string; projectId: string }>) => {
             const { collectionIndex, name, projectId } = action.payload;
             const bucket = getBucket(state, projectId);
-            if (bucket.collections[collectionIndex]) {
-                bucket.collections[collectionIndex].name = name;
+            const collection = bucket.collections[collectionIndex];
+            if (collection) {
+                collection.name = name;
+                if (collection.id) {
+                    invoke('rename_replayer_collection', { collectionId: collection.id, name }).catch(console.error);
+                }
             }
         },
         renameSession: (state, action: PayloadAction<{ collectionIndex: number; sessionIndex: number; name: string; projectId: string }>) => {
             const { collectionIndex, sessionIndex, name, projectId } = action.payload;
             const collection = getBucket(state, projectId).collections[collectionIndex];
-            if (collection?.sessions[sessionIndex]) {
-                collection.sessions[sessionIndex].name = name;
+            const session = collection?.sessions[sessionIndex];
+            if (session) {
+                session.name = name;
+                if (session.id) {
+                    invoke('rename_replayer_session', { sessionId: session.id, name }).catch(console.error);
+                }
             }
         },
     },
     extraReducers: (builder) => {
         builder.addCase(deleteProject, (state, action) => {
             delete state[action.payload];
+        });
+        builder.addCase(fetchReplayerData.fulfilled, (state, action) => {
+            const { projectId, data } = action.payload;
+            if (!data || !projectId) return;
+            const bucket = getBucket(state, projectId);
+            if (data.collections && data.collections.length > 0) {
+                bucket.collections = data.collections.map((c) => ({
+                    id: c.id,
+                    name: c.name,
+                    selectedSessionIndex: c.selectedSessionIndex ?? (c.sessions.length > 0 ? 0 : null),
+                    sessions: c.sessions.map((s) => ({
+                        id: s.id,
+                        name: s.name,
+                        url: s.url,
+                        requestTmp: s.requestTmp,
+                        selectedHistoryIndex: s.selectedHistoryIndex ?? (s.history.length > 0 ? 0 : null),
+                        urlIsValid: s.urlIsValid,
+                        history: s.history.map((h) => ({
+                            id: h.id,
+                            requestRaw: h.requestRaw,
+                            responseRaw: h.responseRaw,
+                            responseTime: h.responseTime,
+                            requestTime: h.responseTime,
+                            createdAt: h.createdAt,
+                            baseUrl: s.url,
+                        })),
+                    })),
+                }));
+                bucket.selectedCollectionIndex = data.selectedCollectionIndex ?? 0;
+            }
         });
     },
 });

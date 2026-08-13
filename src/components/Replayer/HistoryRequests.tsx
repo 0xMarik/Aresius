@@ -67,22 +67,49 @@ const HistoryRequests = ({ selectedHistoryIndex, history }: { selectedHistoryInd
                                     </TableRow>
                                 )}
                                 {history.map((item, index) => {
-                                    const req = parseRequest(item.requestRaw)
+                                    const req = parseRequest(item.requestRaw);
+                                    const hostHeader = Object.entries(req.headers || {}).find(
+                                        ([k]) => k.toLowerCase() === 'host'
+                                    )?.[1];
+
+                                    let hostDisplay = hostHeader || item.baseUrl || '';
+                                    if (!hostDisplay) {
+                                        hostDisplay = '—';
+                                    } else if (hostDisplay.includes('://')) {
+                                        try {
+                                            hostDisplay = new URL(hostDisplay).host;
+                                        } catch {
+                                            // keep raw hostDisplay
+                                        }
+                                    }
+
+                                    let timeDisplay = '—';
+                                    if (item.createdAt) {
+                                        const d = new Date(item.createdAt);
+                                        if (!isNaN(d.getTime())) {
+                                            timeDisplay = d.toLocaleTimeString();
+                                        }
+                                    } else if (item.requestTime && item.requestTime > 1000000000000) {
+                                        const d = new Date(item.requestTime);
+                                        if (!isNaN(d.getTime())) {
+                                            timeDisplay = d.toLocaleTimeString();
+                                        }
+                                    }
+
                                     return (
                                         <TableRow
-                                            key={index}
+                                            key={item.id ?? index}
                                             onClick={() => handleSelectedHisotry(index.toString())}
-                                            className={`cursor-pointer ${selectedHistoryIndex === index ? 'bg-muted' : ''
-                                                }`}
+                                            className={`cursor-pointer ${selectedHistoryIndex === index ? 'bg-muted' : ''}`}
                                         >
                                             <TableCell className="font-mono text-xs font-semibold">{req.method}</TableCell>
-                                            <TableCell className="text-xs">{item.baseUrl}</TableCell>
+                                            <TableCell className="text-xs truncate max-w-[150px]">{hostDisplay}</TableCell>
                                             <TableCell className="truncate max-w-[160px] font-mono text-xs">{req.path}</TableCell>
                                             <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
-                                                {new Date(item.requestTime).toLocaleTimeString()}
+                                                {timeDisplay}
                                             </TableCell>
                                         </TableRow>
-                                    )
+                                    );
                                 })}
                             </TableBody>
                         </Table>

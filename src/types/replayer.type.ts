@@ -1,12 +1,15 @@
-
 export interface ReplayerHistoryItem {
-    requestTime: number;
-    requestRaw: string
+    id?: string;
+    requestTime?: number;
+    responseTime?: number;
+    requestRaw: string;
     responseRaw: string;
-    baseUrl: string;
+    baseUrl?: string;
+    createdAt?: string;
 }
 
 export interface ReplayerSession {
+    id?: string;
     name?: string;
     history: ReplayerHistoryItem[];
     requestTmp: string;
@@ -14,8 +17,34 @@ export interface ReplayerSession {
     urlIsValid: boolean;
     selectedHistoryIndex: number | null;
 }
+
 export interface ReplayerCollection {
+    id?: string;
     name?: string;
     sessions: ReplayerSession[];
     selectedSessionIndex: number | null;
+}
+
+export interface ReplayerFullData {
+    collections: Array<{
+        id: string;
+        name: string;
+        sessions: Array<{
+            id: string;
+            name: string;
+            url: string;
+            requestTmp: string;
+            history: Array<{
+                id: string;
+                requestRaw: string;
+                responseRaw: string;
+                responseTime: number;
+                createdAt: string;
+            }>;
+            selectedHistoryIndex?: number | null;
+            urlIsValid: boolean;
+        }>;
+        selectedSessionIndex?: number | null;
+    }>;
+    selectedCollectionIndex?: number;
 }

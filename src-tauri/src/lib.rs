@@ -29,6 +29,12 @@ use crate::proxy::{
     get_intercept_settings, set_intercept_settings,
 };
 
+use crate::ares_utils::database::replayer::{
+    add_replayer_history_entry, create_replayer_collection, create_replayer_session,
+    delete_replayer_collection, delete_replayer_session, get_replayer_data,
+    rename_replayer_collection, rename_replayer_session, update_replayer_session_draft,
+};
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tracing_subscriber::fmt()
@@ -63,6 +69,15 @@ pub fn run() {
             get_fuzzer_request_by_id,
             // Replayer
             replay_request,
+            get_replayer_data,
+            create_replayer_collection,
+            rename_replayer_collection,
+            delete_replayer_collection,
+            create_replayer_session,
+            rename_replayer_session,
+            update_replayer_session_draft,
+            delete_replayer_session,
+            add_replayer_history_entry,
             // Interceptor
             get_intercept_settings,
             set_intercept_settings,

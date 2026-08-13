@@ -8,7 +8,7 @@ import { getCodeMirrorScrollTheme } from '@/components/codemirror-scroll.theme';
 import { useTheme } from '@/components/theme-provider';
 import { useAppDispatch, useAppSelector } from '@/hooks/redux';
 import { useProjectId } from '@/hooks/useProjectId';
-import { addReplayerHistory, resetReplayerReceivedSession, selectedHisotryIndex, setReaplayerURL, selectReplayerState } from '@/store/slices/replayerSlice';
+import { addReplayerHistory, fetchReplayerData, resetReplayerReceivedSession, selectedHisotryIndex, setReaplayerURL, selectReplayerState } from '@/store/slices/replayerSlice';
 import { Button } from '@/components/ui/button';
 import { invoke } from '@tauri-apps/api/core';
 import { ReplayerHistoryItem } from '@/types/replayer.type';
@@ -115,9 +115,10 @@ function Replayer() {
 
     useEffect(() => {
         if (projectId) {
+            dispatch(fetchReplayerData(projectId));
             dispatch(resetReplayerReceivedSession(projectId));
         }
-    }, [dispatch, projectId])
+    }, [dispatch, projectId]);
 
     const triggerRequest = async () => {
         if (selectedSessionIndex === null || !projectId) return; // no active session, nothing to run
