@@ -21,6 +21,7 @@ export interface ReplayerSession {
 export interface ReplayerCollection {
     id?: string;
     name?: string;
+    isExpanded?: boolean;
     sessions: ReplayerSession[];
     selectedSessionIndex: number | null;
 }
@@ -29,6 +30,7 @@ export interface ReplayerFullData {
     collections: Array<{
         id: string;
         name: string;
+        isExpanded?: boolean;
         sessions: Array<{
             id: string;
             name: string;
@@ -47,4 +49,5 @@ export interface ReplayerFullData {
         selectedSessionIndex?: number | null;
     }>;
     selectedCollectionIndex?: number;
+    expandedIds?: string[];
 }

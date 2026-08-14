@@ -32,7 +32,8 @@ use crate::proxy::{
 use crate::ares_utils::database::replayer::{
     add_replayer_history_entry, create_replayer_collection, create_replayer_session,
     delete_replayer_collection, delete_replayer_session, get_replayer_data,
-    rename_replayer_collection, rename_replayer_session, update_replayer_session_draft,
+    rename_replayer_collection, rename_replayer_session, set_replayer_active_selection,
+    set_replayer_collection_expanded, set_replayer_expanded_ids, update_replayer_session_draft,
 };
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -73,6 +74,9 @@ pub fn run() {
             create_replayer_collection,
             rename_replayer_collection,
             delete_replayer_collection,
+            set_replayer_collection_expanded,
+            set_replayer_expanded_ids,
+            set_replayer_active_selection,
             create_replayer_session,
             rename_replayer_session,
             update_replayer_session_draft,

@@ -9,6 +9,8 @@ pub struct ReplayerCollectionRow {
     pub project_id: String,
     pub name: String,
     pub sort_order: i64,
+    pub is_expanded: i64,
+    pub is_selected: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
@@ -20,6 +22,7 @@ pub struct ReplayerSessionRow {
     pub base_url: String,
     pub request_tmp: String,
     pub sort_order: i64,
+    pub is_selected: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
@@ -61,6 +64,7 @@ pub struct ReplayerSessionFull {
 pub struct ReplayerCollectionFull {
     pub id: String,
     pub name: String,
+    pub is_expanded: bool,
     pub sessions: Vec<ReplayerSessionFull>,
     pub selected_session_index: Option<usize>,
 }
@@ -70,6 +74,7 @@ pub struct ReplayerCollectionFull {
 pub struct ReplayerFullData {
     pub collections: Vec<ReplayerCollectionFull>,
     pub selected_collection_index: usize,
+    pub expanded_ids: Vec<String>,
 }
 
 #[tauri::command]
@@ -80,7 +85,7 @@ pub async fn get_replayer_data(
     let pool = db.pool().await?;
 
     let collections = sqlx::query_as::<_, ReplayerCollectionRow>(
-        "SELECT id, project_id, name, sort_order FROM replayer_collections WHERE project_id = ? ORDER BY sort_order ASC, rowid ASC",
+        "SELECT id, project_id, name, sort_order, is_expanded, is_selected FROM replayer_collections WHERE project_id = ? ORDER BY sort_order ASC, rowid ASC",
     )
     .bind(&project_id)
     .fetch_all(&pool)
@@ -93,7 +98,7 @@ pub async fn get_replayer_data(
         let sess_id = uuid::Uuid::new_v4().to_string();
 
         sqlx::query(
-            "INSERT INTO replayer_collections (id, project_id, name, sort_order) VALUES (?, ?, ?, 0)",
+            "INSERT INTO replayer_collections (id, project_id, name, sort_order, is_expanded, is_selected) VALUES (?, ?, ?, 0, 1, 1)",
         )
         .bind(&col_id)
         .bind(&project_id)
@@ -103,7 +108,7 @@ pub async fn get_replayer_data(
         .map_err(|e| e.to_string())?;
 
         sqlx::query(
-            "INSERT INTO replayer_sessions (id, collection_id, name, base_url, request_tmp, sort_order) VALUES (?, ?, ?, ?, ?, 0)",
+            "INSERT INTO replayer_sessions (id, collection_id, name, base_url, request_tmp, sort_order, is_selected) VALUES (?, ?, ?, ?, ?, 0, 1)",
         )
         .bind(&sess_id)
         .bind(&col_id)
@@ -116,8 +121,9 @@ pub async fn get_replayer_data(
 
         return Ok(ReplayerFullData {
             collections: vec![ReplayerCollectionFull {
-                id: col_id,
+                id: col_id.clone(),
                 name: "Default Collection".to_string(),
+                is_expanded: true,
                 sessions: vec![ReplayerSessionFull {
                     id: sess_id,
                     name: "Session 1".to_string(),
@@ -130,14 +136,26 @@ pub async fn get_replayer_data(
                 selected_session_index: Some(0),
             }],
             selected_collection_index: 0,
+            expanded_ids: vec![col_id],
         });
     }
 
     let mut full_collections = Vec::new();
+    let mut selected_collection_idx = 0;
+    let mut expanded_ids = Vec::new();
 
-    for col_row in collections {
+    for (col_idx, col_row) in collections.into_iter().enumerate() {
+        if col_row.is_selected == 1 {
+            selected_collection_idx = col_idx;
+        }
+
+        let is_expanded = col_row.is_expanded != 0;
+        if is_expanded {
+            expanded_ids.push(col_row.id.clone());
+        }
+
         let sessions = sqlx::query_as::<_, ReplayerSessionRow>(
-            "SELECT id, collection_id, name, base_url, request_tmp, sort_order FROM replayer_sessions WHERE collection_id = ? ORDER BY sort_order ASC, rowid ASC",
+            "SELECT id, collection_id, name, base_url, request_tmp, sort_order, is_selected FROM replayer_sessions WHERE collection_id = ? ORDER BY sort_order ASC, rowid ASC",
         )
         .bind(&col_row.id)
         .fetch_all(&pool)
@@ -145,8 +163,13 @@ pub async fn get_replayer_data(
         .map_err(|e| e.to_string())?;
 
         let mut full_sessions = Vec::new();
+        let mut selected_session_idx: Option<usize> = None;
 
-        for sess_row in sessions {
+        for (sess_idx, sess_row) in sessions.into_iter().enumerate() {
+            if sess_row.is_selected == 1 && selected_session_idx.is_none() {
+                selected_session_idx = Some(sess_idx);
+            }
+
             let histories = sqlx::query_as::<_, ReplayerHistoryRow>(
                 "SELECT id, session_id, request_raw, response_raw, response_time, created_at, sort_order FROM replayer_history WHERE session_id = ? ORDER BY sort_order ASC, rowid DESC",
             )
@@ -181,18 +204,27 @@ pub async fn get_replayer_data(
         }
 
         let has_sessions = !full_sessions.is_empty();
+        if selected_session_idx.is_none() && has_sessions {
+            selected_session_idx = Some(0);
+        }
 
         full_collections.push(ReplayerCollectionFull {
             id: col_row.id,
             name: col_row.name,
+            is_expanded,
             sessions: full_sessions,
-            selected_session_index: if has_sessions { Some(0) } else { None },
+            selected_session_index: selected_session_idx,
         });
+    }
+
+    if selected_collection_idx >= full_collections.len() && !full_collections.is_empty() {
+        selected_collection_idx = 0;
     }
 
     Ok(ReplayerFullData {
         collections: full_collections,
-        selected_collection_index: 0,
+        selected_collection_index: selected_collection_idx,
+        expanded_ids,
     })
 }
 
@@ -205,8 +237,15 @@ pub async fn create_replayer_collection(
     sort_order: i64,
 ) -> Result<(), String> {
     let pool = db.pool().await?;
+
+    // Mark other collections as not selected
+    let _ = sqlx::query("UPDATE replayer_collections SET is_selected = 0 WHERE project_id = ?")
+        .bind(&project_id)
+        .execute(&pool)
+        .await;
+
     sqlx::query(
-        "INSERT INTO replayer_collections (id, project_id, name, sort_order) VALUES (?, ?, ?, ?)",
+        "INSERT INTO replayer_collections (id, project_id, name, sort_order, is_expanded, is_selected) VALUES (?, ?, ?, ?, 1, 1)",
     )
     .bind(&collection_id)
     .bind(&project_id)
@@ -215,6 +254,7 @@ pub async fn create_replayer_collection(
     .execute(&pool)
     .await
     .map_err(|e| e.to_string())?;
+
     Ok(())
 }
 
@@ -249,6 +289,86 @@ pub async fn delete_replayer_collection(
 }
 
 #[tauri::command]
+pub async fn set_replayer_collection_expanded(
+    db: tauri::State<'_, DbState>,
+    collection_id: String,
+    is_expanded: bool,
+) -> Result<(), String> {
+    let pool = db.pool().await?;
+    sqlx::query("UPDATE replayer_collections SET is_expanded = ? WHERE id = ?")
+        .bind(if is_expanded { 1i64 } else { 0i64 })
+        .bind(&collection_id)
+        .execute(&pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn set_replayer_expanded_ids(
+    db: tauri::State<'_, DbState>,
+    project_id: String,
+    expanded_ids: Vec<String>,
+) -> Result<(), String> {
+    let pool = db.pool().await?;
+    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+
+    // Collapse all collections for this project first
+    sqlx::query("UPDATE replayer_collections SET is_expanded = 0 WHERE project_id = ?")
+        .bind(&project_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // Expand the specified collections
+    for col_id in expanded_ids {
+        sqlx::query("UPDATE replayer_collections SET is_expanded = 1 WHERE id = ? AND project_id = ?")
+            .bind(&col_id)
+            .bind(&project_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+
+    tx.commit().await.map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn set_replayer_active_selection(
+    db: tauri::State<'_, DbState>,
+    project_id: String,
+    collection_id: Option<String>,
+    session_id: Option<String>,
+) -> Result<(), String> {
+    let pool = db.pool().await?;
+    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+
+    if let Some(col_id) = &collection_id {
+        sqlx::query("UPDATE replayer_collections SET is_selected = CASE WHEN id = ? THEN 1 ELSE 0 END WHERE project_id = ?")
+            .bind(col_id)
+            .bind(&project_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+
+    if let Some(sess_id) = &session_id {
+        sqlx::query(
+            "UPDATE replayer_sessions SET is_selected = CASE WHEN id = ? THEN 1 ELSE 0 END WHERE collection_id IN (SELECT id FROM replayer_collections WHERE project_id = ?)",
+        )
+        .bind(sess_id)
+        .bind(&project_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+    }
+
+    tx.commit().await.map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn create_replayer_session(
     db: tauri::State<'_, DbState>,
     collection_id: String,
@@ -259,8 +379,24 @@ pub async fn create_replayer_session(
     sort_order: i64,
 ) -> Result<(), String> {
     let pool = db.pool().await?;
+    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+
+    // Clear is_selected on other sessions in the same collection
+    sqlx::query("UPDATE replayer_sessions SET is_selected = 0 WHERE collection_id = ?")
+        .bind(&collection_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // Ensure parent collection is expanded and selected
+    sqlx::query("UPDATE replayer_collections SET is_expanded = 1, is_selected = 1 WHERE id = ?")
+        .bind(&collection_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+
     sqlx::query(
-        "INSERT INTO replayer_sessions (id, collection_id, name, base_url, request_tmp, sort_order) VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO replayer_sessions (id, collection_id, name, base_url, request_tmp, sort_order, is_selected) VALUES (?, ?, ?, ?, ?, ?, 1)",
     )
     .bind(&session_id)
     .bind(&collection_id)
@@ -268,9 +404,11 @@ pub async fn create_replayer_session(
     .bind(&base_url)
     .bind(&request_tmp)
     .bind(sort_order)
-    .execute(&pool)
+    .execute(&mut *tx)
     .await
     .map_err(|e| e.to_string())?;
+
+    tx.commit().await.map_err(|e| e.to_string())?;
     Ok(())
 }
 

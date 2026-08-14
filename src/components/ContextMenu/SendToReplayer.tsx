@@ -42,6 +42,7 @@ export function SendToRepeaterSubmenu({ rawRequest }: { rawRequest: string }) {
         const { url, urlIsValid } = getUrlFromRawRequest(rawRequest);
         dispatch(addCollection({
             projectId,
+            isItReplayerPage: false,
             initialRequest: rawRequest ?? '',
             initialUrl: url,
             initialUrlIsValid: urlIsValid,

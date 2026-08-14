@@ -21,6 +21,7 @@ interface ReplayerState {
     collections: ReplayerCollection[];
     selectedCollectionIndex: number;
     receivedSession: number;
+    expandedIds: string[];
 }
 
 const defaultReplayerState = (): ReplayerState => ({
@@ -36,10 +37,12 @@ const defaultReplayerState = (): ReplayerState => ({
                 }
             ],
             selectedSessionIndex: 0,
+            isExpanded: true,
         },
     ],
     selectedCollectionIndex: 0,
     receivedSession: 0,
+    expandedIds: ['0'],
 });
 
 // ─── Per-project map ────────────────────────────────────────────────────────────
@@ -133,11 +136,33 @@ const replayerSlice = createSlice({
                 }
             }
         },
-        addCollection: (state, action: PayloadAction<string | { projectId: string; initialRequest?: string; initialUrl?: string; initialUrlIsValid?: boolean }>) => {
+        setExpandedIds: (state, action: PayloadAction<{ expandedIds: string[]; projectId: string }>) => {
+            const { expandedIds, projectId } = action.payload;
+            const bucket = getBucket(state, projectId);
+            bucket.expandedIds = expandedIds;
+            if (projectId) {
+                invoke('set_replayer_expanded_ids', { projectId, expandedIds }).catch(console.error);
+            }
+        },
+        toggleCollectionExpanded: (state, action: PayloadAction<{ collectionId: string; isExpanded: boolean; projectId: string }>) => {
+            const { collectionId, isExpanded, projectId } = action.payload;
+            const bucket = getBucket(state, projectId);
+            if (isExpanded) {
+                if (!bucket.expandedIds.includes(collectionId)) {
+                    bucket.expandedIds.push(collectionId);
+                }
+            } else {
+                bucket.expandedIds = bucket.expandedIds.filter(id => id !== collectionId);
+            }
+            if (projectId) {
+                invoke('set_replayer_collection_expanded', { collectionId, isExpanded }).catch(console.error);
+            }
+        },
+        addCollection: (state, action: PayloadAction<string | { projectId: string; isItReplayerPage?: boolean; initialRequest?: string; initialUrl?: string; initialUrlIsValid?: boolean }>) => {
             const payload = typeof action.payload === 'string'
-                ? { projectId: action.payload }
+                ? { projectId: action.payload, isItReplayerPage: true }
                 : action.payload;
-            const { projectId, initialRequest, initialUrl, initialUrlIsValid } = payload;
+            const { projectId, isItReplayerPage = false, initialRequest, initialUrl, initialUrlIsValid } = payload;
             const bucket = getBucket(state, projectId);
             const newColIndex = bucket.collections.length;
             const colId = crypto.randomUUID();
@@ -151,6 +176,7 @@ const replayerSlice = createSlice({
             bucket.collections.push({
                 id: colId,
                 name: colName,
+                isExpanded: true,
                 sessions: [
                     {
                         id: sessId,
@@ -165,6 +191,13 @@ const replayerSlice = createSlice({
                 selectedSessionIndex: 0,
             });
             bucket.selectedCollectionIndex = newColIndex;
+            if (!bucket.expandedIds.includes(colId)) {
+                bucket.expandedIds.push(colId);
+            }
+
+            if (!isItReplayerPage) {
+                bucket.receivedSession += 1;
+            }
 
             if (projectId) {
                 invoke('create_replayer_collection', {
@@ -189,7 +222,19 @@ const replayerSlice = createSlice({
             const bucket = getBucket(state, projectId);
             if (collectionIndex >= 0 && collectionIndex < bucket.collections.length) {
                 bucket.selectedCollectionIndex = collectionIndex;
-                bucket.collections[collectionIndex].selectedSessionIndex = sessionIndex;
+                const col = bucket.collections[collectionIndex];
+                col.selectedSessionIndex = sessionIndex;
+
+                if (projectId && col.id) {
+                    const sessId = (sessionIndex !== null && sessionIndex >= 0 && sessionIndex < col.sessions.length)
+                        ? col.sessions[sessionIndex]?.id ?? null
+                        : null;
+                    invoke('set_replayer_active_selection', {
+                        projectId,
+                        collectionId: col.id,
+                        sessionId: sessId,
+                    }).catch(console.error);
+                }
             }
         },
         addSessionToCollection: (state, action: PayloadAction<{ collectionIndex: number; isItReplayerPage: boolean; projectId: string; initialRequest?: string; initialUrl?: string; initialUrlIsValid?: boolean }>) => {
@@ -219,6 +264,10 @@ const replayerSlice = createSlice({
                 collection.selectedSessionIndex = newSessionIndex;
                 bucket.selectedCollectionIndex = targetColIndex;
 
+                if (collection.id && !bucket.expandedIds.includes(collection.id)) {
+                    bucket.expandedIds.push(collection.id);
+                }
+
                 if (collection.id) {
                     invoke('create_replayer_session', {
                         collectionId: collection.id,
@@ -241,13 +290,26 @@ const replayerSlice = createSlice({
             if (collectionIndex >= 0 && collectionIndex < bucket.collections.length) {
                 const removed = bucket.collections.splice(collectionIndex, 1)[0];
                 if (removed?.id) {
+                    bucket.expandedIds = bucket.expandedIds.filter(id => id !== removed.id);
                     invoke('delete_replayer_collection', { collectionId: removed.id }).catch(console.error);
                 }
                 if (bucket.collections.length === 0) {
-                    bucket.collections.push({ sessions: [], selectedSessionIndex: null });
+                    bucket.collections.push({ sessions: [], selectedSessionIndex: null, isExpanded: true });
                     bucket.selectedCollectionIndex = 0;
                 } else if (bucket.selectedCollectionIndex >= bucket.collections.length) {
                     bucket.selectedCollectionIndex = bucket.collections.length - 1;
+                }
+
+                const activeCol = bucket.collections[bucket.selectedCollectionIndex];
+                if (projectId && activeCol?.id) {
+                    const activeSess = (activeCol.selectedSessionIndex !== null && activeCol.selectedSessionIndex >= 0 && activeCol.selectedSessionIndex < activeCol.sessions.length)
+                        ? activeCol.sessions[activeCol.selectedSessionIndex]?.id ?? null
+                        : null;
+                    invoke('set_replayer_active_selection', {
+                        projectId,
+                        collectionId: activeCol.id,
+                        sessionId: activeSess,
+                    }).catch(console.error);
                 }
             }
         },
@@ -266,6 +328,17 @@ const replayerSlice = createSlice({
                         : null;
                 } else if (collection.selectedSessionIndex !== null && collection.selectedSessionIndex > sessionIndex) {
                     collection.selectedSessionIndex -= 1;
+                }
+
+                if (projectId && collection.id) {
+                    const activeSess = (collection.selectedSessionIndex !== null && collection.selectedSessionIndex >= 0 && collection.selectedSessionIndex < collection.sessions.length)
+                        ? collection.sessions[collection.selectedSessionIndex]?.id ?? null
+                        : null;
+                    invoke('set_replayer_active_selection', {
+                        projectId,
+                        collectionId: collection.id,
+                        sessionId: activeSess,
+                    }).catch(console.error);
                 }
             }
         },
@@ -304,6 +377,7 @@ const replayerSlice = createSlice({
                 bucket.collections = data.collections.map((c) => ({
                     id: c.id,
                     name: c.name,
+                    isExpanded: c.isExpanded,
                     selectedSessionIndex: c.selectedSessionIndex ?? (c.sessions.length > 0 ? 0 : null),
                     sessions: c.sessions.map((s) => ({
                         id: s.id,
@@ -323,7 +397,10 @@ const replayerSlice = createSlice({
                         })),
                     })),
                 }));
-                bucket.selectedCollectionIndex = data.selectedCollectionIndex ?? 0;
+                bucket.selectedCollectionIndex = (data.selectedCollectionIndex !== undefined && data.selectedCollectionIndex < data.collections.length)
+                    ? data.selectedCollectionIndex
+                    : 0;
+                bucket.expandedIds = data.expandedIds ?? data.collections.filter(c => c.isExpanded !== false).map(c => c.id);
             }
         });
     },
@@ -334,6 +411,8 @@ export const {
     setReaplayerURL,
     addReplayerHistory,
     selectedHisotryIndex,
+    setExpandedIds,
+    toggleCollectionExpanded,
     addCollection,
     selectColSess,
     addSessionToCollection,

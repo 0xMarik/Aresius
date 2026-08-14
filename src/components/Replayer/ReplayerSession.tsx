@@ -7,6 +7,7 @@ import {
     addCollection,
     addSessionToCollection,
     selectColSess,
+    setExpandedIds,
     removeCollection,
     removeSession,
     renameCollection,
@@ -38,31 +39,27 @@ interface RemoveTarget {
 const ReplayerSession = ({ collections }: { collections: ReplayerCollection[] }) => {
     const dispatch = useAppDispatch()
     const projectId = useProjectId()
-    const { selectedCollectionIndex } = useAppSelector(selectReplayerState(projectId));
+    const { selectedCollectionIndex, expandedIds: reduxExpandedIds } = useAppSelector(selectReplayerState(projectId));
     const selectedSessionIndex = collections[selectedCollectionIndex]?.selectedSessionIndex ?? null;
 
     const activeSelectedId = useMemo(() => {
         if (selectedCollectionIndex < 0 || selectedCollectionIndex >= collections.length) return null;
         const col = collections[selectedCollectionIndex];
         if (!col) return null;
+        const colId = col.id || `${selectedCollectionIndex}`;
         if (selectedSessionIndex !== null && selectedSessionIndex >= 0 && selectedSessionIndex < col.sessions.length) {
-            return `${selectedCollectionIndex}-${selectedSessionIndex}`;
+            const sess = col.sessions[selectedSessionIndex];
+            const sessId = sess?.id || `${selectedSessionIndex}`;
+            return `sess::${colId}::${sessId}`;
         }
-        return `${selectedCollectionIndex}`;
+        return colId;
     }, [selectedCollectionIndex, selectedSessionIndex, collections]);
 
     const selectedIds = useMemo(() => (activeSelectedId ? [activeSelectedId] : []), [activeSelectedId]);
 
-    const [expandedIds, setExpandedIds] = useState<string[]>(() =>
-        collections.map((_, i) => `${i}`)
-    );
-
-    React.useEffect(() => {
-        if (selectedCollectionIndex >= 0 && selectedCollectionIndex < collections.length) {
-            const colId = `${selectedCollectionIndex}`;
-            setExpandedIds((prev) => (prev.includes(colId) ? prev : [...prev, colId]));
-        }
-    }, [selectedCollectionIndex, collections.length]);
+    const expandedIds = useMemo(() => {
+        return reduxExpandedIds || [];
+    }, [reduxExpandedIds]);
 
     const [searchTerm, setSearchTerm] = useState('')
 
@@ -74,34 +71,58 @@ const ReplayerSession = ({ collections }: { collections: ReplayerCollection[] })
     const [removeDialogOpen, setRemoveDialogOpen] = useState(false);
     const [removingItem, setRemovingItem] = useState<RemoveTarget | null>(null);
 
-    const data: TreeNode<unknown>[] = collections.map((collection, colIndex) => ({
-        id: `${colIndex}`,
-        label: collection.name || `Collection ${colIndex + 1}`,
-        icon: <Folder size={16} />,
-        children: collection.sessions.map((session, sessIndex) => ({
-            id: `${colIndex}-${sessIndex}`,
-            label: session.name || `Session ${sessIndex + 1} - ${session.url}`,
-            icon: <File size={16} />
-        }))
-    }))
+    const data: TreeNode<unknown>[] = useMemo(() => collections.map((collection, colIndex) => {
+        const colId = collection.id || `${colIndex}`;
+        return {
+            id: colId,
+            label: collection.name || `Collection ${colIndex + 1}`,
+            icon: <Folder size={16} />,
+            children: collection.sessions.map((session, sessIndex) => {
+                const sessId = session.id || `${sessIndex}`;
+                return {
+                    id: `sess::${colId}::${sessId}`,
+                    label: session.name || `Session ${sessIndex + 1} - ${session.url}`,
+                    icon: <File size={16} />
+                };
+            })
+        };
+    }), [collections]);
+
+    const handleExpand = (newExpandedIds: string[]) => {
+        if (projectId) {
+            dispatch(setExpandedIds({ expandedIds: newExpandedIds, projectId }));
+        }
+    };
 
     const handleSelection = (value: string[]) => {
         if (!value || value.length === 0 || !projectId) return;
         const selectedId = value[0];
-        if (selectedId.includes('-')) {
-            const parts = selectedId.split('-');
-            const colIdx = Number(parts[0]);
-            const sessIdx = Number(parts[1]);
-            dispatch(selectColSess({ collectionIndex: colIdx, sessionIndex: sessIdx, projectId }));
+        if (selectedId.startsWith('sess::')) {
+            const [_, colPart, sessPart] = selectedId.split('::');
+            let colIdx = collections.findIndex((c, i) => c.id === colPart || `${i}` === colPart || `col_${i}` === colPart);
+            if (colIdx === -1) colIdx = Number(colPart);
+            if (colIdx >= 0 && colIdx < collections.length) {
+                const col = collections[colIdx];
+                let sessIdx = col.sessions.findIndex((s, i) => s.id === sessPart || `${i}` === sessPart);
+                if (sessIdx === -1) sessIdx = Number(sessPart);
+                dispatch(selectColSess({
+                    collectionIndex: colIdx,
+                    sessionIndex: sessIdx >= 0 && sessIdx < col.sessions.length ? sessIdx : (col.sessions.length > 0 ? 0 : null),
+                    projectId
+                }));
+            }
         } else {
-            const colIdx = Number(selectedId);
-            const col = collections[colIdx];
-            const sessIdx = col?.selectedSessionIndex !== null && col?.selectedSessionIndex !== undefined
-                ? col.selectedSessionIndex
-                : (col?.sessions.length ? 0 : null);
-            dispatch(selectColSess({ collectionIndex: colIdx, sessionIndex: sessIdx, projectId }));
+            let colIdx = collections.findIndex((c, i) => c.id === selectedId || `${i}` === selectedId || `col_${i}` === selectedId);
+            if (colIdx === -1) colIdx = Number(selectedId);
+            if (colIdx >= 0 && colIdx < collections.length) {
+                const col = collections[colIdx];
+                const sessIdx = col?.selectedSessionIndex !== null && col?.selectedSessionIndex !== undefined
+                    ? col.selectedSessionIndex
+                    : (col?.sessions.length ? 0 : null);
+                dispatch(selectColSess({ collectionIndex: colIdx, sessionIndex: sessIdx, projectId }));
+            }
         }
-    }
+    };
 
     const handleConfirmRemove = () => {
         if (!removingItem || !projectId) return;
@@ -115,19 +136,34 @@ const ReplayerSession = ({ collections }: { collections: ReplayerCollection[] })
     };
 
     const renderNode = (node: TreeNode<unknown>, props: TreeNodeRenderProps<unknown>) => {
-        const isCollection = !node.id.includes('-');
-        const parts = node.id.split('-');
-        const colIndex = Number(parts[0]);
-        const sessIndex = parts.length > 1 ? Number(parts[1]) : undefined;
+        const isSession = node.id.startsWith('sess::');
+        const isCollection = !isSession;
+
+        let colIndex = -1;
+        let sessIndex: number | undefined = undefined;
+
+        if (isSession) {
+            const [_, colPart, sessPart] = node.id.split('::');
+            colIndex = collections.findIndex((c, i) => c.id === colPart || `${i}` === colPart || `col_${i}` === colPart);
+            if (colIndex === -1) colIndex = Number(colPart);
+            if (colIndex >= 0 && colIndex < collections.length) {
+                sessIndex = collections[colIndex].sessions.findIndex((s, i) => s.id === sessPart || `${i}` === sessPart);
+                if (sessIndex === -1) sessIndex = Number(sessPart);
+            }
+        } else {
+            const colPart = node.id;
+            colIndex = collections.findIndex((c, i) => c.id === colPart || `${i}` === colPart || `col_${i}` === colPart);
+            if (colIndex === -1) colIndex = Number(colPart);
+        }
 
         const isEditing = editingNodeId === node.id;
 
         const handleSaveInline = () => {
             if (!editingNodeId || !projectId) return;
             const trimmed = editingText.trim();
-            if (isCollection) {
+            if (isCollection && colIndex >= 0) {
                 dispatch(renameCollection({ collectionIndex: colIndex, name: trimmed, projectId }));
-            } else if (sessIndex !== undefined) {
+            } else if (sessIndex !== undefined && colIndex >= 0) {
                 dispatch(renameSession({ collectionIndex: colIndex, sessionIndex: sessIndex, name: trimmed, projectId }));
             }
             setEditingNodeId(null);
@@ -274,7 +310,7 @@ const ReplayerSession = ({ collections }: { collections: ReplayerCollection[] })
                     selectedIds={selectedIds}
                     onSelect={handleSelection}
                     expandedIds={expandedIds}
-                    onExpand={setExpandedIds}
+                    onExpand={handleExpand}
                     showIcons={false}
                     virtualizeEnabled={true}
                 />
