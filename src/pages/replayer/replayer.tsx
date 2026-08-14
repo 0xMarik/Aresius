@@ -25,6 +25,7 @@ function ReplayerContent() {
         selectedCollectionId,
         createSession,
         createCollection,
+        isLoaded,
     } = useReplayerTree();
 
     const {
@@ -45,6 +46,10 @@ function ReplayerContent() {
             dispatch(resetReplayerReceivedSession(projectId));
         }
     }, [dispatch, projectId]);
+
+    if (!isLoaded) {
+        return null;
+    }
 
     const totalSessions = collections.reduce((acc, c) => acc + c.sessions.length, 0);
     const hasNoSessionsAtAll = totalSessions === 0;

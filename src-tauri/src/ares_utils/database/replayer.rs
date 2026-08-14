@@ -76,6 +76,30 @@ pub struct ReplayerCollectionFull {
     pub selected_session_index: Option<usize>,
 }
 
+#[derive(Debug, Clone, FromRow)]
+pub struct ReplayerFullJoinedRow {
+    pub col_id: String,
+    pub col_name: String,
+    pub col_is_expanded: i64,
+    pub col_is_selected: i64,
+
+    pub sess_id: Option<String>,
+    pub sess_name: Option<String>,
+    pub sess_base_url: Option<String>,
+    pub sess_request_tmp: Option<String>,
+    pub sess_is_selected: Option<i64>,
+    pub sess_selected_history_index: Option<i64>,
+
+    pub hist_id: Option<String>,
+    pub hist_request_raw: Option<String>,
+    pub hist_response_raw: Option<String>,
+    pub hist_response_time: Option<i64>,
+    pub hist_created_at: Option<String>,
+    pub hist_status: Option<String>,
+    pub hist_error_message: Option<String>,
+    pub hist_base_url: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReplayerFullData {
@@ -91,15 +115,43 @@ pub async fn get_replayer_data(
 ) -> Result<ReplayerFullData, String> {
     let pool = db.pool().await?;
 
-    let collections = sqlx::query_as::<_, ReplayerCollectionRow>(
-        "SELECT id, project_id, name, sort_order, is_expanded, is_selected FROM replayer_collections WHERE project_id = ? ORDER BY sort_order ASC, rowid ASC",
+    // Single unified SQL query joining collections, sessions, and history
+    let rows = sqlx::query_as::<_, ReplayerFullJoinedRow>(
+        r#"
+        SELECT 
+            c.id AS col_id,
+            c.name AS col_name,
+            c.is_expanded AS col_is_expanded,
+            c.is_selected AS col_is_selected,
+            
+            s.id AS sess_id,
+            s.name AS sess_name,
+            s.base_url AS sess_base_url,
+            s.request_tmp AS sess_request_tmp,
+            s.is_selected AS sess_is_selected,
+            s.selected_history_index AS sess_selected_history_index,
+            
+            h.id AS hist_id,
+            h.request_raw AS hist_request_raw,
+            h.response_raw AS hist_response_raw,
+            h.response_time AS hist_response_time,
+            h.created_at AS hist_created_at,
+            h.status AS hist_status,
+            h.error_message AS hist_error_message,
+            h.base_url AS hist_base_url
+        FROM replayer_collections c
+        LEFT JOIN replayer_sessions s ON s.collection_id = c.id
+        LEFT JOIN replayer_history h ON h.session_id = s.id
+        WHERE c.project_id = ?
+        ORDER BY c.sort_order ASC, c.rowid ASC, s.sort_order ASC, s.rowid ASC, h.sort_order ASC, h.rowid DESC
+        "#,
     )
     .bind(&project_id)
     .fetch_all(&pool)
     .await
     .map_err(|e| e.to_string())?;
 
-    if collections.is_empty() {
+    if rows.is_empty() {
         // Initialize default collection + session in SQLite
         let col_id = uuid::Uuid::new_v4().to_string();
         let sess_id = uuid::Uuid::new_v4().to_string();
@@ -147,111 +199,114 @@ pub async fn get_replayer_data(
         });
     }
 
-    let mut full_collections = Vec::new();
+    let mut full_collections: Vec<ReplayerCollectionFull> = Vec::new();
     let mut selected_collection_idx = 0;
     let mut expanded_ids = Vec::new();
 
-    for (col_idx, col_row) in collections.into_iter().enumerate() {
-        if col_row.is_selected == 1 {
-            selected_collection_idx = col_idx;
-        }
+    let mut col_index_map: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut sess_index_map: std::collections::HashMap<String, (usize, usize)> = std::collections::HashMap::new();
 
-        let is_expanded = col_row.is_expanded != 0;
-        if is_expanded {
-            expanded_ids.push(col_row.id.clone());
-        }
-
-        let sessions = sqlx::query_as::<_, ReplayerSessionRow>(
-            "SELECT id, collection_id, name, base_url, request_tmp, sort_order, is_selected, selected_history_index FROM replayer_sessions WHERE collection_id = ? ORDER BY sort_order ASC, rowid ASC",
-        )
-        .bind(&col_row.id)
-        .fetch_all(&pool)
-        .await
-        .map_err(|e| e.to_string())?;
-
-        let mut full_sessions = Vec::new();
-        let mut selected_session_idx: Option<usize> = None;
-
-        for (sess_idx, sess_row) in sessions.into_iter().enumerate() {
-            if sess_row.is_selected == 1 && selected_session_idx.is_none() {
-                selected_session_idx = Some(sess_idx);
+    for row in rows {
+        let col_idx = match col_index_map.get(&row.col_id) {
+            Some(&idx) => idx,
+            None => {
+                let idx = full_collections.len();
+                if row.col_is_selected == 1 {
+                    selected_collection_idx = idx;
+                }
+                if row.col_is_expanded != 0 {
+                    expanded_ids.push(row.col_id.clone());
+                }
+                full_collections.push(ReplayerCollectionFull {
+                    id: row.col_id.clone(),
+                    name: row.col_name,
+                    is_expanded: row.col_is_expanded != 0,
+                    sessions: Vec::new(),
+                    selected_session_index: None,
+                });
+                col_index_map.insert(row.col_id.clone(), idx);
+                idx
             }
+        };
 
-            let histories = sqlx::query_as::<_, ReplayerHistoryRow>(
-                "SELECT id, session_id, request_raw, response_raw, response_time, created_at, sort_order, status, error_message, base_url FROM replayer_history WHERE session_id = ? ORDER BY sort_order ASC, rowid DESC",
-            )
-            .bind(&sess_row.id)
-            .fetch_all(&pool)
-            .await
-            .map_err(|e| e.to_string())?;
+        if let Some(sess_id) = row.sess_id {
+            let (c_idx, s_idx) = match sess_index_map.get(&sess_id) {
+                Some(&(c_i, s_i)) => (c_i, s_i),
+                None => {
+                    let s_i = full_collections[col_idx].sessions.len();
+                    if row.sess_is_selected == Some(1) && full_collections[col_idx].selected_session_index.is_none() {
+                        full_collections[col_idx].selected_session_index = Some(s_i);
+                    }
+                    let base_url = row.sess_base_url.unwrap_or_default();
+                    let url_is_valid = !base_url.is_empty() && base_url != "https://";
 
-            let full_histories: Vec<ReplayerHistoryItemFull> = histories
-                .into_iter()
-                .map(|h| {
-                    let mut status = h.status;
-                    if status.is_empty() {
-                        if h.error_message.is_some() {
-                            status = "Error".to_string();
-                        } else if let Some(first_line) = h.response_raw.lines().next() {
-                            if let Some(code) = first_line.split_whitespace().nth(1) {
-                                if code.chars().all(|c| c.is_ascii_digit()) {
-                                    status = code.to_string();
-                                }
+                    full_collections[col_idx].sessions.push(ReplayerSessionFull {
+                        id: sess_id.clone(),
+                        name: row.sess_name.unwrap_or_else(|| "Session".to_string()),
+                        url: base_url,
+                        request_tmp: row.sess_request_tmp.unwrap_or_default(),
+                        history: Vec::new(),
+                        selected_history_index: None,
+                        url_is_valid,
+                    });
+                    sess_index_map.insert(sess_id.clone(), (col_idx, s_i));
+                    (col_idx, s_i)
+                }
+            };
+
+            if let Some(hist_id) = row.hist_id {
+                let mut status = row.hist_status.unwrap_or_default();
+                let resp_raw = row.hist_response_raw.unwrap_or_default();
+                let err_msg = row.hist_error_message;
+
+                if status.is_empty() {
+                    if err_msg.is_some() {
+                        status = "Error".to_string();
+                    } else if let Some(first_line) = resp_raw.lines().next() {
+                        if let Some(code) = first_line.split_whitespace().nth(1) {
+                            if code.chars().all(|c| c.is_ascii_digit()) {
+                                status = code.to_string();
                             }
                         }
                     }
-                    let base_url = h.base_url.or_else(|| {
-                        if sess_row.base_url.is_empty() {
-                            None
-                        } else {
-                            Some(sess_row.base_url.clone())
-                        }
-                    });
+                }
 
-                    ReplayerHistoryItemFull {
-                        id: h.id,
-                        request_raw: h.request_raw,
-                        response_raw: h.response_raw,
-                        response_time: h.response_time,
-                        created_at: h.created_at,
-                        status,
-                        error_message: h.error_message,
-                        base_url,
+                let sess_url = &full_collections[c_idx].sessions[s_idx].url;
+                let base_url = row.hist_base_url.or_else(|| {
+                    if sess_url.is_empty() {
+                        None
+                    } else {
+                        Some(sess_url.clone())
                     }
-                })
-                .collect();
+                });
 
-            let has_history = !full_histories.is_empty();
-            let url_is_valid = !sess_row.base_url.is_empty() && sess_row.base_url != "https://";
-            let selected_hist_idx = if has_history {
-                sess_row.selected_history_index
-                    .map(|i| i as usize)
-                    .filter(|&i| i < full_histories.len())
-                    .or(Some(0))
-            } else {
-                None
-            };
+                full_collections[c_idx].sessions[s_idx].history.push(ReplayerHistoryItemFull {
+                    id: hist_id,
+                    request_raw: row.hist_request_raw.unwrap_or_default(),
+                    response_raw: resp_raw,
+                    response_time: row.hist_response_time.unwrap_or(0),
+                    created_at: row.hist_created_at.unwrap_or_default(),
+                    status,
+                    error_message: err_msg,
+                    base_url,
+                });
+            }
 
-            full_sessions.push(ReplayerSessionFull {
-                id: sess_row.id,
-                name: sess_row.name,
-                url: sess_row.base_url,
-                request_tmp: sess_row.request_tmp,
-                history: full_histories,
-                selected_history_index: selected_hist_idx,
-                url_is_valid,
-            });
+            if let Some(hist_idx) = row.sess_selected_history_index {
+                let hist_len = full_collections[c_idx].sessions[s_idx].history.len();
+                if (hist_idx as usize) < hist_len {
+                    full_collections[c_idx].sessions[s_idx].selected_history_index = Some(hist_idx as usize);
+                }
+            }
         }
+    }
 
-
-
-        full_collections.push(ReplayerCollectionFull {
-            id: col_row.id,
-            name: col_row.name,
-            is_expanded,
-            sessions: full_sessions,
-            selected_session_index: selected_session_idx,
-        });
+    for col in &mut full_collections {
+        for sess in &mut col.sessions {
+            if sess.selected_history_index.is_none() && !sess.history.is_empty() {
+                sess.selected_history_index = Some(0);
+            }
+        }
     }
 
     if selected_collection_idx >= full_collections.len() && !full_collections.is_empty() {
