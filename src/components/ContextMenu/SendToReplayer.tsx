@@ -1,9 +1,18 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { ContextMenuItem, ContextMenuSeparator, ContextMenuSub, ContextMenuSubContent, ContextMenuSubTrigger } from '../ui/context-menu';
 import { FolderPlus, Layers, Repeat } from 'lucide-react';
-import { useAppDispatch } from '@/hooks/redux';
+import { useAppDispatch, useAppSelector } from '@/hooks/redux';
 import { useProjectId } from '@/hooks/useProjectId';
-import { incrementReplayerReceivedSession } from '@/store/slices/replayerSlice';
+import {
+    incrementReplayerReceivedSession,
+    selectReplayerProjectState,
+    createSessionSuccess,
+    createCollectionSuccess,
+    setReplayerLoadedData,
+    setReplayerLoading,
+    ReplayerCollectionMeta,
+    ReplayerSessionCacheItem,
+} from '@/store/slices/replayerSlice';
 import { parseRequest } from '@/components/utils';
 import { invoke } from '@tauri-apps/api/core';
 import { ReplayerFullData } from '@/types/replayer.type';
@@ -25,38 +34,123 @@ function getUrlFromRawRequest(rawRequest?: string): { url: string; urlIsValid: b
 export function SendToRepeaterSubmenu({ rawRequest }: { rawRequest: string }) {
     const dispatch = useAppDispatch();
     const projectId = useProjectId();
-    const [collections, setCollections] = useState<Array<{ id: string; name: string; sessionCount: number }>>([]);
+    const projectReplayer = useAppSelector(selectReplayerProjectState(projectId));
+    const { collections, isLoaded, isLoading } = projectReplayer;
 
     useEffect(() => {
-        if (!projectId) return;
+        if (!projectId || isLoaded || isLoading) return;
+        dispatch(setReplayerLoading({ projectId, isLoading: true }));
+
         invoke<ReplayerFullData>('get_replayer_data', { projectId })
             .then((data) => {
-                if (data?.collections) {
-                    setCollections(data.collections.map(c => ({
+                if (!data?.collections) {
+                    dispatch(setReplayerLoadedData({
+                        projectId,
+                        collections: [],
+                        selectedCollectionId: null,
+                        selectedSessionId: null,
+                        expandedIds: [],
+                        sessionCache: {},
+                    }));
+                    return;
+                }
+
+                const cache: Record<string, ReplayerSessionCacheItem> = {};
+                const treeCols: ReplayerCollectionMeta[] = [];
+
+                let activeColId: string | null = null;
+                let activeSessId: string | null = null;
+
+                data.collections.forEach((c, cIdx) => {
+                    const isColSelected = data.selectedCollectionIndex === cIdx;
+                    if (isColSelected) activeColId = c.id;
+
+                    const sessMetas = c.sessions.map((s, sIdx) => {
+                        if (isColSelected && c.selectedSessionIndex === sIdx) activeSessId = s.id;
+                        cache[s.id] = {
+                            requestTmp: s.requestTmp,
+                            url: s.url,
+                            urlIsValid: s.urlIsValid,
+                            history: s.history.map((h) => ({
+                                id: h.id,
+                                requestRaw: h.requestRaw,
+                                responseRaw: h.responseRaw,
+                                responseTime: h.responseTime,
+                                requestTime: h.responseTime,
+                                createdAt: h.createdAt,
+                                status: h.status,
+                                errorMessage: h.errorMessage,
+                                baseUrl: h.baseUrl || s.url,
+                            })),
+                            selectedHistoryIndex: s.selectedHistoryIndex !== undefined && s.selectedHistoryIndex !== null
+                                ? s.selectedHistoryIndex
+                                : (s.history.length > 0 ? 0 : null),
+                        };
+                        return {
+                            id: s.id,
+                            name: s.name,
+                            url: s.url,
+                            urlIsValid: s.urlIsValid,
+                        };
+                    });
+
+                    treeCols.push({
                         id: c.id,
                         name: c.name,
-                        sessionCount: c.sessions.length,
-                    })));
-                }
+                        isExpanded: c.isExpanded !== false,
+                        sessions: sessMetas,
+                    });
+                });
+
+                if (!activeColId && treeCols.length > 0) activeColId = treeCols[0].id;
+                const activeSessExists = activeSessId && treeCols.some(c => c.sessions.some(s => s.id === activeSessId));
+
+                dispatch(setReplayerLoadedData({
+                    projectId,
+                    collections: treeCols,
+                    selectedCollectionId: activeColId,
+                    selectedSessionId: activeSessExists ? activeSessId : null,
+                    expandedIds: data.expandedIds || treeCols.filter(c => c.isExpanded).map(c => c.id),
+                    sessionCache: cache,
+                }));
             })
-            .catch(console.error);
-    }, [projectId]);
+            .catch((err) => {
+                console.error('Failed to load replayer data for submenu:', err);
+                dispatch(setReplayerLoading({ projectId, isLoading: false }));
+            });
+    }, [dispatch, isLoaded, isLoading, projectId]);
 
     const sendToExisting = async (collectionId: string, sessionCount: number) => {
         if (!projectId) return;
-        const { url } = getUrlFromRawRequest(rawRequest);
+        const { url, urlIsValid } = getUrlFromRawRequest(rawRequest);
         const newSessId = crypto.randomUUID();
         const name = `Session ${sessionCount + 1}`;
+        const requestTmp = rawRequest || 'GET / HTTP/1.1\r\n\r\n';
+
+        dispatch(createSessionSuccess({
+            projectId,
+            collectionId,
+            session: { id: newSessId, name, url, urlIsValid },
+            cacheItem: {
+                requestTmp,
+                url,
+                urlIsValid,
+                history: [],
+                selectedHistoryIndex: null,
+            },
+        }));
+
+        dispatch(incrementReplayerReceivedSession({ projectId }));
+
         try {
             await invoke('create_replayer_session', {
                 collectionId,
                 sessionId: newSessId,
                 name,
                 baseUrl: url,
-                requestTmp: rawRequest || 'GET / HTTP/1.1\r\n\r\n',
+                requestTmp,
                 sortOrder: sessionCount,
             });
-            dispatch(incrementReplayerReceivedSession({ projectId }));
         } catch (err) {
             console.error('Failed to send session to replayer:', err);
         }
@@ -64,10 +158,31 @@ export function SendToRepeaterSubmenu({ rawRequest }: { rawRequest: string }) {
 
     const sendToNew = async () => {
         if (!projectId) return;
-        const { url } = getUrlFromRawRequest(rawRequest);
+        const { url, urlIsValid } = getUrlFromRawRequest(rawRequest);
         const newColId = crypto.randomUUID();
         const newSessId = crypto.randomUUID();
         const colName = `Collection ${collections.length + 1}`;
+        const requestTmp = rawRequest || 'GET / HTTP/1.1\r\n\r\n';
+
+        dispatch(createCollectionSuccess({
+            projectId,
+            collection: { id: newColId, name: colName, isExpanded: true, sessions: [] },
+        }));
+
+        dispatch(createSessionSuccess({
+            projectId,
+            collectionId: newColId,
+            session: { id: newSessId, name: 'Session 1', url, urlIsValid },
+            cacheItem: {
+                requestTmp,
+                url,
+                urlIsValid,
+                history: [],
+                selectedHistoryIndex: null,
+            },
+        }));
+
+        dispatch(incrementReplayerReceivedSession({ projectId }));
 
         try {
             await invoke('create_replayer_collection', {
@@ -82,11 +197,9 @@ export function SendToRepeaterSubmenu({ rawRequest }: { rawRequest: string }) {
                 sessionId: newSessId,
                 name: 'Session 1',
                 baseUrl: url,
-                requestTmp: rawRequest || 'GET / HTTP/1.1\r\n\r\n',
+                requestTmp,
                 sortOrder: 0,
             });
-
-            dispatch(incrementReplayerReceivedSession({ projectId }));
         } catch (err) {
             console.error('Failed to create collection and send to replayer:', err);
         }
@@ -95,12 +208,12 @@ export function SendToRepeaterSubmenu({ rawRequest }: { rawRequest: string }) {
     return (
         <>
             {collections.map((col) => (
-                <ContextMenuItem key={col.id} onSelect={() => sendToExisting(col.id, col.sessionCount)}>
+                <ContextMenuItem key={col.id} onSelect={() => sendToExisting(col.id, col.sessions.length)}>
                     <Layers className="mr-2 h-3.5 w-3.5" />
                     {col.name}
-                    {col.sessionCount > 0 && (
+                    {col.sessions.length > 0 && (
                         <span className="ml-auto text-[11px] text-muted-foreground">
-                            {col.sessionCount} session{col.sessionCount !== 1 ? 's' : ''}
+                            {col.sessions.length} session{col.sessions.length !== 1 ? 's' : ''}
                         </span>
                     )}
                 </ContextMenuItem>

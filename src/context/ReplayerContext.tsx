@@ -1,32 +1,37 @@
-import React, { createContext, useContext, useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useCallback, useMemo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useProjectId } from '@/hooks/useProjectId';
+import { useAppDispatch, useAppSelector } from '@/hooks/redux';
 import { parseResponse } from '@/components/utils';
 import { stripPath } from '@/components/ValidateUrlInput';
 import { ReplayerHistoryItem, ReplayerFullData } from '@/types/replayer.type';
+import {
+    ReplayerCollectionMeta,
+    ReplayerSessionMeta,
+    ReplayerSessionCacheItem,
+    ActiveSessionDraft,
+    selectReplayerProjectState,
+    setReplayerLoading,
+    setReplayerLoadedData,
+    setSelection,
+    setSelectedSessionId,
+    setExpandedIds,
+    toggleCollectionExpand,
+    setSessionDraftContent,
+    setSessionDraftUrl,
+    setSessionSelectedHistoryIndex,
+    addSessionHistoryItem,
+    setPendingSession,
+    clearPendingSession,
+    createCollectionSuccess,
+    createSessionSuccess,
+    renameCollectionSuccess,
+    renameSessionSuccess,
+    deleteCollectionSuccess,
+    deleteSessionSuccess,
+} from '@/store/slices/replayerSlice';
 
-export interface ReplayerSessionMeta {
-    id: string;
-    name: string;
-    url: string;
-    urlIsValid: boolean;
-}
-
-export interface ReplayerCollectionMeta {
-    id: string;
-    name: string;
-    isExpanded: boolean;
-    sessions: ReplayerSessionMeta[];
-}
-
-export interface ActiveSessionDraft {
-    sessionId: string | null;
-    collectionId: string | null;
-    name: string;
-    url: string;
-    urlIsValid: boolean;
-    requestTmp: string;
-}
+export type { ReplayerCollectionMeta, ReplayerSessionMeta, ActiveSessionDraft };
 
 // ─── 1. Tree Context (Tree hierarchy & mutations only) ────────────────────────
 
@@ -90,278 +95,175 @@ export const useReplayerEditor = () => {
     return context;
 };
 
-interface SessionDataCache {
-    [sessionId: string]: {
-        requestTmp: string;
-        url: string;
-        urlIsValid: boolean;
-        history: ReplayerHistoryItem[];
-        selectedHistoryIndex: number | null;
-    };
-}
-
 export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const projectId = useProjectId();
+    const dispatch = useAppDispatch();
 
-    // 1. Tree Metadata State
-    const [collections, setCollections] = useState<ReplayerCollectionMeta[]>([]);
-    const [expandedIds, setExpandedIds] = useState<string[]>([]);
-    const [selectedCollectionId, setSelectedCollectionId] = useState<string | null>(null);
-    const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
-    const [isLoaded, setIsLoaded] = useState<boolean>(false);
+    const projectReplayer = useAppSelector(selectReplayerProjectState(projectId));
+    const {
+        collections,
+        expandedIds,
+        selectedCollectionId,
+        selectedSessionId,
+        sessionCache,
+        pendingSessions,
+        isLoaded,
+        isLoading,
+    } = projectReplayer;
 
-    const selectedSessionIdRef = useRef<string | null>(null);
-    selectedSessionIdRef.current = selectedSessionId;
-
-    // 2. Editor & History State
-    const [activeDraft, setActiveDraft] = useState<ActiveSessionDraft | null>(null);
-    const [history, setHistory] = useState<ReplayerHistoryItem[]>([]);
-    const [selectedHistoryIndex, setSelectedHistoryIndex] = useState<number | null>(null);
-
-    // Track active/pending request IDs per session: { [sessionId: string]: requestId }
-    const [pendingSessions, setPendingSessions] = useState<Record<string, string>>({});
     const activeRequestsRef = useRef<Map<string, string>>(new Map());
-
-    const sessionCacheRef = useRef<SessionDataCache>({});
     const debounceDraftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     // Dynamic responseLoading scoped strictly to the currently selected session
     const responseLoading = Boolean(selectedSessionId && pendingSessions[selectedSessionId]);
 
-    // Helper to record history item, update cache, and persist to SQLite
-    const recordHistoryItem = useCallback((sessId: string, item: ReplayerHistoryItem) => {
-        if (sessionCacheRef.current[sessId]) {
-            sessionCacheRef.current[sessId].history = [item, ...sessionCacheRef.current[sessId].history];
-            sessionCacheRef.current[sessId].selectedHistoryIndex = 0;
-            sessionCacheRef.current[sessId].requestTmp = item.requestRaw;
-            if (item.baseUrl) {
-                sessionCacheRef.current[sessId].url = item.baseUrl;
-            }
-        }
+    // Active session cache & draft derived directly from Redux state
+    const activeCache = selectedSessionId ? sessionCache[selectedSessionId] : null;
+    const activeCol = collections.find(c => c.sessions.some(s => s.id === selectedSessionId));
+    const activeSessMeta = activeCol?.sessions.find(s => s.id === selectedSessionId);
 
-        // Only update active React state if the user is currently viewing this session
-        if (selectedSessionIdRef.current === sessId) {
-            setHistory(prev => [item, ...prev]);
-            setSelectedHistoryIndex(0);
-        }
+    const activeDraft: ActiveSessionDraft | null = useMemo(() => {
+        if (!selectedSessionId || !activeCache) return null;
+        return {
+            sessionId: selectedSessionId,
+            collectionId: activeCol?.id || null,
+            name: activeSessMeta?.name || 'Session',
+            url: activeCache.url,
+            urlIsValid: activeCache.urlIsValid,
+            requestTmp: activeCache.requestTmp || 'GET / HTTP/1.1\r\n\r\n',
+        };
+    }, [selectedSessionId, activeCache, activeCol, activeSessMeta]);
 
-        invoke('add_replayer_history_entry', {
-            sessionId: sessId,
-            historyId: item.id,
-            requestRaw: item.requestRaw,
-            responseRaw: item.responseRaw,
-            responseTime: item.responseTime,
-            createdAt: item.createdAt,
-            status: item.status,
-            errorMessage: item.errorMessage,
-            baseUrl: item.baseUrl || null,
-        }).catch(console.error);
+    const history = useMemo(() => activeCache?.history || [], [activeCache?.history]);
+    const selectedHistoryIndex = activeCache?.selectedHistoryIndex ?? null;
 
-        invoke('update_replayer_session_draft', {
-            sessionId: sessId,
-            requestTmp: item.requestRaw,
-            baseUrl: item.baseUrl || null,
-            selectedHistoryIndex: 0,
-        }).catch(console.error);
-    }, []);
+    // Load data from SQLite once per project (if not loaded and not loading)
+    useEffect(() => {
+        if (!projectId || isLoaded || isLoading) return;
 
-    // Load full data from SQLite on project change
-    const loadData = useCallback(async () => {
-        if (!projectId) return;
+        dispatch(setReplayerLoading({ projectId, isLoading: true }));
 
-        try {
-            const data = await invoke<ReplayerFullData>('get_replayer_data', { projectId });
-            if (!data || !data.collections || data.collections.length === 0) {
-                setIsLoaded(true);
-                return;
-            }
+        invoke<ReplayerFullData>('get_replayer_data', { projectId })
+            .then((data) => {
+                if (!data || !data.collections || data.collections.length === 0) {
+                    dispatch(setReplayerLoadedData({
+                        projectId,
+                        collections: [],
+                        selectedCollectionId: null,
+                        selectedSessionId: null,
+                        expandedIds: [],
+                        sessionCache: {},
+                    }));
+                    return;
+                }
 
-            const cache: SessionDataCache = {};
-            const treeCols: ReplayerCollectionMeta[] = [];
+                const cache: Record<string, ReplayerSessionCacheItem> = {};
+                const treeCols: ReplayerCollectionMeta[] = [];
 
-            let activeColId: string | null = null;
-            let activeSessId: string | null = null;
+                let activeColId: string | null = null;
+                let activeSessId: string | null = null;
 
-            data.collections.forEach((c, cIdx) => {
-                const isColSelected = data.selectedCollectionIndex === cIdx;
-                if (isColSelected) activeColId = c.id;
+                data.collections.forEach((c, cIdx) => {
+                    const isColSelected = data.selectedCollectionIndex === cIdx;
+                    if (isColSelected) activeColId = c.id;
 
-                const sessMetas: ReplayerSessionMeta[] = [];
+                    const sessMetas: ReplayerSessionMeta[] = [];
 
-                c.sessions.forEach((s, sIdx) => {
-                    const isSessSelected = isColSelected && c.selectedSessionIndex === sIdx;
-                    if (isSessSelected) activeSessId = s.id;
+                    c.sessions.forEach((s, sIdx) => {
+                        const isSessSelected = isColSelected && c.selectedSessionIndex === sIdx;
+                        if (isSessSelected) activeSessId = s.id;
 
-                    sessMetas.push({
-                        id: s.id,
-                        name: s.name,
-                        url: s.url,
-                        urlIsValid: s.urlIsValid,
+                        sessMetas.push({
+                            id: s.id,
+                            name: s.name,
+                            url: s.url,
+                            urlIsValid: s.urlIsValid,
+                        });
+
+                        cache[s.id] = {
+                            requestTmp: s.requestTmp,
+                            url: s.url,
+                            urlIsValid: s.urlIsValid,
+                            history: s.history.map((h) => ({
+                                id: h.id,
+                                requestRaw: h.requestRaw,
+                                responseRaw: h.responseRaw,
+                                responseTime: h.responseTime,
+                                requestTime: h.responseTime,
+                                createdAt: h.createdAt,
+                                status: h.status,
+                                errorMessage: h.errorMessage,
+                                baseUrl: h.baseUrl || s.url,
+                            })),
+                            selectedHistoryIndex: s.selectedHistoryIndex !== undefined && s.selectedHistoryIndex !== null
+                                ? s.selectedHistoryIndex
+                                : (s.history.length > 0 ? 0 : null),
+                        };
                     });
 
-                    cache[s.id] = {
-                        requestTmp: s.requestTmp,
-                        url: s.url,
-                        urlIsValid: s.urlIsValid,
-                        history: s.history.map((h) => ({
-                            id: h.id,
-                            requestRaw: h.requestRaw,
-                            responseRaw: h.responseRaw,
-                            responseTime: h.responseTime,
-                            requestTime: h.responseTime,
-                            createdAt: h.createdAt,
-                            status: h.status,
-                            errorMessage: h.errorMessage,
-                            baseUrl: h.baseUrl || s.url,
-                        })),
-                        selectedHistoryIndex: s.selectedHistoryIndex !== undefined && s.selectedHistoryIndex !== null
-                            ? s.selectedHistoryIndex
-                            : (s.history.length > 0 ? 0 : null),
-                    };
+                    treeCols.push({
+                        id: c.id,
+                        name: c.name,
+                        isExpanded: c.isExpanded !== false,
+                        sessions: sessMetas,
+                    });
                 });
 
-                treeCols.push({
-                    id: c.id,
-                    name: c.name,
-                    isExpanded: c.isExpanded !== false,
-                    sessions: sessMetas,
-                });
+                if (!activeColId && treeCols.length > 0) {
+                    activeColId = treeCols[0].id;
+                }
+
+                const activeSessExists = activeSessId && treeCols.some(c => c.sessions.some(s => s.id === activeSessId));
+                const finalActiveSessId = activeSessExists ? activeSessId : null;
+
+                dispatch(setReplayerLoadedData({
+                    projectId,
+                    collections: treeCols,
+                    selectedCollectionId: activeColId,
+                    selectedSessionId: finalActiveSessId,
+                    expandedIds: data.expandedIds || treeCols.filter(c => c.isExpanded).map(c => c.id),
+                    sessionCache: cache,
+                }));
+            })
+            .catch((err) => {
+                console.error('Failed to load replayer data from SQLite:', err);
+                dispatch(setReplayerLoading({ projectId, isLoading: false }));
             });
-
-            sessionCacheRef.current = cache;
-            setCollections(treeCols);
-            setExpandedIds(data.expandedIds || treeCols.filter(c => c.isExpanded).map(c => c.id));
-
-            if (!activeColId && treeCols.length > 0) {
-                activeColId = treeCols[0].id;
-            }
-            if (activeColId) {
-                setSelectedCollectionId(activeColId);
-            }
-
-            // Only select session if it genuinely was selected in SQLite
-            const activeSessExists = activeSessId && treeCols.some(c => c.sessions.some(s => s.id === activeSessId));
-            const finalActiveSessId = activeSessExists ? activeSessId : null;
-
-            setSelectedSessionId(finalActiveSessId);
-
-            if (finalActiveSessId && cache[finalActiveSessId]) {
-                const sCache = cache[finalActiveSessId];
-                const col = treeCols.find(c => c.sessions.some(s => s.id === finalActiveSessId));
-                const sessMeta = col?.sessions.find(s => s.id === finalActiveSessId);
-
-                const targetHistIdx = sCache.selectedHistoryIndex !== null && sCache.selectedHistoryIndex !== undefined && sCache.history[sCache.selectedHistoryIndex]
-                    ? sCache.selectedHistoryIndex
-                    : (sCache.history.length > 0 ? 0 : null);
-
-                const activeHistItem = targetHistIdx !== null ? sCache.history[targetHistIdx] : null;
-                const targetUrl = activeHistItem?.baseUrl || sCache.url;
-
-                setActiveDraft({
-                    sessionId: finalActiveSessId,
-                    collectionId: col?.id || null,
-                    name: sessMeta?.name || 'Session',
-                    url: targetUrl,
-                    urlIsValid: sCache.urlIsValid,
-                    requestTmp: sCache.requestTmp || 'GET / HTTP/1.1\r\n\r\n',
-                });
-                setHistory(sCache.history);
-                setSelectedHistoryIndex(targetHistIdx);
-            } else {
-                setActiveDraft(null);
-                setHistory([]);
-                setSelectedHistoryIndex(null);
-            }
-            setIsLoaded(true);
-        } catch (err) {
-            console.error('Failed to load replayer data from SQLite:', err);
-            setIsLoaded(true);
-        }
-    }, [projectId]);
-
-    useEffect(() => {
-        setIsLoaded(false);
-        loadData();
-    }, [loadData]);
+    }, [dispatch, isLoaded, isLoading, projectId]);
 
     // Select a session
     const selectSession = useCallback((collectionId: string, sessionId: string) => {
-        setSelectedCollectionId(collectionId);
-        setSelectedSessionId(sessionId);
-
-        if (projectId) {
-            invoke('set_replayer_active_selection', { projectId, collectionId, sessionId }).catch(console.error);
-        }
-
-        const sCache = sessionCacheRef.current[sessionId];
-        const col = collections.find(c => c.id === collectionId);
-        const sessMeta = col?.sessions.find(s => s.id === sessionId);
-
-        if (sCache) {
-            const targetHistIdx = sCache.selectedHistoryIndex !== null && sCache.selectedHistoryIndex !== undefined && sCache.history[sCache.selectedHistoryIndex]
-                ? sCache.selectedHistoryIndex
-                : (sCache.history.length > 0 ? 0 : null);
-
-            const activeHistItem = targetHistIdx !== null ? sCache.history[targetHistIdx] : null;
-            const targetUrl = activeHistItem?.baseUrl || sCache.url;
-
-            setActiveDraft({
-                sessionId,
-                collectionId,
-                name: sessMeta?.name || 'Session',
-                url: targetUrl,
-                urlIsValid: sCache.urlIsValid,
-                requestTmp: sCache.requestTmp || 'GET / HTTP/1.1\r\n\r\n',
-            });
-            setHistory(sCache.history);
-            setSelectedHistoryIndex(targetHistIdx);
-        } else {
-            setActiveDraft({
-                sessionId,
-                collectionId,
-                name: sessMeta?.name || 'Session',
-                url: sessMeta?.url || 'https://',
-                urlIsValid: sessMeta?.urlIsValid || false,
-                requestTmp: 'GET / HTTP/1.1\r\n\r\n',
-            });
-            setHistory([]);
-            setSelectedHistoryIndex(null);
-        }
-    }, [collections, projectId]);
+        if (!projectId) return;
+        dispatch(setSelection({ projectId, collectionId, sessionId }));
+        invoke('set_replayer_active_selection', { projectId, collectionId, sessionId }).catch(console.error);
+    }, [dispatch, projectId]);
 
     // Deselect active session
     const deselectSession = useCallback(() => {
-        setSelectedSessionId(null);
-        setActiveDraft(null);
-        setHistory([]);
-        setSelectedHistoryIndex(null);
-
-        if (projectId) {
-            invoke('set_replayer_active_selection', {
-                projectId,
-                collectionId: selectedCollectionId || '',
-                sessionId: '',
-            }).catch(console.error);
-        }
-    }, [projectId, selectedCollectionId]);
+        if (!projectId) return;
+        dispatch(setSelectedSessionId({ projectId, sessionId: null }));
+        invoke('set_replayer_active_selection', {
+            projectId,
+            collectionId: selectedCollectionId || '',
+            sessionId: '',
+        }).catch(console.error);
+    }, [dispatch, projectId, selectedCollectionId]);
 
     // Toggle expansion
     const toggleExpand = useCallback((collectionId: string) => {
-        setExpandedIds((prev) => {
-            const next = prev.includes(collectionId) ? prev.filter(id => id !== collectionId) : [...prev, collectionId];
-            if (projectId) {
-                invoke('set_replayer_expanded_ids', { projectId, expandedIds: next }).catch(console.error);
-            }
-            return next;
-        });
-    }, [projectId]);
+        if (!projectId) return;
+        dispatch(toggleCollectionExpand({ projectId, collectionId }));
+        const next = expandedIds.includes(collectionId)
+            ? expandedIds.filter(id => id !== collectionId)
+            : [...expandedIds, collectionId];
+        invoke('set_replayer_expanded_ids', { projectId, expandedIds: next }).catch(console.error);
+    }, [dispatch, expandedIds, projectId]);
 
     const setExpandedIdsList = useCallback((newIds: string[]) => {
-        setExpandedIds(newIds);
-        if (projectId) {
-            invoke('set_replayer_expanded_ids', { projectId, expandedIds: newIds }).catch(console.error);
-        }
-    }, [projectId]);
+        if (!projectId) return;
+        dispatch(setExpandedIds({ projectId, expandedIds: newIds }));
+        invoke('set_replayer_expanded_ids', { projectId, expandedIds: newIds }).catch(console.error);
+    }, [dispatch, projectId]);
 
     // Create Collection
     const createCollection = useCallback(async () => {
@@ -378,22 +280,19 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                 sortOrder,
             });
 
-            setCollections(prev => [
-                ...prev,
-                { id: newColId, name: newName, isExpanded: true, sessions: [] },
-            ]);
-            setExpandedIds(prev => Array.from(new Set([...prev, newColId])));
-            setSelectedCollectionId(newColId);
+            dispatch(createCollectionSuccess({
+                projectId,
+                collection: { id: newColId, name: newName, isExpanded: true, sessions: [] },
+            }));
         } catch (err) {
             console.error('Failed to create collection:', err);
         }
-    }, [collections.length, projectId]);
+    }, [collections.length, dispatch, projectId]);
 
     // Create Session
     const createSession = useCallback(async (collectionId: string, initialData?: { name?: string; request?: string; url?: string; urlIsValid?: boolean }) => {
         if (!projectId) return;
         const col = collections.find(c => c.id === collectionId);
-        const colIdx = collections.findIndex(c => c.id === collectionId);
         if (!col) return;
 
         const newSessId = crypto.randomUUID();
@@ -413,170 +312,92 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                 sortOrder: sessionCount,
             });
 
-            sessionCacheRef.current[newSessId] = {
-                requestTmp,
-                url,
-                urlIsValid,
-                history: [],
-                selectedHistoryIndex: null,
-            };
-
-            setCollections(prev => {
-                const next = [...prev];
-                if (next[colIdx]) {
-                    next[colIdx] = {
-                        ...next[colIdx],
-                        isExpanded: true,
-                        sessions: [...next[colIdx].sessions, { id: newSessId, name, url, urlIsValid }],
-                    };
-                }
-                return next;
-            });
-
-            setExpandedIds(prev => Array.from(new Set([...prev, collectionId])));
-            setSelectedCollectionId(collectionId);
-            setSelectedSessionId(newSessId);
-
-            setActiveDraft({
-                sessionId: newSessId,
+            dispatch(createSessionSuccess({
+                projectId,
                 collectionId,
-                name,
-                url,
-                urlIsValid,
-                requestTmp,
-            });
-            setHistory([]);
-            setSelectedHistoryIndex(null);
+                session: { id: newSessId, name, url, urlIsValid },
+                cacheItem: {
+                    requestTmp,
+                    url,
+                    urlIsValid,
+                    history: [],
+                    selectedHistoryIndex: null,
+                },
+            }));
 
-            if (projectId) {
-                invoke('set_replayer_active_selection', {
-                    projectId,
-                    collectionId,
-                    sessionId: newSessId,
-                }).catch(console.error);
-            }
+            invoke('set_replayer_active_selection', {
+                projectId,
+                collectionId,
+                sessionId: newSessId,
+            }).catch(console.error);
         } catch (err) {
             console.error('Failed to create session:', err);
         }
-    }, [collections, projectId]);
+    }, [collections, dispatch, projectId]);
 
     // Rename Collection
     const renameCollection = useCallback(async (collectionId: string, name: string) => {
-        setCollections(prev => prev.map(c => c.id === collectionId ? { ...c, name } : c));
-        try {
-            await invoke('rename_replayer_collection', { collectionId, name });
-        } catch (err) {
-            console.error('Failed to rename collection:', err);
-        }
-    }, []);
+        if (!projectId) return;
+        dispatch(renameCollectionSuccess({ projectId, collectionId, name }));
+        invoke('rename_replayer_collection', { collectionId, name }).catch(console.error);
+    }, [dispatch, projectId]);
 
     // Rename Session
     const renameSession = useCallback(async (collectionId: string, sessionId: string, name: string) => {
-        setCollections(prev => prev.map(c => {
-            if (c.id !== collectionId) return c;
-            return {
-                ...c,
-                sessions: c.sessions.map(s => s.id === sessionId ? { ...s, name } : s),
-            };
-        }));
-        if (activeDraft?.sessionId === sessionId) {
-            setActiveDraft(prev => prev ? { ...prev, name } : null);
-        }
-        try {
-            await invoke('rename_replayer_session', { sessionId, name });
-        } catch (err) {
-            console.error('Failed to rename session:', err);
-        }
-    }, [activeDraft?.sessionId]);
+        if (!projectId) return;
+        dispatch(renameSessionSuccess({ projectId, collectionId, sessionId, name }));
+        invoke('rename_replayer_session', { sessionId, name }).catch(console.error);
+    }, [dispatch, projectId]);
 
     // Delete Collection (guarded against default collection 0)
     const deleteCollection = useCallback(async (collectionId: string) => {
+        if (!projectId) return;
         const colIndex = collections.findIndex(c => c.id === collectionId);
-        if (colIndex === 0 || collections.length <= 1) {
-            return; // Never delete default collection
-        }
+        if (colIndex === 0 || collections.length <= 1) return;
 
-        const remainingCols = collections.filter(c => c.id !== collectionId);
-        setCollections(remainingCols);
+        dispatch(deleteCollectionSuccess({ projectId, collectionId }));
 
         if (selectedCollectionId === collectionId) {
+            const remainingCols = collections.filter(c => c.id !== collectionId);
             const nextCol = remainingCols[0] || null;
-            setSelectedCollectionId(nextCol?.id || null);
-            setSelectedSessionId(null);
-            setActiveDraft(null);
-            setHistory([]);
-            setSelectedHistoryIndex(null);
-
-            if (projectId) {
-                invoke('set_replayer_active_selection', {
-                    projectId,
-                    collectionId: nextCol?.id || '',
-                    sessionId: '',
-                }).catch(console.error);
-            }
+            invoke('set_replayer_active_selection', {
+                projectId,
+                collectionId: nextCol?.id || '',
+                sessionId: '',
+            }).catch(console.error);
         }
 
-        try {
-            await invoke('delete_replayer_collection', { collectionId });
-        } catch (err) {
-            console.error('Failed to delete collection:', err);
-        }
-    }, [collections, projectId, selectedCollectionId]);
+        invoke('delete_replayer_collection', { collectionId }).catch(console.error);
+    }, [collections, dispatch, projectId, selectedCollectionId]);
 
     // Delete Session (clears active selection to show EmptyState if deleted session was active)
     const deleteSession = useCallback(async (collectionId: string, sessionId: string) => {
+        if (!projectId) return;
         const reqId = activeRequestsRef.current.get(sessionId);
         if (reqId) {
             activeRequestsRef.current.delete(sessionId);
             invoke('cancel_replayer_request', { reqId }).catch(console.error);
-            setPendingSessions(prev => {
-                const next = { ...prev };
-                delete next[sessionId];
-                return next;
-            });
         }
 
-        setCollections(prev => prev.map(c => {
-            if (c.id !== collectionId) return c;
-            return {
-                ...c,
-                sessions: c.sessions.filter(s => s.id !== sessionId),
-            };
-        }));
-
-        delete sessionCacheRef.current[sessionId];
+        dispatch(deleteSessionSuccess({ projectId, collectionId, sessionId }));
 
         if (selectedSessionId === sessionId) {
-            setSelectedSessionId(null);
-            setActiveDraft(null);
-            setHistory([]);
-            setSelectedHistoryIndex(null);
-
-            if (projectId) {
-                invoke('set_replayer_active_selection', {
-                    projectId,
-                    collectionId,
-                    sessionId: '',
-                }).catch(console.error);
-            }
+            invoke('set_replayer_active_selection', {
+                projectId,
+                collectionId,
+                sessionId: '',
+            }).catch(console.error);
         }
 
-        try {
-            await invoke('delete_replayer_session', { sessionId });
-        } catch (err) {
-            console.error('Failed to delete session:', err);
-        }
-    }, [projectId, selectedSessionId]);
+        invoke('delete_replayer_session', { sessionId }).catch(console.error);
+    }, [dispatch, projectId, selectedSessionId]);
 
     // Update Draft Content (Keystrokes in CodeMirror)
     const updateDraftContent = useCallback((newRequestTmp: string) => {
-        if (!activeDraft?.sessionId) return;
-        const sessId = activeDraft.sessionId;
+        if (!projectId || !selectedSessionId) return;
+        const sessId = selectedSessionId;
 
-        setActiveDraft(prev => prev ? { ...prev, requestTmp: newRequestTmp } : null);
-        if (sessionCacheRef.current[sessId]) {
-            sessionCacheRef.current[sessId].requestTmp = newRequestTmp;
-        }
+        dispatch(setSessionDraftContent({ projectId, sessionId: sessId, requestTmp: newRequestTmp }));
 
         if (debounceDraftTimerRef.current) {
             clearTimeout(debounceDraftTimerRef.current);
@@ -589,23 +410,14 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                 selectedHistoryIndex: null,
             }).catch(console.error);
         }, 300);
-    }, [activeDraft?.sessionId]);
+    }, [dispatch, projectId, selectedSessionId]);
 
     // Update URL
     const updateDraftUrl = useCallback((url: string, urlIsValid: boolean) => {
-        if (!activeDraft?.sessionId) return;
-        const sessId = activeDraft.sessionId;
+        if (!projectId || !selectedSessionId) return;
+        const sessId = selectedSessionId;
 
-        setActiveDraft(prev => prev ? { ...prev, url, urlIsValid } : null);
-        if (sessionCacheRef.current[sessId]) {
-            sessionCacheRef.current[sessId].url = url;
-            sessionCacheRef.current[sessId].urlIsValid = urlIsValid;
-        }
-
-        setCollections(prev => prev.map(c => ({
-            ...c,
-            sessions: c.sessions.map(s => s.id === sessId ? { ...s, url, urlIsValid } : s),
-        })));
+        dispatch(setSessionDraftUrl({ projectId, sessionId: sessId, url, urlIsValid }));
 
         invoke('update_replayer_session_draft', {
             sessionId: sessId,
@@ -613,55 +425,36 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             baseUrl: url,
             selectedHistoryIndex: null,
         }).catch(console.error);
-    }, [activeDraft?.sessionId]);
+    }, [dispatch, projectId, selectedSessionId]);
 
-    // Select History Item (persists both requestTmp, baseUrl, and selectedHistoryIndex to SQLite)
+    // Select History Item (restores requestTmp, baseUrl, and selectedHistoryIndex)
     const selectHistoryIndex = useCallback((index: number) => {
-        setSelectedHistoryIndex(index);
-        if (activeDraft?.sessionId && sessionCacheRef.current[activeDraft.sessionId]) {
-            sessionCacheRef.current[activeDraft.sessionId].selectedHistoryIndex = index;
-        }
+        if (!projectId || !selectedSessionId) return;
+        const sessId = selectedSessionId;
 
-        if (history[index]) {
-            const hItem = history[index];
-            const historyBaseUrl = hItem.baseUrl;
-            const targetUrl = historyBaseUrl && historyBaseUrl.trim() !== '' ? historyBaseUrl : (activeDraft?.url || 'https://');
-            const urlIsValid = !targetUrl.startsWith('https://') || targetUrl.length > 8;
+        dispatch(setSessionSelectedHistoryIndex({ projectId, sessionId: sessId, index }));
 
-            setActiveDraft(prev => prev ? {
-                ...prev,
+        const hItem = history[index];
+        if (hItem) {
+            const targetUrl = hItem.baseUrl && hItem.baseUrl.trim() !== '' ? hItem.baseUrl : (activeDraft?.url || 'https://');
+            invoke('update_replayer_session_draft', {
+                sessionId: sessId,
                 requestTmp: hItem.requestRaw,
-                url: targetUrl,
-                urlIsValid,
-            } : null);
-
-            if (activeDraft?.sessionId) {
-                if (sessionCacheRef.current[activeDraft.sessionId]) {
-                    sessionCacheRef.current[activeDraft.sessionId].requestTmp = hItem.requestRaw;
-                    sessionCacheRef.current[activeDraft.sessionId].url = targetUrl;
-                    sessionCacheRef.current[activeDraft.sessionId].urlIsValid = urlIsValid;
-                    sessionCacheRef.current[activeDraft.sessionId].selectedHistoryIndex = index;
-                }
-
-                invoke('update_replayer_session_draft', {
-                    sessionId: activeDraft.sessionId,
-                    requestTmp: hItem.requestRaw,
-                    baseUrl: targetUrl,
-                    selectedHistoryIndex: index,
-                }).catch(console.error);
-            }
+                baseUrl: targetUrl,
+                selectedHistoryIndex: index,
+            }).catch(console.error);
         }
-    }, [activeDraft?.sessionId, activeDraft?.url, history]);
+    }, [activeDraft?.url, dispatch, history, projectId, selectedSessionId]);
 
     // Trigger Replay (scoped per sessionId)
     const triggerReplay = useCallback(async () => {
-        if (!activeDraft?.sessionId || !projectId) return;
+        if (!projectId || !selectedSessionId || !activeDraft) return;
 
-        const sessId = activeDraft.sessionId;
+        const sessId = selectedSessionId;
         const reqId = crypto.randomUUID();
 
         activeRequestsRef.current.set(sessId, reqId);
-        setPendingSessions(prev => ({ ...prev, [sessId]: reqId }));
+        dispatch(setPendingSession({ projectId, sessionId: sessId, reqId }));
 
         const stripedUrl = stripPath(activeDraft.url);
         updateDraftUrl(stripedUrl, true);
@@ -677,11 +470,7 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
             if (activeRequestsRef.current.get(sessId) === reqId) {
                 activeRequestsRef.current.delete(sessId);
-                setPendingSessions(prev => {
-                    const next = { ...prev };
-                    delete next[sessId];
-                    return next;
-                });
+                dispatch(clearPendingSession({ projectId, sessionId: sessId }));
 
                 const parsed = parseResponse(response.responseRaw);
                 const statusCodeStr = parsed.statusCode
@@ -692,7 +481,7 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                 const createdAt = response.createdAt || new Date().toISOString();
                 const responseTime = response.responseTime ?? response.requestTime ?? 0;
 
-                recordHistoryItem(sessId, {
+                const fullItem: ReplayerHistoryItem = {
                     ...response,
                     id: historyId,
                     createdAt,
@@ -701,22 +490,39 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                     status: statusCodeStr,
                     errorMessage: null,
                     baseUrl: stripedUrl,
-                });
+                };
+
+                dispatch(addSessionHistoryItem({ projectId, sessionId: sessId, item: fullItem }));
+
+                invoke('add_replayer_history_entry', {
+                    sessionId: sessId,
+                    historyId: fullItem.id,
+                    requestRaw: fullItem.requestRaw,
+                    responseRaw: fullItem.responseRaw,
+                    responseTime: fullItem.responseTime,
+                    createdAt: fullItem.createdAt,
+                    status: fullItem.status,
+                    errorMessage: fullItem.errorMessage,
+                    baseUrl: fullItem.baseUrl || null,
+                }).catch(console.error);
+
+                invoke('update_replayer_session_draft', {
+                    sessionId: sessId,
+                    requestTmp: fullItem.requestRaw,
+                    baseUrl: fullItem.baseUrl || null,
+                    selectedHistoryIndex: 0,
+                }).catch(console.error);
             }
         } catch (error) {
             if (activeRequestsRef.current.get(sessId) === reqId) {
                 console.error('Error replaying request:', error);
                 activeRequestsRef.current.delete(sessId);
-                setPendingSessions(prev => {
-                    const next = { ...prev };
-                    delete next[sessId];
-                    return next;
-                });
+                dispatch(clearPendingSession({ projectId, sessionId: sessId }));
 
                 const errStr = typeof error === 'string' ? error : (error as any)?.message || 'Request failed';
                 const isCanceled = errStr.toLowerCase().includes('cancel');
 
-                recordHistoryItem(sessId, {
+                const errItem: ReplayerHistoryItem = {
                     id: crypto.randomUUID(),
                     requestRaw: currentRequestTmp,
                     responseRaw: '',
@@ -725,24 +531,34 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                     createdAt: new Date().toISOString(),
                     status: isCanceled ? 'Canceled' : 'Error',
                     errorMessage: isCanceled ? null : errStr,
-                });
+                };
+
+                dispatch(addSessionHistoryItem({ projectId, sessionId: sessId, item: errItem }));
+
+                invoke('add_replayer_history_entry', {
+                    sessionId: sessId,
+                    historyId: errItem.id,
+                    requestRaw: errItem.requestRaw,
+                    responseRaw: errItem.responseRaw,
+                    responseTime: errItem.responseTime,
+                    createdAt: errItem.createdAt,
+                    status: errItem.status,
+                    errorMessage: errItem.errorMessage,
+                    baseUrl: errItem.baseUrl || null,
+                }).catch(console.error);
             }
         }
-    }, [activeDraft, projectId, recordHistoryItem, updateDraftUrl]);
+    }, [activeDraft, dispatch, projectId, selectedSessionId, updateDraftUrl]);
 
     // Cancel Replay (scoped per sessionId)
     const cancelReplay = useCallback(async () => {
-        if (!activeDraft?.sessionId) return;
-        const sessId = activeDraft.sessionId;
+        if (!projectId || !selectedSessionId || !activeDraft) return;
+        const sessId = selectedSessionId;
         const reqId = activeRequestsRef.current.get(sessId);
 
         if (reqId) {
             activeRequestsRef.current.delete(sessId);
-            setPendingSessions(prev => {
-                const next = { ...prev };
-                delete next[sessId];
-                return next;
-            });
+            dispatch(clearPendingSession({ projectId, sessionId: sessId }));
 
             try {
                 await invoke('cancel_replayer_request', { reqId });
@@ -750,7 +566,7 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                 console.error('Failed to cancel replayer request:', e);
             }
 
-            recordHistoryItem(sessId, {
+            const canceledItem: ReplayerHistoryItem = {
                 id: crypto.randomUUID(),
                 requestRaw: activeDraft.requestTmp,
                 responseRaw: '',
@@ -759,9 +575,23 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                 createdAt: new Date().toISOString(),
                 status: 'Canceled',
                 errorMessage: null,
-            });
+            };
+
+            dispatch(addSessionHistoryItem({ projectId, sessionId: sessId, item: canceledItem }));
+
+            invoke('add_replayer_history_entry', {
+                sessionId: sessId,
+                historyId: canceledItem.id,
+                requestRaw: canceledItem.requestRaw,
+                responseRaw: canceledItem.responseRaw,
+                responseTime: canceledItem.responseTime,
+                createdAt: canceledItem.createdAt,
+                status: canceledItem.status,
+                errorMessage: canceledItem.errorMessage,
+                baseUrl: canceledItem.baseUrl || null,
+            }).catch(console.error);
         }
-    }, [activeDraft, recordHistoryItem]);
+    }, [activeDraft, dispatch, projectId, selectedSessionId]);
 
     // Derived active item & status
     const activeHistoryItem = useMemo(() => {
