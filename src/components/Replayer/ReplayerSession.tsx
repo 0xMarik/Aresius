@@ -45,6 +45,7 @@ const ReplayerSession = () => {
         selectedSessionId,
         isLoaded,
         selectSession,
+        deselectSession,
         setExpandedIdsList,
         createCollection,
         createSession,
@@ -92,7 +93,10 @@ const ReplayerSession = () => {
     }, [setExpandedIdsList]);
 
     const handleSelection = useCallback((value: string[]) => {
-        if (!value || value.length === 0) return;
+        if (!value || value.length === 0) {
+            deselectSession();
+            return;
+        }
         const parsed = parseTreeNodeId(value[0]);
         if (parsed.isCreateAction && parsed.colId) {
             createSession(parsed.colId);
@@ -101,7 +105,7 @@ const ReplayerSession = () => {
         if (parsed.isSession && parsed.colId && parsed.sessId) {
             selectSession(parsed.colId, parsed.sessId);
         }
-    }, [createSession, selectSession]);
+    }, [createSession, deselectSession, selectSession]);
 
     const handleConfirmRemove = async () => {
         if (!removingItem) return;
@@ -133,6 +137,10 @@ const ReplayerSession = () => {
         }
 
         const isCollection = !isSession;
+        const colIndex = collections.findIndex(c => c.id === colId);
+        const isDefaultCollection = isCollection && (colIndex === 0 || collections.length <= 1);
+        const canDelete = isSession || !isDefaultCollection;
+
         const isCurrentActiveCollection = isCollection && colId === selectedCollectionId && selectedSessionId !== null;
         const isEditing = editingNodeId === node.id;
 
@@ -172,6 +180,8 @@ const ReplayerSession = () => {
 
         const handleRemoveClick = (e: React.MouseEvent) => {
             e.stopPropagation();
+            if (!canDelete) return;
+
             setRemovingItem({
                 id: node.id,
                 type: isCollection ? 'collection' : 'session',
@@ -227,14 +237,16 @@ const ReplayerSession = () => {
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end" className="w-36">
                             <DropdownMenuItem onClick={handleEditClick}>
-                                <Pencil className="w-3.5 h-3.5 mr-2" /> Edit
+                                <Pencil className="w-3.5 h-3.5 mr-2" /> Rename
                             </DropdownMenuItem>
-                            <DropdownMenuItem
-                                className="text-destructive focus:text-destructive focus:bg-destructive/10"
-                                onClick={handleRemoveClick}
-                            >
-                                <Trash2 className="w-3.5 h-3.5 mr-2" /> Remove
-                            </DropdownMenuItem>
+                            {canDelete && (
+                                <DropdownMenuItem
+                                    className="text-destructive focus:text-destructive focus:bg-destructive/10"
+                                    onClick={handleRemoveClick}
+                                >
+                                    <Trash2 className="w-3.5 h-3.5 mr-2" /> Remove
+                                </DropdownMenuItem>
+                            )}
                         </DropdownMenuContent>
                     </DropdownMenu>
                 )}
@@ -283,7 +295,7 @@ const ReplayerSession = () => {
                 />
                 {isLoaded && (
                     <RsTree
-                        key={projectId || 'replayer-tree'}
+                        key={`${projectId || 'replayer'}-${selectedSessionId ?? 'none'}`}
                         searchTerm={searchTerm}
                         className="!h-full bg-transparent border-none"
                         data={data}

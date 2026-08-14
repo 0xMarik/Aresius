@@ -8,9 +8,9 @@ import { ValidateUrlInput } from "@/components/ValidateUrlInput";
 import HistoryRequests, { getStatusBadgeStyle } from "@/components/Replayer/HistoryRequests";
 import RequestCodeEditor from "@/components/Replayer/RequestCodeEditor";
 import ResponseCodeEditor from "@/components/Replayer/ResponseCodeEditor";
-import { AlertTriangle, Loader2, Play, Repeat, Square } from "lucide-react";
+import { AlertTriangle, Loader2, Play, Plus, Repeat, Square } from "lucide-react";
 import ReplayerSession from "@/components/Replayer/ReplayerSession";
-import { ReplayerProvider, useReplayerEditor } from "@/context/ReplayerContext";
+import { ReplayerProvider, useReplayerEditor, useReplayerTree } from "@/context/ReplayerContext";
 import { useAppDispatch } from '@/hooks/redux';
 import { useProjectId } from '@/hooks/useProjectId';
 import { resetReplayerReceivedSession } from '@/store/slices/replayerSlice';
@@ -19,6 +19,13 @@ import { cn } from "@/lib/utils";
 function ReplayerContent() {
     const projectId = useProjectId();
     const dispatch = useAppDispatch();
+
+    const {
+        collections,
+        selectedCollectionId,
+        createSession,
+        createCollection,
+    } = useReplayerTree();
 
     const {
         selectedSessionId,
@@ -39,7 +46,22 @@ function ReplayerContent() {
         }
     }, [dispatch, projectId]);
 
-    const noSessionSelected = !selectedSessionId;
+    const totalSessions = collections.reduce((acc, c) => acc + c.sessions.length, 0);
+    const hasNoSessionsAtAll = totalSessions === 0;
+    const noSessionSelected = !selectedSessionId || !activeDraft;
+
+    const handleCreateSession = () => {
+        const targetColId = selectedCollectionId || collections[0]?.id;
+        if (targetColId) {
+            createSession(targetColId);
+        } else {
+            createCollection().then(() => {
+                if (collections[0]?.id) {
+                    createSession(collections[0].id);
+                }
+            });
+        }
+    };
 
     return (
         <ResizablePanelGroup direction="horizontal" autoSaveId="aresius-repeater-layout">
@@ -52,8 +74,23 @@ function ReplayerContent() {
                 {noSessionSelected ? (
                     <EmptyState
                         icon={Repeat}
-                        title="No Replayer Session Selected"
-                        description="Select an existing session from the collection tree or click 'New Session' to start replaying HTTP requests."
+                        title={hasNoSessionsAtAll ? "No Replayer Sessions" : "No Replayer Session Selected"}
+                        description={
+                            hasNoSessionsAtAll
+                                ? "You don't have any sessions in your collections. Create a new session to start replaying HTTP requests."
+                                : "Select an existing session from the collection tree on the left or create a new session."
+                        }
+                        action={
+                            <Button
+                                size="sm"
+                                onClick={handleCreateSession}
+                                variant={hasNoSessionsAtAll ? "default" : "outline"}
+                                className="gap-1.5 font-medium text-xs shadow-xs"
+                            >
+                                <Plus className="w-3.5 h-3.5" />
+                                {hasNoSessionsAtAll ? "Create Session" : "New Session"}
+                            </Button>
+                        }
                     />
                 ) : (
                     <div className="h-full flex flex-col">

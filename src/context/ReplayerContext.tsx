@@ -38,6 +38,7 @@ interface ReplayerTreeContextType {
     isLoaded: boolean;
 
     selectSession: (collectionId: string, sessionId: string) => void;
+    deselectSession: () => void;
     toggleExpand: (collectionId: string) => void;
     setExpandedIdsList: (newIds: string[]) => void;
     createCollection: () => Promise<void>;
@@ -211,23 +212,21 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             }
             if (activeColId) {
                 setSelectedCollectionId(activeColId);
-                const col = treeCols.find(c => c.id === activeColId);
-                if (col && col.sessions.length > 0) {
-                    if (!activeSessId || !col.sessions.some(s => s.id === activeSessId)) {
-                        activeSessId = col.sessions[0].id;
-                    }
-                }
             }
 
-            setSelectedSessionId(activeSessId);
+            // Only select session if it genuinely was selected in SQLite
+            const activeSessExists = activeSessId && treeCols.some(c => c.sessions.some(s => s.id === activeSessId));
+            const finalActiveSessId = activeSessExists ? activeSessId : null;
 
-            if (activeSessId && cache[activeSessId]) {
-                const sCache = cache[activeSessId];
-                const col = treeCols.find(c => c.sessions.some(s => s.id === activeSessId));
-                const sessMeta = col?.sessions.find(s => s.id === activeSessId);
+            setSelectedSessionId(finalActiveSessId);
+
+            if (finalActiveSessId && cache[finalActiveSessId]) {
+                const sCache = cache[finalActiveSessId];
+                const col = treeCols.find(c => c.sessions.some(s => s.id === finalActiveSessId));
+                const sessMeta = col?.sessions.find(s => s.id === finalActiveSessId);
 
                 setActiveDraft({
-                    sessionId: activeSessId,
+                    sessionId: finalActiveSessId,
                     collectionId: col?.id || null,
                     name: sessMeta?.name || 'Session',
                     url: sCache.url,
@@ -290,6 +289,22 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             setSelectedHistoryIndex(null);
         }
     }, [collections, projectId]);
+
+    // Deselect active session
+    const deselectSession = useCallback(() => {
+        setSelectedSessionId(null);
+        setActiveDraft(null);
+        setHistory([]);
+        setSelectedHistoryIndex(null);
+
+        if (projectId) {
+            invoke('set_replayer_active_selection', {
+                projectId,
+                collectionId: selectedCollectionId || '',
+                sessionId: '',
+            }).catch(console.error);
+        }
+    }, [projectId, selectedCollectionId]);
 
     // Toggle expansion
     const toggleExpand = useCallback((collectionId: string) => {
@@ -393,6 +408,14 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             });
             setHistory([]);
             setSelectedHistoryIndex(null);
+
+            if (projectId) {
+                invoke('set_replayer_active_selection', {
+                    projectId,
+                    collectionId,
+                    sessionId: newSessId,
+                }).catch(console.error);
+            }
         } catch (err) {
             console.error('Failed to create session:', err);
         }
@@ -427,33 +450,30 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         }
     }, [activeDraft?.sessionId]);
 
-    // Delete Collection
+    // Delete Collection (guarded against default collection 0)
     const deleteCollection = useCallback(async (collectionId: string) => {
+        const colIndex = collections.findIndex(c => c.id === collectionId);
+        if (colIndex === 0 || collections.length <= 1) {
+            return; // Never delete default collection
+        }
+
         const remainingCols = collections.filter(c => c.id !== collectionId);
         setCollections(remainingCols);
 
         if (selectedCollectionId === collectionId) {
             const nextCol = remainingCols[0] || null;
             setSelectedCollectionId(nextCol?.id || null);
-            const nextSess = nextCol?.sessions[0] || null;
-            setSelectedSessionId(nextSess?.id || null);
+            setSelectedSessionId(null);
+            setActiveDraft(null);
+            setHistory([]);
+            setSelectedHistoryIndex(null);
 
-            if (nextSess && sessionCacheRef.current[nextSess.id]) {
-                const sCache = sessionCacheRef.current[nextSess.id];
-                setActiveDraft({
-                    sessionId: nextSess.id,
-                    collectionId: nextCol.id,
-                    name: nextSess.name,
-                    url: sCache.url,
-                    urlIsValid: sCache.urlIsValid,
-                    requestTmp: sCache.requestTmp,
-                });
-                setHistory(sCache.history);
-                setSelectedHistoryIndex(sCache.selectedHistoryIndex);
-            } else {
-                setActiveDraft(null);
-                setHistory([]);
-                setSelectedHistoryIndex(null);
+            if (projectId) {
+                invoke('set_replayer_active_selection', {
+                    projectId,
+                    collectionId: nextCol?.id || '',
+                    sessionId: '',
+                }).catch(console.error);
             }
         }
 
@@ -462,43 +482,32 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         } catch (err) {
             console.error('Failed to delete collection:', err);
         }
-    }, [collections, selectedCollectionId]);
+    }, [collections, projectId, selectedCollectionId]);
 
-    // Delete Session
+    // Delete Session (clears active selection to show EmptyState if deleted session was active)
     const deleteSession = useCallback(async (collectionId: string, sessionId: string) => {
-        let nextSelectedSessId: string | null = null;
-
         setCollections(prev => prev.map(c => {
             if (c.id !== collectionId) return c;
-            const remainingSessions = c.sessions.filter(s => s.id !== sessionId);
-            if (selectedSessionId === sessionId) {
-                nextSelectedSessId = remainingSessions[0]?.id || null;
-            }
-            return { ...c, sessions: remainingSessions };
+            return {
+                ...c,
+                sessions: c.sessions.filter(s => s.id !== sessionId),
+            };
         }));
 
         delete sessionCacheRef.current[sessionId];
 
         if (selectedSessionId === sessionId) {
-            setSelectedSessionId(nextSelectedSessId);
-            if (nextSelectedSessId && sessionCacheRef.current[nextSelectedSessId]) {
-                const sCache = sessionCacheRef.current[nextSelectedSessId];
-                const col = collections.find(c => c.id === collectionId);
-                const nextSess = col?.sessions.find(s => s.id === nextSelectedSessId);
-                setActiveDraft({
-                    sessionId: nextSelectedSessId,
+            setSelectedSessionId(null);
+            setActiveDraft(null);
+            setHistory([]);
+            setSelectedHistoryIndex(null);
+
+            if (projectId) {
+                invoke('set_replayer_active_selection', {
+                    projectId,
                     collectionId,
-                    name: nextSess?.name || 'Session',
-                    url: sCache.url,
-                    urlIsValid: sCache.urlIsValid,
-                    requestTmp: sCache.requestTmp,
-                });
-                setHistory(sCache.history);
-                setSelectedHistoryIndex(sCache.selectedHistoryIndex);
-            } else {
-                setActiveDraft(null);
-                setHistory([]);
-                setSelectedHistoryIndex(null);
+                    sessionId: '',
+                }).catch(console.error);
             }
         }
 
@@ -507,7 +516,7 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         } catch (err) {
             console.error('Failed to delete session:', err);
         }
-    }, [collections, selectedSessionId]);
+    }, [projectId, selectedSessionId]);
 
     // Update Draft Content (Keystrokes in CodeMirror)
     const updateDraftContent = useCallback((newRequestTmp: string) => {
@@ -702,6 +711,7 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         isLoaded,
 
         selectSession,
+        deselectSession,
         toggleExpand,
         setExpandedIdsList,
         createCollection,
@@ -717,6 +727,7 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         selectedSessionId,
         isLoaded,
         selectSession,
+        deselectSession,
         toggleExpand,
         setExpandedIdsList,
         createCollection,

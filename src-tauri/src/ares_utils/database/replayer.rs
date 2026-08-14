@@ -223,10 +223,7 @@ pub async fn get_replayer_data(
             });
         }
 
-        let has_sessions = !full_sessions.is_empty();
-        if selected_session_idx.is_none() && has_sessions {
-            selected_session_idx = Some(0);
-        }
+
 
         full_collections.push(ReplayerCollectionFull {
             id: col_row.id,
