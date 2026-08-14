@@ -110,21 +110,26 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
     const [isLoaded, setIsLoaded] = useState<boolean>(false);
 
+    const selectedSessionIdRef = useRef<string | null>(null);
+    selectedSessionIdRef.current = selectedSessionId;
+
     // 2. Editor & History State
     const [activeDraft, setActiveDraft] = useState<ActiveSessionDraft | null>(null);
     const [history, setHistory] = useState<ReplayerHistoryItem[]>([]);
     const [selectedHistoryIndex, setSelectedHistoryIndex] = useState<number | null>(null);
-    const [responseLoading, setResponseLoading] = useState<boolean>(false);
+
+    // Track active/pending request IDs per session: { [sessionId: string]: requestId }
+    const [pendingSessions, setPendingSessions] = useState<Record<string, string>>({});
+    const activeRequestsRef = useRef<Map<string, string>>(new Map());
 
     const sessionCacheRef = useRef<SessionDataCache>({});
-    const activeRequestIdRef = useRef<string | null>(null);
     const debounceDraftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    // Dynamic responseLoading scoped strictly to the currently selected session
+    const responseLoading = Boolean(selectedSessionId && pendingSessions[selectedSessionId]);
 
     // Helper to record history item, update cache, and persist to SQLite
     const recordHistoryItem = useCallback((sessId: string, item: ReplayerHistoryItem) => {
-        setHistory(prev => [item, ...prev]);
-        setSelectedHistoryIndex(0);
-
         if (sessionCacheRef.current[sessId]) {
             sessionCacheRef.current[sessId].history = [item, ...sessionCacheRef.current[sessId].history];
             sessionCacheRef.current[sessId].selectedHistoryIndex = 0;
@@ -132,6 +137,12 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             if (item.baseUrl) {
                 sessionCacheRef.current[sessId].url = item.baseUrl;
             }
+        }
+
+        // Only update active React state if the user is currently viewing this session
+        if (selectedSessionIdRef.current === sessId) {
+            setHistory(prev => [item, ...prev]);
+            setSelectedHistoryIndex(0);
         }
 
         invoke('add_replayer_history_entry', {
@@ -243,11 +254,14 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                     ? sCache.selectedHistoryIndex
                     : (sCache.history.length > 0 ? 0 : null);
 
+                const activeHistItem = targetHistIdx !== null ? sCache.history[targetHistIdx] : null;
+                const targetUrl = activeHistItem?.baseUrl || sCache.url;
+
                 setActiveDraft({
                     sessionId: finalActiveSessId,
                     collectionId: col?.id || null,
                     name: sessMeta?.name || 'Session',
-                    url: sCache.url || 'https://',
+                    url: targetUrl,
                     urlIsValid: sCache.urlIsValid,
                     requestTmp: sCache.requestTmp || 'GET / HTTP/1.1\r\n\r\n',
                 });
@@ -288,11 +302,14 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                 ? sCache.selectedHistoryIndex
                 : (sCache.history.length > 0 ? 0 : null);
 
+            const activeHistItem = targetHistIdx !== null ? sCache.history[targetHistIdx] : null;
+            const targetUrl = activeHistItem?.baseUrl || sCache.url;
+
             setActiveDraft({
                 sessionId,
                 collectionId,
                 name: sessMeta?.name || 'Session',
-                url: sCache.url || 'https://',
+                url: targetUrl,
                 urlIsValid: sCache.urlIsValid,
                 requestTmp: sCache.requestTmp || 'GET / HTTP/1.1\r\n\r\n',
             });
@@ -508,6 +525,17 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
     // Delete Session (clears active selection to show EmptyState if deleted session was active)
     const deleteSession = useCallback(async (collectionId: string, sessionId: string) => {
+        const reqId = activeRequestsRef.current.get(sessionId);
+        if (reqId) {
+            activeRequestsRef.current.delete(sessionId);
+            invoke('cancel_replayer_request', { reqId }).catch(console.error);
+            setPendingSessions(prev => {
+                const next = { ...prev };
+                delete next[sessionId];
+                return next;
+            });
+        }
+
         setCollections(prev => prev.map(c => {
             if (c.id !== collectionId) return c;
             return {
@@ -625,19 +653,20 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         }
     }, [activeDraft?.sessionId, activeDraft?.url, history]);
 
-    // Trigger Replay
+    // Trigger Replay (scoped per sessionId)
     const triggerReplay = useCallback(async () => {
         if (!activeDraft?.sessionId || !projectId) return;
 
+        const sessId = activeDraft.sessionId;
         const reqId = crypto.randomUUID();
-        activeRequestIdRef.current = reqId;
-        setResponseLoading(true);
+
+        activeRequestsRef.current.set(sessId, reqId);
+        setPendingSessions(prev => ({ ...prev, [sessId]: reqId }));
 
         const stripedUrl = stripPath(activeDraft.url);
         updateDraftUrl(stripedUrl, true);
 
         const currentRequestTmp = activeDraft.requestTmp;
-        const sessId = activeDraft.sessionId;
 
         try {
             const response = await invoke<ReplayerHistoryItem>('replay_request', {
@@ -646,9 +675,13 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                 reqId,
             });
 
-            if (activeRequestIdRef.current === reqId) {
-                setResponseLoading(false);
-                activeRequestIdRef.current = null;
+            if (activeRequestsRef.current.get(sessId) === reqId) {
+                activeRequestsRef.current.delete(sessId);
+                setPendingSessions(prev => {
+                    const next = { ...prev };
+                    delete next[sessId];
+                    return next;
+                });
 
                 const parsed = parseResponse(response.responseRaw);
                 const statusCodeStr = parsed.statusCode
@@ -671,10 +704,14 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                 });
             }
         } catch (error) {
-            if (activeRequestIdRef.current === reqId) {
+            if (activeRequestsRef.current.get(sessId) === reqId) {
                 console.error('Error replaying request:', error);
-                setResponseLoading(false);
-                activeRequestIdRef.current = null;
+                activeRequestsRef.current.delete(sessId);
+                setPendingSessions(prev => {
+                    const next = { ...prev };
+                    delete next[sessId];
+                    return next;
+                });
 
                 const errStr = typeof error === 'string' ? error : (error as any)?.message || 'Request failed';
                 const isCanceled = errStr.toLowerCase().includes('cancel');
@@ -693,20 +730,27 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         }
     }, [activeDraft, projectId, recordHistoryItem, updateDraftUrl]);
 
-    // Cancel Replay
+    // Cancel Replay (scoped per sessionId)
     const cancelReplay = useCallback(async () => {
-        const reqId = activeRequestIdRef.current;
-        activeRequestIdRef.current = null;
-        setResponseLoading(false);
+        if (!activeDraft?.sessionId) return;
+        const sessId = activeDraft.sessionId;
+        const reqId = activeRequestsRef.current.get(sessId);
 
-        if (reqId && activeDraft?.sessionId) {
+        if (reqId) {
+            activeRequestsRef.current.delete(sessId);
+            setPendingSessions(prev => {
+                const next = { ...prev };
+                delete next[sessId];
+                return next;
+            });
+
             try {
                 await invoke('cancel_replayer_request', { reqId });
             } catch (e) {
                 console.error('Failed to cancel replayer request:', e);
             }
 
-            recordHistoryItem(activeDraft.sessionId, {
+            recordHistoryItem(sessId, {
                 id: crypto.randomUUID(),
                 requestRaw: activeDraft.requestTmp,
                 responseRaw: '',
