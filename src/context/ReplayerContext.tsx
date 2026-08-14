@@ -29,6 +29,7 @@ import {
     renameSessionSuccess,
     deleteCollectionSuccess,
     deleteSessionSuccess,
+    fetchReplayerDataForProject,
 } from '@/store/slices/replayerSlice';
 
 export type { ReplayerCollectionMeta, ReplayerSessionMeta, ActiveSessionDraft };
@@ -137,98 +138,10 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const history = useMemo(() => activeCache?.history || [], [activeCache?.history]);
     const selectedHistoryIndex = activeCache?.selectedHistoryIndex ?? null;
 
-    // Load data from SQLite once per project (if not loaded and not loading)
+    // Fallback load if not already loaded upon project selection
     useEffect(() => {
         if (!projectId || isLoaded || isLoading) return;
-
-        dispatch(setReplayerLoading({ projectId, isLoading: true }));
-
-        invoke<ReplayerFullData>('get_replayer_data', { projectId })
-            .then((data) => {
-                if (!data || !data.collections || data.collections.length === 0) {
-                    dispatch(setReplayerLoadedData({
-                        projectId,
-                        collections: [],
-                        selectedCollectionId: null,
-                        selectedSessionId: null,
-                        expandedIds: [],
-                        sessionCache: {},
-                    }));
-                    return;
-                }
-
-                const cache: Record<string, ReplayerSessionCacheItem> = {};
-                const treeCols: ReplayerCollectionMeta[] = [];
-
-                let activeColId: string | null = null;
-                let activeSessId: string | null = null;
-
-                data.collections.forEach((c, cIdx) => {
-                    const isColSelected = data.selectedCollectionIndex === cIdx;
-                    if (isColSelected) activeColId = c.id;
-
-                    const sessMetas: ReplayerSessionMeta[] = [];
-
-                    c.sessions.forEach((s, sIdx) => {
-                        const isSessSelected = isColSelected && c.selectedSessionIndex === sIdx;
-                        if (isSessSelected) activeSessId = s.id;
-
-                        sessMetas.push({
-                            id: s.id,
-                            name: s.name,
-                            url: s.url,
-                            urlIsValid: s.urlIsValid,
-                        });
-
-                        cache[s.id] = {
-                            requestTmp: s.requestTmp,
-                            url: s.url,
-                            urlIsValid: s.urlIsValid,
-                            history: s.history.map((h) => ({
-                                id: h.id,
-                                requestRaw: h.requestRaw,
-                                responseRaw: h.responseRaw,
-                                responseTime: h.responseTime,
-                                requestTime: h.responseTime,
-                                createdAt: h.createdAt,
-                                status: h.status,
-                                errorMessage: h.errorMessage,
-                                baseUrl: h.baseUrl || s.url,
-                            })),
-                            selectedHistoryIndex: s.selectedHistoryIndex !== undefined && s.selectedHistoryIndex !== null
-                                ? s.selectedHistoryIndex
-                                : (s.history.length > 0 ? 0 : null),
-                        };
-                    });
-
-                    treeCols.push({
-                        id: c.id,
-                        name: c.name,
-                        isExpanded: c.isExpanded !== false,
-                        sessions: sessMetas,
-                    });
-                });
-
-                if (!activeColId && treeCols.length > 0) {
-                    activeColId = treeCols[0].id;
-                }
-
-                const activeSessExists = activeSessId && treeCols.some(c => c.sessions.some(s => s.id === activeSessId));
-                const finalActiveSessId = activeSessExists ? activeSessId : null;
-
-                dispatch(setReplayerLoadedData({
-                    projectId,
-                    collections: treeCols,
-                    selectedCollectionId: activeColId,
-                    selectedSessionId: finalActiveSessId,
-                    expandedIds: data.expandedIds || treeCols.filter(c => c.isExpanded).map(c => c.id),
-                    sessionCache: cache,
-                }));
-            })
-            .catch((err) => {
-                console.error('Failed to load replayer data from SQLite:', err);
-                dispatch(setReplayerLoading({ projectId, isLoading: false }));
-            });
+        dispatch(fetchReplayerDataForProject(projectId));
     }, [dispatch, isLoaded, isLoading, projectId]);
 
     // Select a session

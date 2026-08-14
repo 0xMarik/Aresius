@@ -1,14 +1,19 @@
 import { Middleware } from '@reduxjs/toolkit';
 import { setcurrentProjectId } from './slices/projectSlice';
+import { fetchReplayerDataForProject } from './slices/replayerSlice';
 
 /**
  * Middleware that intercepts project changes (setcurrentProjectId)
  * to perform transient state cleanup or side effects when switching projects.
+ * Immediately pre-loads the Replayer data for the selected project into Redux.
  */
-export const projectDataMiddleware: Middleware = (_store) => (next) => (action) => {
+export const projectDataMiddleware: Middleware = (store) => (next) => (action) => {
+  const result = next(action);
   if (setcurrentProjectId.match(action)) {
-    // Currently setcurrentProjectId updates workspaceState.currentProjectId.
-    // Slices maintain per-project buckets so no data is destroyed on project switch.
+    const projectId = action.payload;
+    if (projectId) {
+      (store.dispatch as any)(fetchReplayerDataForProject(projectId));
+    }
   }
-  return next(action);
+  return result;
 };

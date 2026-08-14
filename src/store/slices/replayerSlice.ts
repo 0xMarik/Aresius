@@ -1,7 +1,8 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 import type { RootState } from "@/store";
 import { deleteProject, setcurrentProjectId, resetProjectData } from "./projectSlice";
-import { ReplayerHistoryItem } from "@/types/replayer.type";
+import { invoke } from "@tauri-apps/api/core";
+import { ReplayerHistoryItem, ReplayerFullData } from "@/types/replayer.type";
 
 export interface ReplayerSessionMeta {
     id: string;
@@ -390,6 +391,88 @@ export const selectReplayerIsLoaded = (projectId: string | null) => (state: Root
 export const selectReplayerReceivedSession = (projectId: string | null) => (state: RootState): number => {
     if (!projectId || !state.replayerstate[projectId]) return 0;
     return state.replayerstate[projectId].receivedSession;
+};
+
+export const fetchReplayerDataForProject = (projectId: string) => async (dispatch: (action: any) => void) => {
+    if (!projectId) return;
+    dispatch(setReplayerLoading({ projectId, isLoading: true }));
+
+    try {
+        const data = await invoke<ReplayerFullData>('get_replayer_data', { projectId });
+        if (!data || !data.collections || data.collections.length === 0) {
+            dispatch(setReplayerLoadedData({
+                projectId,
+                collections: [],
+                selectedCollectionId: null,
+                selectedSessionId: null,
+                expandedIds: [],
+                sessionCache: {},
+            }));
+            return;
+        }
+
+        const cache: Record<string, ReplayerSessionCacheItem> = {};
+        const treeCols: ReplayerCollectionMeta[] = [];
+
+        let activeColId: string | null = null;
+        let activeSessId: string | null = null;
+
+        data.collections.forEach((c, cIdx) => {
+            const isColSelected = data.selectedCollectionIndex === cIdx;
+            if (isColSelected) activeColId = c.id;
+
+            const sessMetas = c.sessions.map((s, sIdx) => {
+                if (isColSelected && c.selectedSessionIndex === sIdx) activeSessId = s.id;
+                cache[s.id] = {
+                    requestTmp: s.requestTmp,
+                    url: s.url,
+                    urlIsValid: s.urlIsValid,
+                    history: s.history.map((h) => ({
+                        id: h.id,
+                        requestRaw: h.requestRaw,
+                        responseRaw: h.responseRaw,
+                        responseTime: h.responseTime,
+                        requestTime: h.responseTime,
+                        createdAt: h.createdAt,
+                        status: h.status,
+                        errorMessage: h.errorMessage,
+                        baseUrl: h.baseUrl || s.url,
+                    })),
+                    selectedHistoryIndex: s.selectedHistoryIndex !== undefined && s.selectedHistoryIndex !== null
+                        ? s.selectedHistoryIndex
+                        : (s.history.length > 0 ? 0 : null),
+                };
+                return {
+                    id: s.id,
+                    name: s.name,
+                    url: s.url,
+                    urlIsValid: s.urlIsValid,
+                };
+            });
+
+            treeCols.push({
+                id: c.id,
+                name: c.name,
+                isExpanded: c.isExpanded !== false,
+                sessions: sessMetas,
+            });
+        });
+
+        if (!activeColId && treeCols.length > 0) activeColId = treeCols[0].id;
+        const activeSessExists = activeSessId && treeCols.some(c => c.sessions.some(s => s.id === activeSessId));
+
+        dispatch(setReplayerLoadedData({
+            projectId,
+            collections: treeCols,
+            selectedCollectionId: activeColId,
+            selectedSessionId: activeSessExists ? activeSessId : null,
+            expandedIds: data.expandedIds || treeCols.filter(c => c.isExpanded).map(c => c.id),
+            sessionCache: cache,
+        }));
+    } catch (err) {
+        console.error('Failed to load replayer data on project selection:', err);
+        dispatch(setReplayerLoading({ projectId, isLoading: false }));
+    }
 };
 
 export default replayerSlice.reducer;
