@@ -35,6 +35,8 @@ pub struct ReplayerHistoryRow {
     pub response_time: i64,
     pub created_at: String,
     pub sort_order: i64,
+    pub status: String,
+    pub error_message: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -45,6 +47,8 @@ pub struct ReplayerHistoryItemFull {
     pub response_raw: String,
     pub response_time: i64,
     pub created_at: String,
+    pub status: String,
+    pub error_message: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -171,7 +175,7 @@ pub async fn get_replayer_data(
             }
 
             let histories = sqlx::query_as::<_, ReplayerHistoryRow>(
-                "SELECT id, session_id, request_raw, response_raw, response_time, created_at, sort_order FROM replayer_history WHERE session_id = ? ORDER BY sort_order ASC, rowid DESC",
+                "SELECT id, session_id, request_raw, response_raw, response_time, created_at, sort_order, status, error_message FROM replayer_history WHERE session_id = ? ORDER BY sort_order ASC, rowid DESC",
             )
             .bind(&sess_row.id)
             .fetch_all(&pool)
@@ -180,12 +184,28 @@ pub async fn get_replayer_data(
 
             let full_histories: Vec<ReplayerHistoryItemFull> = histories
                 .into_iter()
-                .map(|h| ReplayerHistoryItemFull {
-                    id: h.id,
-                    request_raw: h.request_raw,
-                    response_raw: h.response_raw,
-                    response_time: h.response_time,
-                    created_at: h.created_at,
+                .map(|h| {
+                    let mut status = h.status;
+                    if status.is_empty() {
+                        if h.error_message.is_some() {
+                            status = "Error".to_string();
+                        } else if let Some(first_line) = h.response_raw.lines().next() {
+                            if let Some(code) = first_line.split_whitespace().nth(1) {
+                                if code.chars().all(|c| c.is_ascii_digit()) {
+                                    status = code.to_string();
+                                }
+                            }
+                        }
+                    }
+                    ReplayerHistoryItemFull {
+                        id: h.id,
+                        request_raw: h.request_raw,
+                        response_raw: h.response_raw,
+                        response_time: h.response_time,
+                        created_at: h.created_at,
+                        status,
+                        error_message: h.error_message,
+                    }
                 })
                 .collect();
 
@@ -478,10 +498,12 @@ pub async fn add_replayer_history_entry(
     response_raw: String,
     response_time: i64,
     created_at: String,
+    status: Option<String>,
+    error_message: Option<String>,
 ) -> Result<(), String> {
     let pool = db.pool().await?;
     sqlx::query(
-        "INSERT INTO replayer_history (id, session_id, request_raw, response_raw, response_time, created_at, sort_order) VALUES (?, ?, ?, ?, ?, ?, 0)",
+        "INSERT INTO replayer_history (id, session_id, request_raw, response_raw, response_time, created_at, sort_order, status, error_message) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)",
     )
     .bind(&history_id)
     .bind(&session_id)
@@ -489,6 +511,8 @@ pub async fn add_replayer_history_entry(
     .bind(&response_raw)
     .bind(response_time)
     .bind(&created_at)
+    .bind(status.unwrap_or_default())
+    .bind(error_message)
     .execute(&pool)
     .await
     .map_err(|e| e.to_string())?;

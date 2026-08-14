@@ -95,13 +95,17 @@ const replayerSlice = createSlice({
                 const createdAt = historyItem.createdAt || new Date().toISOString();
                 const responseTime = historyItem.responseTime ?? historyItem.requestTime ?? 0;
                 const baseUrl = historyItem.baseUrl || session.url || '';
-                const itemWithId = {
+                const status = historyItem.status || '';
+                const errorMessage = historyItem.errorMessage ?? null;
+                const itemWithId: ReplayerHistoryItem = {
                     ...historyItem,
                     id: historyId,
                     createdAt,
                     responseTime,
                     requestTime: responseTime,
                     baseUrl,
+                    status,
+                    errorMessage,
                 };
                 session.requestTmp = historyItem.requestRaw;
                 session.history = [itemWithId, ...session.history];
@@ -115,6 +119,8 @@ const replayerSlice = createSlice({
                         responseRaw: historyItem.responseRaw,
                         responseTime,
                         createdAt,
+                        status: status || null,
+                        errorMessage: errorMessage || null,
                     }).catch(console.error);
 
                     invoke('update_replayer_session_draft', { sessionId: session.id, requestTmp: historyItem.requestRaw, baseUrl: null }).catch(console.error);
@@ -393,6 +399,8 @@ const replayerSlice = createSlice({
                             responseTime: h.responseTime,
                             requestTime: h.responseTime,
                             createdAt: h.createdAt,
+                            status: h.status,
+                            errorMessage: h.errorMessage,
                             baseUrl: s.url,
                         })),
                     })),

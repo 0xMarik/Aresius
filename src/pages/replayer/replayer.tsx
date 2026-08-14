@@ -10,6 +10,8 @@ import { useAppDispatch, useAppSelector } from '@/hooks/redux';
 import { useProjectId } from '@/hooks/useProjectId';
 import { addReplayerHistory, fetchReplayerData, resetReplayerReceivedSession, selectedHisotryIndex, setReaplayerURL, selectReplayerState } from '@/store/slices/replayerSlice';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { invoke } from '@tauri-apps/api/core';
 import { ReplayerHistoryItem } from '@/types/replayer.type';
 import React from 'react';
@@ -17,10 +19,12 @@ import React from 'react';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { EmptyState } from '@/components/ui/empty-state';
 import { stripPath, ValidateUrlInput } from "@/components/ValidateUrlInput";
-import HistoryRequests from "@/components/Replayer/HistoryRequests";
+import HistoryRequests, { getStatusBadgeStyle } from "@/components/Replayer/HistoryRequests";
 import RequestCodeEditor from "@/components/Replayer/RequestCodeEditor";
-import { Loader2, Play, Repeat, Square } from "lucide-react";
+import { AlertTriangle, Loader2, Play, Repeat, Square } from "lucide-react";
 import ReplayerSession from "@/components/Replayer/ReplayerSession";
+import { parseResponse } from "@/components/utils";
+import { cn } from "@/lib/utils";
 
 const fullHeightTheme = EditorView.theme({
     '&': {
@@ -33,8 +37,6 @@ const fullHeightTheme = EditorView.theme({
         overflow: 'auto',
     },
 });
-
-
 
 const ResponseCodeEditor = () => {
     const editorRef = useRef<HTMLDivElement | null>(null);
@@ -139,7 +141,16 @@ function Replayer() {
             if (activeRequestIdRef.current === reqId) {
                 setResponseLoading(false);
                 activeRequestIdRef.current = null;
-                dispatch(addReplayerHistory({ historyItem: response, projectId }));
+                const parsed = parseResponse(response.responseRaw);
+                const statusCodeStr = parsed.statusCode
+                    ? `${parsed.statusCode}${parsed.statusText ? ' ' + parsed.statusText : ''}`
+                    : '200 OK';
+                const itemWithStatus: ReplayerHistoryItem = {
+                    ...response,
+                    status: statusCodeStr,
+                    errorMessage: null,
+                };
+                dispatch(addReplayerHistory({ historyItem: itemWithStatus, projectId }));
                 dispatch(selectedHisotryIndex({ historyIndex: 0, projectId }));
             }
         } catch (error) {
@@ -147,6 +158,18 @@ function Replayer() {
                 console.error('Error replaying request:', error);
                 setResponseLoading(false);
                 activeRequestIdRef.current = null;
+                const errStr = typeof error === 'string' ? error : (error as any)?.message || 'Request failed';
+                const isCanceled = errStr.toLowerCase().includes('cancel');
+                const errorItem: ReplayerHistoryItem = {
+                    requestRaw: requestTmp,
+                    responseRaw: "",
+                    baseUrl: stripedUrl,
+                    responseTime: 0,
+                    status: isCanceled ? 'Canceled' : 'Error',
+                    errorMessage: isCanceled ? null : errStr,
+                };
+                dispatch(addReplayerHistory({ historyItem: errorItem, projectId }));
+                dispatch(selectedHisotryIndex({ historyIndex: 0, projectId }));
             }
         }
     };
@@ -161,10 +184,27 @@ function Replayer() {
             } catch (e) {
                 console.error('Failed to cancel replayer request:', e);
             }
+            const cancelItem: ReplayerHistoryItem = {
+                requestRaw: requestTmp,
+                responseRaw: "",
+                baseUrl: stripPath(url),
+                responseTime: 0,
+                status: 'Canceled',
+                errorMessage: null,
+            };
+            dispatch(addReplayerHistory({ historyItem: cancelItem, projectId }));
+            dispatch(selectedHisotryIndex({ historyIndex: 0, projectId }));
         }
     };
 
     const noSessionSelected = selectedSessionIndex === null;
+
+    const currentHistoryItem = selectedHistoryIndex !== null ? history[selectedHistoryIndex] : null;
+    const parsedResponse = currentHistoryItem?.responseRaw ? parseResponse(currentHistoryItem.responseRaw) : null;
+    const currentStatus = responseLoading
+        ? 'pending'
+        : (currentHistoryItem?.status || (parsedResponse?.statusCode ? String(parsedResponse.statusCode) : ''));
+    const hasError = !responseLoading && (currentHistoryItem?.status === 'Error' || !!currentHistoryItem?.errorMessage);
 
     return (
         <ResizablePanelGroup direction='horizontal' autoSaveId="aresius-repeater-layout" >
@@ -233,10 +273,48 @@ function Replayer() {
                             <ResizablePanel defaultSize={50} minSize={20}>
                                 <div className="flex flex-col h-full min-h-0 overflow-hidden bg-card">
                                     <div className="flex items-center justify-between px-3 py-1.5 border-b border-border/40 bg-muted/30 shrink-0 select-none">
-                                        <span className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">Response</span>
-                                        {selectedHistoryIndex !== null && history[selectedHistoryIndex]?.responseTime !== undefined && (
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">Response</span>
+                                            {currentStatus && (
+                                                <Badge
+                                                    variant="outline"
+                                                    className={cn("text-[10px] font-mono px-1.5 py-0 font-medium capitalize", getStatusBadgeStyle(currentStatus))}
+                                                >
+                                                    {currentStatus}
+                                                </Badge>
+                                            )}
+                                            {hasError && (
+                                                <TooltipProvider>
+                                                    <Tooltip delayDuration={150}>
+                                                        <TooltipTrigger asChild>
+                                                            <button
+                                                                type="button"
+                                                                className="inline-flex items-center justify-center text-rose-500 hover:text-rose-400 transition-colors p-0.5 rounded focus:outline-none focus:ring-1 focus:ring-rose-500/50"
+                                                            // title="View Error Details"
+                                                            >
+                                                                <AlertTriangle className="w-3.5 h-3.5" />
+                                                            </button>
+                                                        </TooltipTrigger>
+                                                        <TooltipContent
+                                                            side="bottom"
+                                                            align="start"
+                                                            className="max-w-sm bg-popover text-popover-foreground border border-border shadow-lg p-3 text-xs select-text z-50"
+                                                        >
+                                                            <div className="flex items-center gap-1.5 font-semibold text-rose-500 mb-1.5">
+                                                                <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                                                                <span>Request Error</span>
+                                                            </div>
+                                                            <p className="font-mono text-[11px] text-muted-foreground whitespace-pre-wrap break-all leading-relaxed">
+                                                                {currentHistoryItem?.errorMessage || "An error occurred while sending the request."}
+                                                            </p>
+                                                        </TooltipContent>
+                                                    </Tooltip>
+                                                </TooltipProvider>
+                                            )}
+                                        </div>
+                                        {currentHistoryItem?.responseTime !== undefined && currentHistoryItem.responseTime > 0 && (
                                             <span className="text-[11px] font-mono text-muted-foreground">
-                                                {history[selectedHistoryIndex].responseTime} ms
+                                                {currentHistoryItem.responseTime} ms
                                             </span>
                                         )}
                                     </div>

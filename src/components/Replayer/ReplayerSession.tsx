@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useCallback } from 'react'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { useAppDispatch, useAppSelector } from '@/hooks/redux'
@@ -42,20 +42,18 @@ const ReplayerSession = ({ collections }: { collections: ReplayerCollection[] })
     const { selectedCollectionIndex, expandedIds: reduxExpandedIds } = useAppSelector(selectReplayerState(projectId));
     const selectedSessionIndex = collections[selectedCollectionIndex]?.selectedSessionIndex ?? null;
 
-    const activeSelectedId = useMemo(() => {
-        if (selectedCollectionIndex < 0 || selectedCollectionIndex >= collections.length) return null;
+    const selectedIds = useMemo(() => {
+        if (selectedCollectionIndex < 0 || selectedCollectionIndex >= collections.length) return [];
         const col = collections[selectedCollectionIndex];
-        if (!col) return null;
+        if (!col) return [];
         const colId = col.id || `${selectedCollectionIndex}`;
         if (selectedSessionIndex !== null && selectedSessionIndex >= 0 && selectedSessionIndex < col.sessions.length) {
             const sess = col.sessions[selectedSessionIndex];
             const sessId = sess?.id || `${selectedSessionIndex}`;
-            return `sess::${colId}::${sessId}`;
+            return [`sess::${colId}::${sessId}`];
         }
-        return colId;
+        return [];
     }, [selectedCollectionIndex, selectedSessionIndex, collections]);
-
-    const selectedIds = useMemo(() => (activeSelectedId ? [activeSelectedId] : []), [activeSelectedId]);
 
     const expandedIds = useMemo(() => {
         return reduxExpandedIds || [];
@@ -88,16 +86,17 @@ const ReplayerSession = ({ collections }: { collections: ReplayerCollection[] })
         };
     }), [collections]);
 
-    const handleExpand = (newExpandedIds: string[]) => {
+    const handleExpand = useCallback((newExpandedIds: string[]) => {
         if (projectId) {
             dispatch(setExpandedIds({ expandedIds: newExpandedIds, projectId }));
         }
-    };
+    }, [projectId, dispatch]);
 
-    const handleSelection = (value: string[]) => {
+    const handleSelection = useCallback((value: string[]) => {
         if (!value || value.length === 0 || !projectId) return;
         const selectedId = value[0];
-        if (selectedId.startsWith('sess::')) {
+
+        if (selectedId && selectedId.startsWith('sess::')) {
             const [_, colPart, sessPart] = selectedId.split('::');
             let colIdx = collections.findIndex((c, i) => c.id === colPart || `${i}` === colPart || `col_${i}` === colPart);
             if (colIdx === -1) colIdx = Number(colPart);
@@ -111,18 +110,8 @@ const ReplayerSession = ({ collections }: { collections: ReplayerCollection[] })
                     projectId
                 }));
             }
-        } else {
-            let colIdx = collections.findIndex((c, i) => c.id === selectedId || `${i}` === selectedId || `col_${i}` === selectedId);
-            if (colIdx === -1) colIdx = Number(selectedId);
-            if (colIdx >= 0 && colIdx < collections.length) {
-                const col = collections[colIdx];
-                const sessIdx = col?.selectedSessionIndex !== null && col?.selectedSessionIndex !== undefined
-                    ? col.selectedSessionIndex
-                    : (col?.sessions.length ? 0 : null);
-                dispatch(selectColSess({ collectionIndex: colIdx, sessionIndex: sessIdx, projectId }));
-            }
         }
-    };
+    }, [collections, projectId, dispatch]);
 
     const handleConfirmRemove = () => {
         if (!removingItem || !projectId) return;
@@ -156,6 +145,7 @@ const ReplayerSession = ({ collections }: { collections: ReplayerCollection[] })
             if (colIndex === -1) colIndex = Number(colPart);
         }
 
+        const isCurrentActiveCollection = isCollection && colIndex === selectedCollectionIndex && selectedSessionIndex !== null;
         const isEditing = editingNodeId === node.id;
 
         const handleSaveInline = () => {
@@ -202,11 +192,11 @@ const ReplayerSession = ({ collections }: { collections: ReplayerCollection[] })
         };
 
         return (
-            <div className="flex items-center justify-between w-full group/node pr-1 min-w-0">
+            <div className={`flex items-center justify-between w-full group/node pr-1 min-w-0 ${isCurrentActiveCollection ? 'text-primary font-medium' : ''}`}>
                 {isEditing ? (
                     <div className="flex items-center gap-1.5 min-w-0 flex-1 mr-1" onClick={(e) => e.stopPropagation()}>
                         {isCollection ? (
-                            <Folder size={15} className="shrink-0 text-muted-foreground" />
+                            <Folder size={15} className={`shrink-0 ${isCurrentActiveCollection ? 'text-primary' : 'text-muted-foreground'}`} />
                         ) : (
                             <File size={15} className="shrink-0 text-muted-foreground" />
                         )}
@@ -224,11 +214,11 @@ const ReplayerSession = ({ collections }: { collections: ReplayerCollection[] })
                 ) : (
                     <div className="flex items-center gap-2 min-w-0 overflow-hidden flex-1">
                         {isCollection ? (
-                            <Folder size={15} className="shrink-0 text-muted-foreground" />
+                            <Folder size={15} className={`shrink-0 ${isCurrentActiveCollection ? 'text-primary' : 'text-muted-foreground'}`} />
                         ) : (
                             <File size={15} className="shrink-0 text-muted-foreground" />
                         )}
-                        <span className="truncate text-[13px] font-mono select-none">
+                        <span className={`truncate text-[13px] font-mono select-none ${isCurrentActiveCollection ? 'text-foreground font-semibold' : ''}`}>
                             <HighlightedText text={node.label} matches={props.node.searchMatches || []} />
                         </span>
                     </div>
@@ -311,6 +301,7 @@ const ReplayerSession = ({ collections }: { collections: ReplayerCollection[] })
                     onSelect={handleSelection}
                     expandedIds={expandedIds}
                     onExpand={handleExpand}
+                    clickToToggle={true}
                     showIcons={false}
                     virtualizeEnabled={true}
                 />

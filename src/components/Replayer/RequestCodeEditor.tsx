@@ -51,7 +51,7 @@ const RequestCodeEditor = () => {
 
         const updateListener = EditorView.updateListener.of((update) => {
             if (update.docChanged) {
-                const code = update.state.doc.sliceString(0, update.state.doc.length, state.lineBreak);
+                const code = update.state.doc.sliceString(0, update.state.doc.length, update.state.lineBreak);
                 dispatch(setReaplayerContent({ rawRequest: code, projectId }));
             }
         });

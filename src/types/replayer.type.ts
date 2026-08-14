@@ -6,6 +6,8 @@ export interface ReplayerHistoryItem {
     responseRaw: string;
     baseUrl?: string;
     createdAt?: string;
+    status?: string;
+    errorMessage?: string | null;
 }
 
 export interface ReplayerSession {
@@ -42,6 +44,8 @@ export interface ReplayerFullData {
                 responseRaw: string;
                 responseTime: number;
                 createdAt: string;
+                status?: string;
+                errorMessage?: string | null;
             }>;
             selectedHistoryIndex?: number | null;
             urlIsValid: boolean;
