@@ -24,12 +24,16 @@ interface RemoveTarget {
     label: string;
 }
 
-function parseTreeNodeId(nodeId: string): { isSession: boolean; colId: string; sessId?: string } {
+function parseTreeNodeId(nodeId: string): { isSession: boolean; isCreateAction: boolean; colId: string; sessId?: string } {
     if (nodeId.startsWith('sess::')) {
         const parts = nodeId.split('::');
-        return { isSession: true, colId: parts[1], sessId: parts[2] };
+        return { isSession: true, isCreateAction: false, colId: parts[1], sessId: parts[2] };
     }
-    return { isSession: false, colId: nodeId };
+    if (nodeId.startsWith('create_sess::')) {
+        const parts = nodeId.split('::');
+        return { isSession: false, isCreateAction: true, colId: parts[1] };
+    }
+    return { isSession: false, isCreateAction: false, colId: nodeId };
 }
 
 const ReplayerSession = () => {
@@ -63,15 +67,23 @@ const ReplayerSession = () => {
 
     const data: TreeNode<unknown>[] = useMemo(() => collections.map((collection, colIndex) => {
         const colId = collection.id;
+        const children = collection.sessions.length > 0
+            ? collection.sessions.map((session, sessIndex) => ({
+                id: `sess::${colId}::${session.id}`,
+                label: session.name || `Session ${sessIndex + 1}`,
+                icon: <File size={16} />,
+            }))
+            : [{
+                id: `create_sess::${colId}`,
+                label: 'Create a session',
+                icon: <Plus size={14} />,
+            }];
+
         return {
             id: colId,
             label: collection.name || `Collection ${colIndex + 1}`,
             icon: <Folder size={16} />,
-            children: collection.sessions.map((session, sessIndex) => ({
-                id: `sess::${colId}::${session.id}`,
-                label: session.name || `Session ${sessIndex + 1}`,
-                icon: <File size={16} />,
-            })),
+            children,
         };
     }), [collections]);
 
@@ -82,10 +94,14 @@ const ReplayerSession = () => {
     const handleSelection = useCallback((value: string[]) => {
         if (!value || value.length === 0) return;
         const parsed = parseTreeNodeId(value[0]);
+        if (parsed.isCreateAction && parsed.colId) {
+            createSession(parsed.colId);
+            return;
+        }
         if (parsed.isSession && parsed.colId && parsed.sessId) {
             selectSession(parsed.colId, parsed.sessId);
         }
-    }, [selectSession]);
+    }, [createSession, selectSession]);
 
     const handleConfirmRemove = async () => {
         if (!removingItem) return;
@@ -99,7 +115,23 @@ const ReplayerSession = () => {
     };
 
     const renderNode = (node: TreeNode<unknown>, props: TreeNodeRenderProps<unknown>) => {
-        const { isSession, colId, sessId } = parseTreeNodeId(node.id);
+        const { isSession, isCreateAction, colId, sessId } = parseTreeNodeId(node.id);
+
+        if (isCreateAction) {
+            return (
+                <div
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        createSession(colId);
+                    }}
+                    className="flex items-center gap-1.5 w-full text-muted-foreground/70 hover:text-primary transition-colors text-xs py-0.5 select-none font-mono cursor-pointer group/add"
+                >
+                    <Plus size={13} className="shrink-0 text-muted-foreground/70 group-hover/add:text-primary transition-colors" />
+                    <span className="truncate italic">Create a session</span>
+                </div>
+            );
+        }
+
         const isCollection = !isSession;
         const isCurrentActiveCollection = isCollection && colId === selectedCollectionId && selectedSessionId !== null;
         const isEditing = editingNodeId === node.id;
