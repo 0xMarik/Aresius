@@ -54,7 +54,6 @@ const RequestContextMenu = ({ viewRef }: { viewRef: React.MutableRefObject<Edito
             </ContextMenuItem>
             <ContextMenuSeparator />
             <SendToFuzzer rawRequest={activeDraft?.requestTmp ?? ""} host={activeDraft?.url ?? ""} />
-            <ContextMenuItem />
         </>
     );
 };

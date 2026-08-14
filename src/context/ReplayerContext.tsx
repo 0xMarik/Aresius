@@ -46,7 +46,7 @@ interface ReplayerTreeContextType {
     deselectSession: () => void;
     toggleExpand: (collectionId: string) => void;
     setExpandedIdsList: (newIds: string[]) => void;
-    createCollection: () => Promise<void>;
+    createCollection: () => Promise<string | null>;
     createSession: (collectionId: string, initialData?: { name?: string; request?: string; url?: string; urlIsValid?: boolean }) => Promise<void>;
     renameCollection: (collectionId: string, name: string) => Promise<void>;
     renameSession: (collectionId: string, sessionId: string, name: string) => Promise<void>;
@@ -265,9 +265,17 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         invoke('set_replayer_expanded_ids', { projectId, expandedIds: newIds }).catch(console.error);
     }, [dispatch, projectId]);
 
+    useEffect(() => {
+        return () => {
+            if (debounceDraftTimerRef.current) {
+                clearTimeout(debounceDraftTimerRef.current);
+            }
+        };
+    }, []);
+
     // Create Collection
-    const createCollection = useCallback(async () => {
-        if (!projectId) return;
+    const createCollection = useCallback(async (): Promise<string | null> => {
+        if (!projectId) return null;
         const newColId = crypto.randomUUID();
         const newName = `Collection ${collections.length + 1}`;
         const sortOrder = collections.length;
@@ -284,8 +292,10 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                 projectId,
                 collection: { id: newColId, name: newName, isExpanded: true, sessions: [] },
             }));
+            return newColId;
         } catch (err) {
             console.error('Failed to create collection:', err);
+            return null;
         }
     }, [collections.length, dispatch, projectId]);
 

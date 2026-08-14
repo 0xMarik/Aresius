@@ -254,16 +254,15 @@ const ReplayerSession = () => {
         );
     };
 
-    const handleNewSession = () => {
+    const handleNewSession = async () => {
         const targetColId = selectedCollectionId || collections[0]?.id;
         if (targetColId) {
-            createSession(targetColId);
+            await createSession(targetColId);
         } else {
-            createCollection().then(() => {
-                if (collections[0]?.id) {
-                    createSession(collections[0].id);
-                }
-            });
+            const newColId = await createCollection();
+            if (newColId) {
+                await createSession(newColId);
+            }
         }
     };
 

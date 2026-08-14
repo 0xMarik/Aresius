@@ -252,6 +252,13 @@ const replayerSlice = createSlice({
         deleteCollectionSuccess: (state, action: PayloadAction<{ projectId: string; collectionId: string }>) => {
             const { projectId, collectionId } = action.payload;
             const bucket = getBucket(state, projectId);
+            const deletedCol = bucket.collections.find(c => c.id === collectionId);
+            if (deletedCol) {
+                for (const s of deletedCol.sessions) {
+                    delete bucket.sessionCache[s.id];
+                    delete bucket.pendingSessions[s.id];
+                }
+            }
             const remaining = bucket.collections.filter(c => c.id !== collectionId);
             bucket.collections = remaining;
 

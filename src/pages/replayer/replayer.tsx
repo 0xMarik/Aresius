@@ -55,16 +55,17 @@ function ReplayerContent() {
     const hasNoSessionsAtAll = totalSessions === 0;
     const noSessionSelected = !selectedSessionId || !activeDraft;
 
-    const handleCreateSession = () => {
+    const isSendDisabled = !activeDraft?.url || !activeDraft.url.trim() || activeDraft.url === 'https://' || activeDraft.urlIsValid === false;
+
+    const handleCreateSession = async () => {
         const targetColId = selectedCollectionId || collections[0]?.id;
         if (targetColId) {
-            createSession(targetColId);
+            await createSession(targetColId);
         } else {
-            createCollection().then(() => {
-                if (collections[0]?.id) {
-                    createSession(collections[0].id);
-                }
-            });
+            const newColId = await createCollection();
+            if (newColId) {
+                await createSession(newColId);
+            }
         }
     };
 
@@ -120,7 +121,7 @@ function ReplayerContent() {
                                 <Button
                                     onClick={triggerReplay}
                                     size="sm"
-                                    disabled={activeDraft?.urlIsValid === false}
+                                    disabled={isSendDisabled}
                                     className="h-8 font-semibold gap-1.5 shrink-0"
                                 >
                                     <Play className="w-3.5 h-3.5 fill-current" />
