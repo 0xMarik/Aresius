@@ -1,3 +1,3 @@
 pub mod replayer;
 
-pub use replayer::replay_request;
+pub use replayer::{cancel_replayer_request, replay_request};

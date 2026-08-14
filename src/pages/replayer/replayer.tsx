@@ -19,7 +19,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { stripPath, ValidateUrlInput } from "@/components/ValidateUrlInput";
 import HistoryRequests from "@/components/Replayer/HistoryRequests";
 import RequestCodeEditor from "@/components/Replayer/RequestCodeEditor";
-import { Loader2, Play, Repeat } from "lucide-react";
+import { Loader2, Play, Repeat, Square } from "lucide-react";
 import ReplayerSession from "@/components/Replayer/ReplayerSession";
 
 const fullHeightTheme = EditorView.theme({
@@ -111,6 +111,7 @@ function Replayer() {
     const selectedHistoryIndex = session?.selectedHistoryIndex ?? null;
 
     const [responseLoading, setResponseLoading] = React.useState<boolean>(false);
+    const activeRequestIdRef = useRef<string | null>(null);
     const dispatch = useAppDispatch();
 
     useEffect(() => {
@@ -123,19 +124,45 @@ function Replayer() {
     const triggerRequest = async () => {
         if (selectedSessionIndex === null || !projectId) return; // no active session, nothing to run
 
-        setResponseLoading(true)
+        const reqId = crypto.randomUUID();
+        activeRequestIdRef.current = reqId;
+        setResponseLoading(true);
+
         const stripedUrl = stripPath(url);
         dispatch(setReaplayerURL({ url: stripedUrl, urlIsValid: true, projectId })); // update the url in the store to be stripped of path
         try {
-            const response = await invoke<ReplayerHistoryItem>('replay_request', { requestTmp: requestTmp, url: stripedUrl });
-            setResponseLoading(false)
-            dispatch(addReplayerHistory({ historyItem: response, projectId }));
-            dispatch(selectedHisotryIndex({ historyIndex: 0, projectId }));
+            const response = await invoke<ReplayerHistoryItem>('replay_request', {
+                requestTmp: requestTmp,
+                url: stripedUrl,
+                reqId,
+            });
+            if (activeRequestIdRef.current === reqId) {
+                setResponseLoading(false);
+                activeRequestIdRef.current = null;
+                dispatch(addReplayerHistory({ historyItem: response, projectId }));
+                dispatch(selectedHisotryIndex({ historyIndex: 0, projectId }));
+            }
         } catch (error) {
-            console.error('Error replaying request:', error);
-            setResponseLoading(false);
+            if (activeRequestIdRef.current === reqId) {
+                console.error('Error replaying request:', error);
+                setResponseLoading(false);
+                activeRequestIdRef.current = null;
+            }
         }
-    }
+    };
+
+    const handleCancelRequest = async () => {
+        const reqId = activeRequestIdRef.current;
+        activeRequestIdRef.current = null;
+        setResponseLoading(false);
+        if (reqId) {
+            try {
+                await invoke('cancel_replayer_request', { reqId });
+            } catch (e) {
+                console.error('Failed to cancel replayer request:', e);
+            }
+        }
+    };
 
     const noSessionSelected = selectedSessionIndex === null;
 
@@ -167,33 +194,62 @@ function Replayer() {
                             <ValidateUrlInput url={session?.url || ""} onChange={(url, urlIsValid) => {
                                 if (projectId) dispatch(setReaplayerURL({ url, urlIsValid, projectId }));
                             }} />
-                            <Button
-                                onClick={triggerRequest}
-                                size="sm"
-                                disabled={responseLoading || session?.urlIsValid === false}
-                                className="h-8 font-semibold gap-1.5 shrink-0"
-                            >
-                                {responseLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5 fill-current" />}
-                                SEND
-                            </Button>
+                            {responseLoading ? (
+                                <Button
+                                    onClick={handleCancelRequest}
+                                    variant="destructive"
+                                    size="sm"
+                                    className="h-8 font-semibold gap-1.5 shrink-0"
+                                >
+                                    <Square className="w-3.5 h-3.5 fill-current" />
+                                    CANCEL
+                                </Button>
+                            ) : (
+                                <Button
+                                    onClick={triggerRequest}
+                                    size="sm"
+                                    disabled={session?.urlIsValid === false}
+                                    className="h-8 font-semibold gap-1.5 shrink-0"
+                                >
+                                    <Play className="w-3.5 h-3.5 fill-current" />
+                                    SEND
+                                </Button>
+                            )}
 
                             <HistoryRequests history={history} selectedHistoryIndex={selectedHistoryIndex} />
                         </div>
                         <ResizablePanelGroup direction='horizontal' autoSaveId="repeater-req-res" className="flex-1 min-h-0">
-                            <ResizablePanel>
-                                <RequestCodeEditor />
+                            <ResizablePanel defaultSize={50} minSize={20}>
+                                <div className="flex flex-col h-full min-h-0 overflow-hidden bg-card">
+                                    <div className="flex items-center justify-between px-3 py-1.5 border-b border-border/40 bg-muted/30 shrink-0 select-none">
+                                        <span className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">Request</span>
+                                    </div>
+                                    <div className="flex-1 min-h-0">
+                                        <RequestCodeEditor />
+                                    </div>
+                                </div>
                             </ResizablePanel>
                             <ResizableHandle withHandle />
-                            <ResizablePanel>
-                                <div className="bg-card min-w-0 w-full h-full">
-                                    {responseLoading ? (
-                                        <div className="flex flex-col items-center justify-center h-full text-muted-foreground text-xs gap-2">
-                                            <Loader2 className="w-6 h-6 animate-spin text-primary" />
-                                            <span>Replaying HTTP Request...</span>
-                                        </div>
-                                    ) : (
-                                        <ResponseCodeEditor />
-                                    )}
+                            <ResizablePanel defaultSize={50} minSize={20}>
+                                <div className="flex flex-col h-full min-h-0 overflow-hidden bg-card">
+                                    <div className="flex items-center justify-between px-3 py-1.5 border-b border-border/40 bg-muted/30 shrink-0 select-none">
+                                        <span className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">Response</span>
+                                        {selectedHistoryIndex !== null && history[selectedHistoryIndex]?.responseTime !== undefined && (
+                                            <span className="text-[11px] font-mono text-muted-foreground">
+                                                {history[selectedHistoryIndex].responseTime} ms
+                                            </span>
+                                        )}
+                                    </div>
+                                    <div className="flex-1 min-h-0">
+                                        {responseLoading ? (
+                                            <div className="flex flex-col items-center justify-center h-full text-muted-foreground text-xs gap-2">
+                                                <Loader2 className="w-6 h-6 animate-spin text-primary" />
+                                                <span>Replaying HTTP Request...</span>
+                                            </div>
+                                        ) : (
+                                            <ResponseCodeEditor />
+                                        )}
+                                    </div>
                                 </div>
                             </ResizablePanel>
                         </ResizablePanelGroup>

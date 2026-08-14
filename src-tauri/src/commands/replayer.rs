@@ -1,36 +1,74 @@
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::LazyLock;
 use std::time::Duration;
 
+use tokio::sync::{oneshot, Mutex};
 use tokio::time::timeout;
 
 use crate::ares_utils::http_connection::HttpConnection;
 use crate::types::replayer::*;
 
+static REPLAYER_CANCELLERS: LazyLock<Arc<Mutex<HashMap<String, oneshot::Sender<()>>>>> =
+    LazyLock::new(|| Arc::new(Mutex::new(HashMap::new())));
+
 #[tauri::command]
-pub async fn replay_request(url: String, request_tmp: String) -> Result<ReplayerResponse, String> {
-    let req = request_tmp;
+pub async fn cancel_replayer_request(req_id: String) -> Result<(), String> {
+    let mut map = REPLAYER_CANCELLERS.lock().await;
+    if let Some(tx) = map.remove(&req_id) {
+        let _ = tx.send(());
+    }
+    Ok(())
+}
 
-    let mut conn = HttpConnection::new(&url)
-        .await
-        .map_err(|e| format!("Connection failed: {e}"))?;
+#[tauri::command]
+pub async fn replay_request(
+    url: String,
+    request_tmp: String,
+    req_id: Option<String>,
+) -> Result<ReplayerResponse, String> {
+    let (tx, rx) = oneshot::channel::<()>();
 
-    let result = conn.send_request(&req.as_bytes()).await;
-
-    // Always attempt a clean shutdown, whether or not the request
-    // succeeded. A target that's slow or hostile shouldn't be able to make
-    // this hang forever, so bound it with a short timeout; either way we
-    // don't let a close failure override a response we already have.
-    match timeout(Duration::from_secs(5), conn.close()).await {
-        Ok(Err(e)) => eprintln!("warning: failed to cleanly close connection to {url}: {e}"),
-        Err(_) => eprintln!("warning: close on {url} timed out after 5s"),
-        Ok(Ok(())) => {}
+    if let Some(ref id) = req_id {
+        let mut map = REPLAYER_CANCELLERS.lock().await;
+        map.insert(id.clone(), tx);
     }
 
-    let response = result.map_err(|e| format!("Request failed: {e}"))?;
+    let req_id_clone = req_id.clone();
+    let task = async {
+        let req = request_tmp;
 
-    Ok(ReplayerResponse {
-        response_raw: response.as_text_lossy(),
-        response_time: response.elapsed.as_millis(),
-        request_raw: req,
-        base_url: url.clone(),
-    })
+        let mut conn = HttpConnection::new(&url)
+            .await
+            .map_err(|e| format!("Connection failed: {e}"))?;
+
+        let result = conn.send_request(&req.as_bytes()).await;
+
+        match timeout(Duration::from_secs(5), conn.close()).await {
+            Ok(Err(e)) => eprintln!("warning: failed to cleanly close connection to {url}: {e}"),
+            Err(_) => eprintln!("warning: close on {url} timed out after 5s"),
+            Ok(Ok(())) => {}
+        }
+
+        let response = result.map_err(|e| format!("Request failed: {e}"))?;
+
+        Ok::<_, String>(ReplayerResponse {
+            response_raw: response.as_text_lossy(),
+            response_time: response.elapsed.as_millis(),
+            request_raw: req,
+            base_url: url.clone(),
+        })
+    };
+
+    let result = tokio::select! {
+        res = task => res,
+        _ = rx => Err("Request cancelled".to_string()),
+    };
+
+    if let Some(ref id) = req_id_clone {
+        let mut map = REPLAYER_CANCELLERS.lock().await;
+        map.remove(id);
+    }
+
+    result
 }

@@ -13,7 +13,7 @@ use crate::ares_utils::database::projects_catalog::{
     delete_project, get_default_project_dir, list_projects, select_project,
 };
 use crate::ares_utils::database::DbState;
-use crate::commands::replay_request;
+use crate::commands::{cancel_replayer_request, replay_request};
 use crate::fuzzer::combinatorial::execute_combinatorial_fuzzing;
 use crate::fuzzer::echo::execute_echo_fuzzing;
 use crate::fuzzer::engine::{
@@ -70,6 +70,7 @@ pub fn run() {
             get_fuzzer_request_by_id,
             // Replayer
             replay_request,
+            cancel_replayer_request,
             get_replayer_data,
             create_replayer_collection,
             rename_replayer_collection,
