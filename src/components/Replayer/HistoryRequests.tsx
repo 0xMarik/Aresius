@@ -7,20 +7,16 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { Badge } from '../ui/badge';
 import { parseRequest, parseResponse } from '../utils';
 import { useReplayerEditor } from '@/context/ReplayerContext';
+import { ReplayerHistoryItem } from '@/types/replayer.type';
 import { cn } from '@/lib/utils';
 
 export function getStatusBadgeStyle(status: string) {
     if (!status) return 'bg-muted text-muted-foreground border-border';
     const lower = status.toLowerCase();
-    if (lower === 'pending') {
-        return 'bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30';
-    }
-    if (lower === 'error') {
-        return 'bg-rose-500/15 text-rose-700 dark:text-rose-400 border-rose-500/30';
-    }
-    if (lower === 'canceled' || lower === 'cancelled') {
-        return 'bg-muted text-muted-foreground border-border';
-    }
+    if (lower === 'pending') return 'bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30';
+    if (lower === 'error') return 'bg-rose-500/15 text-rose-700 dark:text-rose-400 border-rose-500/30';
+    if (lower === 'canceled' || lower === 'cancelled') return 'bg-muted text-muted-foreground border-border';
+
     const num = parseInt(status);
     if (!isNaN(num)) {
         if (num < 300) return 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/30';
@@ -29,6 +25,32 @@ export function getStatusBadgeStyle(status: string) {
         return 'bg-red-500/15 text-red-700 dark:text-red-400 border-red-500/30';
     }
     return 'bg-muted text-muted-foreground border-border';
+}
+
+function formatHistoryHost(item: ReplayerHistoryItem, headers?: Record<string, string>): string {
+    const hostHeader = Object.entries(headers || {}).find(([k]) => k.toLowerCase() === 'host')?.[1];
+    let host = hostHeader || item.baseUrl || '';
+    if (!host) return '—';
+    if (host.includes('://')) {
+        try {
+            return new URL(host).host;
+        } catch {
+            return host;
+        }
+    }
+    return host;
+}
+
+function formatHistoryTime(item: ReplayerHistoryItem): string {
+    if (item.createdAt) {
+        const d = new Date(item.createdAt);
+        if (!isNaN(d.getTime())) return d.toLocaleTimeString();
+    }
+    if (item.requestTime && item.requestTime > 1000000000000) {
+        const d = new Date(item.requestTime);
+        if (!isNaN(d.getTime())) return d.toLocaleTimeString();
+    }
+    return '—';
 }
 
 const HistoryRequests = () => {
@@ -93,34 +115,6 @@ const HistoryRequests = () => {
                                     const parsedRes = item.responseRaw ? parseResponse(item.responseRaw) : null;
                                     const status = item.status || (parsedRes?.statusCode ? String(parsedRes.statusCode) : '');
 
-                                    const hostHeader = Object.entries(req.headers || {}).find(
-                                        ([k]) => k.toLowerCase() === 'host'
-                                    )?.[1];
-
-                                    let hostDisplay = hostHeader || item.baseUrl || '';
-                                    if (!hostDisplay) {
-                                        hostDisplay = '—';
-                                    } else if (hostDisplay.includes('://')) {
-                                        try {
-                                            hostDisplay = new URL(hostDisplay).host;
-                                        } catch {
-                                            // keep raw hostDisplay
-                                        }
-                                    }
-
-                                    let timeDisplay = '—';
-                                    if (item.createdAt) {
-                                        const d = new Date(item.createdAt);
-                                        if (!isNaN(d.getTime())) {
-                                            timeDisplay = d.toLocaleTimeString();
-                                        }
-                                    } else if (item.requestTime && item.requestTime > 1000000000000) {
-                                        const d = new Date(item.requestTime);
-                                        if (!isNaN(d.getTime())) {
-                                            timeDisplay = d.toLocaleTimeString();
-                                        }
-                                    }
-
                                     return (
                                         <TableRow
                                             key={item.id ?? index}
@@ -140,10 +134,10 @@ const HistoryRequests = () => {
                                                 )}
                                             </TableCell>
                                             <TableCell className="font-mono text-xs font-semibold">{req.method}</TableCell>
-                                            <TableCell className="text-xs truncate max-w-[140px]">{hostDisplay}</TableCell>
+                                            <TableCell className="text-xs truncate max-w-[140px]">{formatHistoryHost(item, req.headers)}</TableCell>
                                             <TableCell className="truncate max-w-[150px] font-mono text-xs">{req.path}</TableCell>
                                             <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
-                                                {timeDisplay}
+                                                {formatHistoryTime(item)}
                                             </TableCell>
                                         </TableRow>
                                     );

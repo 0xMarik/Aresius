@@ -1,11 +1,4 @@
-import { basicSetup, EditorView } from "codemirror";
-import './replayer.style.css';
-import { EditorState } from '@codemirror/state';
-import { useEffect, useRef } from 'react';
-import { http } from '@/components/http-parser.component';
-import { oneDark } from '@codemirror/theme-one-dark';
-import { getCodeMirrorScrollTheme } from '@/components/codemirror-scroll.theme';
-import { useTheme } from '@/components/theme-provider';
+import { useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
@@ -14,6 +7,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { ValidateUrlInput } from "@/components/ValidateUrlInput";
 import HistoryRequests, { getStatusBadgeStyle } from "@/components/Replayer/HistoryRequests";
 import RequestCodeEditor from "@/components/Replayer/RequestCodeEditor";
+import ResponseCodeEditor from "@/components/Replayer/ResponseCodeEditor";
 import { AlertTriangle, Loader2, Play, Repeat, Square } from "lucide-react";
 import ReplayerSession from "@/components/Replayer/ReplayerSession";
 import { ReplayerProvider, useReplayerEditor } from "@/context/ReplayerContext";
@@ -21,68 +15,6 @@ import { useAppDispatch } from '@/hooks/redux';
 import { useProjectId } from '@/hooks/useProjectId';
 import { resetReplayerReceivedSession } from '@/store/slices/replayerSlice';
 import { cn } from "@/lib/utils";
-
-const fullHeightTheme = EditorView.theme({
-    '&': {
-        height: '100%',
-        display: 'flex',
-        flexDirection: 'column',
-    },
-    '.cm-scroller': {
-        flex: 1,
-        overflow: 'auto',
-    },
-});
-
-const ResponseCodeEditor = () => {
-    const editorRef = useRef<HTMLDivElement | null>(null);
-    const viewRef = useRef<EditorView | null>(null);
-    const { theme } = useTheme();
-    const isDark = theme === "dark" || (theme === "system" && typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches);
-
-    const { activeHistoryItem, selectedSessionId } = useReplayerEditor();
-    const responseRaw = activeHistoryItem?.responseRaw ?? "";
-
-    useEffect(() => {
-        if (!editorRef.current || !selectedSessionId) return;
-
-        if (viewRef.current) {
-            viewRef.current.destroy();
-            viewRef.current = null;
-        }
-
-        const state = EditorState.create({
-            doc: responseRaw,
-            extensions: [
-                basicSetup,
-                http(),
-                ...(isDark ? [oneDark] : []),
-                fullHeightTheme,
-                getCodeMirrorScrollTheme(isDark),
-                EditorView.lineWrapping,
-                EditorState.readOnly.of(true),
-            ],
-        });
-
-        const view = new EditorView({
-            state,
-            parent: editorRef.current,
-        });
-
-        viewRef.current = view;
-
-        return () => {
-            if (view) {
-                view.destroy();
-            }
-        };
-    }, [responseRaw, selectedSessionId, isDark]);
-
-    return (
-        <div ref={editorRef} className="h-full w-full">
-        </div>
-    );
-};
 
 function ReplayerContent() {
     const projectId = useProjectId();
@@ -110,7 +42,7 @@ function ReplayerContent() {
     const noSessionSelected = !selectedSessionId;
 
     return (
-        <ResizablePanelGroup direction='horizontal' autoSaveId="aresius-repeater-layout">
+        <ResizablePanelGroup direction="horizontal" autoSaveId="aresius-repeater-layout">
             <ResizablePanel defaultSize={15} minSize={13} maxSize={50}>
                 <ReplayerSession />
             </ResizablePanel>
@@ -124,8 +56,8 @@ function ReplayerContent() {
                         description="Select an existing session from the collection tree or click 'New Session' to start replaying HTTP requests."
                     />
                 ) : (
-                    <div className='h-full flex flex-col'>
-                        <div className='flex items-center h-12 bg-card/40 gap-3 shrink-0 p-2'>
+                    <div className="h-full flex flex-col">
+                        <div className="flex items-center h-12 bg-card/40 gap-3 shrink-0 p-2">
                             <ValidateUrlInput
                                 url={activeDraft?.url || ""}
                                 onChange={(url, urlIsValid) => {
@@ -156,7 +88,7 @@ function ReplayerContent() {
 
                             <HistoryRequests />
                         </div>
-                        <ResizablePanelGroup direction='horizontal' autoSaveId="repeater-req-res" className="flex-1 min-h-0">
+                        <ResizablePanelGroup direction="horizontal" autoSaveId="repeater-req-res" className="flex-1 min-h-0">
                             <ResizablePanel defaultSize={50} minSize={20}>
                                 <div className="flex flex-col h-full min-h-0 overflow-hidden bg-card">
                                     <div className="flex items-center justify-between px-3 py-1.5 border-b border-border/40 bg-muted/30 shrink-0 select-none">

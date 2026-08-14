@@ -1,35 +1,21 @@
-import { useReplayerEditor } from "@/context/ReplayerContext";
-import { basicSetup, EditorView } from "codemirror";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef } from 'react';
 import { EditorState } from '@codemirror/state';
-import { http } from "../http-parser.component";
-import { oneDark } from "@codemirror/theme-one-dark";
-import { useTheme } from "@/components/theme-provider";
-import { getCodeMirrorScrollTheme } from "@/components/codemirror-scroll.theme";
-import CoreContextMenu from "../ContextMenu/CoreContextMenu";
-import RequestContextMenu from "./RequestContextMenu";
-
-const fullHeightTheme = EditorView.theme({
-    '&': {
-        height: '100%',
-        display: 'flex',
-        flexDirection: 'column',
-    },
-    '.cm-scroller': {
-        flex: 1,
-        overflow: 'auto',
-    },
-});
+import { EditorView } from 'codemirror';
+import { useTheme } from '@/components/theme-provider';
+import { useReplayerEditor } from '@/context/ReplayerContext';
+import CoreContextMenu from '../ContextMenu/CoreContextMenu';
+import RequestContextMenu from './RequestContextMenu';
+import { getCommonEditorExtensions } from './editorUtils';
 
 const RequestCodeEditor = () => {
     const editorRef = useRef<HTMLDivElement | null>(null);
     const viewRef = useRef<EditorView | null>(null);
     const { theme } = useTheme();
-    const isDark = theme === "dark" || (theme === "system" && typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    const isDark = theme === 'dark' || (theme === 'system' && typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches);
 
     const { activeDraft, updateDraftContent, selectedHistoryIndex } = useReplayerEditor();
     const sessionId = activeDraft?.sessionId;
-    const requestTmp = activeDraft?.requestTmp ?? "";
+    const requestTmp = activeDraft?.requestTmp ?? '';
 
     useEffect(() => {
         if (!editorRef.current || !sessionId) return;
@@ -48,16 +34,10 @@ const RequestCodeEditor = () => {
 
         const state = EditorState.create({
             doc: requestTmp,
-            extensions: [
-                EditorState.lineSeparator.of("\r\n"),
-                basicSetup,
-                http(),
-                ...(isDark ? [oneDark] : []),
-                fullHeightTheme,
-                getCodeMirrorScrollTheme(isDark),
+            extensions: getCommonEditorExtensions(isDark, [
+                EditorState.lineSeparator.of('\r\n'),
                 updateListener,
-                EditorView.lineWrapping,
-            ],
+            ]),
         });
 
         const view = new EditorView({
@@ -72,13 +52,12 @@ const RequestCodeEditor = () => {
                 view.destroy();
             }
         };
-    }, [sessionId, selectedHistoryIndex, isDark]);
+    }, [sessionId, selectedHistoryIndex, isDark, updateDraftContent]);
 
     return (
         <div className="bg-card w-full h-full">
             <CoreContextMenu renderContextMenu={() => <RequestContextMenu viewRef={viewRef} />}>
-                <div ref={editorRef} className="h-full w-full">
-                </div>
+                <div ref={editorRef} className="h-full w-full" />
             </CoreContextMenu>
         </div>
     );

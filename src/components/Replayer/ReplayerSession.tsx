@@ -24,6 +24,14 @@ interface RemoveTarget {
     label: string;
 }
 
+function parseTreeNodeId(nodeId: string): { isSession: boolean; colId: string; sessId?: string } {
+    if (nodeId.startsWith('sess::')) {
+        const parts = nodeId.split('::');
+        return { isSession: true, colId: parts[1], sessId: parts[2] };
+    }
+    return { isSession: false, colId: nodeId };
+}
+
 const ReplayerSession = () => {
     const projectId = useProjectId();
     const {
@@ -48,12 +56,8 @@ const ReplayerSession = () => {
     }, [selectedCollectionId, selectedSessionId]);
 
     const [searchTerm, setSearchTerm] = useState('');
-
-    // Inline edit state
     const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
     const [editingText, setEditingText] = useState('');
-
-    // Remove dialog state
     const [removeDialogOpen, setRemoveDialogOpen] = useState(false);
     const [removingItem, setRemovingItem] = useState<RemoveTarget | null>(null);
 
@@ -63,14 +67,11 @@ const ReplayerSession = () => {
             id: colId,
             label: collection.name || `Collection ${colIndex + 1}`,
             icon: <Folder size={16} />,
-            children: collection.sessions.map((session, sessIndex) => {
-                const sessId = session.id;
-                return {
-                    id: `sess::${colId}::${sessId}`,
-                    label: session.name || `Session ${sessIndex + 1}`,
-                    icon: <File size={16} />,
-                };
-            }),
+            children: collection.sessions.map((session, sessIndex) => ({
+                id: `sess::${colId}::${session.id}`,
+                label: session.name || `Session ${sessIndex + 1}`,
+                icon: <File size={16} />,
+            })),
         };
     }), [collections]);
 
@@ -80,13 +81,9 @@ const ReplayerSession = () => {
 
     const handleSelection = useCallback((value: string[]) => {
         if (!value || value.length === 0) return;
-        const selectedId = value[0];
-
-        if (selectedId && selectedId.startsWith('sess::')) {
-            const [_, colPart, sessPart] = selectedId.split('::');
-            if (colPart && sessPart) {
-                selectSession(colPart, sessPart);
-            }
+        const parsed = parseTreeNodeId(value[0]);
+        if (parsed.isSession && parsed.colId && parsed.sessId) {
+            selectSession(parsed.colId, parsed.sessId);
         }
     }, [selectSession]);
 
@@ -102,20 +99,8 @@ const ReplayerSession = () => {
     };
 
     const renderNode = (node: TreeNode<unknown>, props: TreeNodeRenderProps<unknown>) => {
-        const isSession = node.id.startsWith('sess::');
+        const { isSession, colId, sessId } = parseTreeNodeId(node.id);
         const isCollection = !isSession;
-
-        let colId = '';
-        let sessId: string | undefined = undefined;
-
-        if (isSession) {
-            const [_, colPart, sessPart] = node.id.split('::');
-            colId = colPart;
-            sessId = sessPart;
-        } else {
-            colId = node.id;
-        }
-
         const isCurrentActiveCollection = isCollection && colId === selectedCollectionId && selectedSessionId !== null;
         const isEditing = editingNodeId === node.id;
 
@@ -239,9 +224,9 @@ const ReplayerSession = () => {
     };
 
     return (
-        <div className='h-full'>
+        <div className="h-full">
             <ButtonGroup className="my-2 mx-auto">
-                <Button className=' w-full' onClick={handleNewSession}>
+                <Button className="w-full" onClick={handleNewSession}>
                     <Plus /> New Session
                 </Button>
                 <DropdownMenu>
@@ -258,7 +243,7 @@ const ReplayerSession = () => {
                     </DropdownMenuContent>
                 </DropdownMenu>
             </ButtonGroup>
-            <div className="rounded-lg p-1 w-full h-full ">
+            <div className="rounded-lg p-1 w-full h-full">
                 <Input
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}

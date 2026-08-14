@@ -28,7 +28,7 @@ export interface ActiveSessionDraft {
     requestTmp: string;
 }
 
-// ─── 1. Tree Context (Only tree metadata, zero editor/response coupling) ─────
+// ─── 1. Tree Context (Tree hierarchy & mutations only) ────────────────────────
 
 interface ReplayerTreeContextType {
     collections: ReplayerCollectionMeta[];
@@ -89,7 +89,6 @@ export const useReplayerEditor = () => {
     return context;
 };
 
-// Internal cache for session drafts and histories to avoid re-fetching on every switch
 interface SessionDataCache {
     [sessionId: string]: {
         requestTmp: string;
@@ -110,16 +109,37 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
     const [isLoaded, setIsLoaded] = useState<boolean>(false);
 
-    // 2. Editor & History State (isolated)
+    // 2. Editor & History State
     const [activeDraft, setActiveDraft] = useState<ActiveSessionDraft | null>(null);
     const [history, setHistory] = useState<ReplayerHistoryItem[]>([]);
     const [selectedHistoryIndex, setSelectedHistoryIndex] = useState<number | null>(null);
     const [responseLoading, setResponseLoading] = useState<boolean>(false);
 
-    // Internal cache
     const sessionCacheRef = useRef<SessionDataCache>({});
     const activeRequestIdRef = useRef<string | null>(null);
     const debounceDraftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    // Helper to record history item, update cache, and persist to SQLite
+    const recordHistoryItem = useCallback((sessId: string, item: ReplayerHistoryItem) => {
+        setHistory(prev => [item, ...prev]);
+        setSelectedHistoryIndex(0);
+
+        if (sessionCacheRef.current[sessId]) {
+            sessionCacheRef.current[sessId].history = [item, ...sessionCacheRef.current[sessId].history];
+            sessionCacheRef.current[sessId].selectedHistoryIndex = 0;
+        }
+
+        invoke('add_replayer_history_entry', {
+            sessionId: sessId,
+            historyId: item.id,
+            requestRaw: item.requestRaw,
+            responseRaw: item.responseRaw,
+            responseTime: item.responseTime,
+            createdAt: item.createdAt,
+            status: item.status,
+            errorMessage: item.errorMessage,
+        }).catch(console.error);
+    }, []);
 
     // Load full data from SQLite on project change
     const loadData = useCallback(async () => {
@@ -146,9 +166,7 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
                 c.sessions.forEach((s, sIdx) => {
                     const isSessSelected = isColSelected && c.selectedSessionIndex === sIdx;
-                    if (isSessSelected) {
-                        activeSessId = s.id;
-                    }
+                    if (isSessSelected) activeSessId = s.id;
 
                     sessMetas.push({
                         id: s.id,
@@ -188,7 +206,6 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             setCollections(treeCols);
             setExpandedIds(data.expandedIds || treeCols.filter(c => c.isExpanded).map(c => c.id));
 
-            // Set active selection from SQLite
             if (!activeColId && treeCols.length > 0) {
                 activeColId = treeCols[0].id;
             }
@@ -241,16 +258,10 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         setSelectedCollectionId(collectionId);
         setSelectedSessionId(sessionId);
 
-        // Persist active selection to SQLite in background
         if (projectId) {
-            invoke('set_replayer_active_selection', {
-                projectId,
-                collectionId,
-                sessionId,
-            }).catch(console.error);
+            invoke('set_replayer_active_selection', { projectId, collectionId, sessionId }).catch(console.error);
         }
 
-        // Load active draft and history from cache
         const sCache = sessionCacheRef.current[sessionId];
         const col = collections.find(c => c.id === collectionId);
         const sessMeta = col?.sessions.find(s => s.id === sessionId);
@@ -283,9 +294,7 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     // Toggle expansion
     const toggleExpand = useCallback((collectionId: string) => {
         setExpandedIds((prev) => {
-            const isExpanded = prev.includes(collectionId);
-            const next = isExpanded ? prev.filter(id => id !== collectionId) : [...prev, collectionId];
-
+            const next = prev.includes(collectionId) ? prev.filter(id => id !== collectionId) : [...prev, collectionId];
             if (projectId) {
                 invoke('set_replayer_expanded_ids', { projectId, expandedIds: next }).catch(console.error);
             }
@@ -317,12 +326,7 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
             setCollections(prev => [
                 ...prev,
-                {
-                    id: newColId,
-                    name: newName,
-                    isExpanded: true,
-                    sessions: [],
-                },
+                { id: newColId, name: newName, isExpanded: true, sessions: [] },
             ]);
             setExpandedIds(prev => Array.from(new Set([...prev, newColId])));
             setSelectedCollectionId(newColId);
@@ -369,10 +373,7 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                     next[colIdx] = {
                         ...next[colIdx],
                         isExpanded: true,
-                        sessions: [
-                            ...next[colIdx].sessions,
-                            { id: newSessId, name, url, urlIsValid },
-                        ],
+                        sessions: [...next[colIdx].sessions, { id: newSessId, name, url, urlIsValid }],
                     };
                 }
                 return next;
@@ -473,10 +474,7 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             if (selectedSessionId === sessionId) {
                 nextSelectedSessId = remainingSessions[0]?.id || null;
             }
-            return {
-                ...c,
-                sessions: remainingSessions,
-            };
+            return { ...c, sessions: remainingSessions };
         }));
 
         delete sessionCacheRef.current[sessionId];
@@ -569,7 +567,7 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             if (activeDraft?.sessionId) {
                 invoke('update_replayer_session_draft', {
                     sessionId: activeDraft.sessionId,
-                    requestRaw: hItem.requestRaw,
+                    requestTmp: hItem.requestRaw,
                     baseUrl: null,
                 }).catch(console.error);
             }
@@ -610,7 +608,7 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                 const createdAt = response.createdAt || new Date().toISOString();
                 const responseTime = response.responseTime ?? response.requestTime ?? 0;
 
-                const newHistoryItem: ReplayerHistoryItem = {
+                recordHistoryItem(sessId, {
                     ...response,
                     id: historyId,
                     createdAt,
@@ -619,27 +617,7 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                     status: statusCodeStr,
                     errorMessage: null,
                     baseUrl: stripedUrl,
-                };
-
-                setHistory(prev => [newHistoryItem, ...prev]);
-                setSelectedHistoryIndex(0);
-
-                if (sessionCacheRef.current[sessId]) {
-                    sessionCacheRef.current[sessId].history = [newHistoryItem, ...sessionCacheRef.current[sessId].history];
-                    sessionCacheRef.current[sessId].selectedHistoryIndex = 0;
-                }
-
-                // Persist to SQLite
-                invoke('add_replayer_history_entry', {
-                    sessionId: sessId,
-                    historyId,
-                    requestRaw: currentRequestTmp,
-                    responseRaw: response.responseRaw,
-                    responseTime,
-                    createdAt,
-                    status: statusCodeStr,
-                    errorMessage: null,
-                }).catch(console.error);
+                });
             }
         } catch (error) {
             if (activeRequestIdRef.current === reqId) {
@@ -649,41 +627,20 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
                 const errStr = typeof error === 'string' ? error : (error as any)?.message || 'Request failed';
                 const isCanceled = errStr.toLowerCase().includes('cancel');
-                const historyId = crypto.randomUUID();
-                const createdAt = new Date().toISOString();
 
-                const errorItem: ReplayerHistoryItem = {
-                    id: historyId,
+                recordHistoryItem(sessId, {
+                    id: crypto.randomUUID(),
                     requestRaw: currentRequestTmp,
                     responseRaw: '',
                     baseUrl: stripedUrl,
                     responseTime: 0,
-                    createdAt,
+                    createdAt: new Date().toISOString(),
                     status: isCanceled ? 'Canceled' : 'Error',
                     errorMessage: isCanceled ? null : errStr,
-                };
-
-                setHistory(prev => [errorItem, ...prev]);
-                setSelectedHistoryIndex(0);
-
-                if (sessionCacheRef.current[sessId]) {
-                    sessionCacheRef.current[sessId].history = [errorItem, ...sessionCacheRef.current[sessId].history];
-                    sessionCacheRef.current[sessId].selectedHistoryIndex = 0;
-                }
-
-                invoke('add_replayer_history_entry', {
-                    sessionId: sessId,
-                    historyId,
-                    requestRaw: currentRequestTmp,
-                    responseRaw: '',
-                    responseTime: 0,
-                    createdAt,
-                    status: isCanceled ? 'Canceled' : 'Error',
-                    errorMessage: isCanceled ? null : errStr,
-                }).catch(console.error);
+                });
             }
         }
-    }, [activeDraft, projectId, updateDraftUrl]);
+    }, [activeDraft, projectId, recordHistoryItem, updateDraftUrl]);
 
     // Cancel Replay
     const cancelReplay = useCallback(async () => {
@@ -698,39 +655,18 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                 console.error('Failed to cancel replayer request:', e);
             }
 
-            const historyId = crypto.randomUUID();
-            const createdAt = new Date().toISOString();
-            const cancelItem: ReplayerHistoryItem = {
-                id: historyId,
+            recordHistoryItem(activeDraft.sessionId, {
+                id: crypto.randomUUID(),
                 requestRaw: activeDraft.requestTmp,
                 responseRaw: '',
                 baseUrl: stripPath(activeDraft.url),
                 responseTime: 0,
-                createdAt,
+                createdAt: new Date().toISOString(),
                 status: 'Canceled',
                 errorMessage: null,
-            };
-
-            setHistory(prev => [cancelItem, ...prev]);
-            setSelectedHistoryIndex(0);
-
-            if (sessionCacheRef.current[activeDraft.sessionId]) {
-                sessionCacheRef.current[activeDraft.sessionId].history = [cancelItem, ...sessionCacheRef.current[activeDraft.sessionId].history];
-                sessionCacheRef.current[activeDraft.sessionId].selectedHistoryIndex = 0;
-            }
-
-            invoke('add_replayer_history_entry', {
-                sessionId: activeDraft.sessionId,
-                historyId,
-                requestRaw: activeDraft.requestTmp,
-                responseRaw: '',
-                responseTime: 0,
-                createdAt,
-                status: 'Canceled',
-                errorMessage: null,
-            }).catch(console.error);
+            });
         }
-    }, [activeDraft]);
+    }, [activeDraft, recordHistoryItem]);
 
     // Derived active item & status
     const activeHistoryItem = useMemo(() => {
@@ -757,7 +693,7 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         return activeHistoryItem?.errorMessage || null;
     }, [activeHistoryItem]);
 
-    // Tree Context Value (only tree metadata - changes ONLY on collection/session tree mutations!)
+    // Tree Context Value (only changes on tree structure / selection mutations)
     const treeValue = useMemo<ReplayerTreeContextType>(() => ({
         collections,
         expandedIds,
