@@ -1,6 +1,6 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 import type { RootState } from "@/store";
-import { deleteProject } from "./projectSlice";
+import { deleteProject, setcurrentProjectId, resetProjectData } from "./projectSlice";
 import { ReplayerHistoryItem } from "@/types/replayer.type";
 
 export interface ReplayerSessionMeta {
@@ -295,9 +295,31 @@ const replayerSlice = createSlice({
             const bucket = getBucket(state, projectId);
             bucket.receivedSession = 0;
         },
+
+        clearReplayerProjectState: (state, action: PayloadAction<string>) => {
+            delete state[action.payload];
+        },
+
+        clearAllReplayerState: (state) => {
+            for (const key of Object.keys(state)) {
+                delete state[key];
+            }
+        },
     },
     extraReducers: (builder) => {
+        // When switching/selecting another project, unmount and delete previous projects from memory
+        builder.addCase(setcurrentProjectId, (state, action) => {
+            const nextProjectId = action.payload;
+            for (const key of Object.keys(state)) {
+                if (key !== nextProjectId) {
+                    delete state[key];
+                }
+            }
+        });
         builder.addCase(deleteProject, (state, action) => {
+            delete state[action.payload];
+        });
+        builder.addCase(resetProjectData, (state, action) => {
             delete state[action.payload];
         });
     },
@@ -325,6 +347,8 @@ export const {
     deleteSessionSuccess,
     incrementReplayerReceivedSession,
     resetReplayerReceivedSession,
+    clearReplayerProjectState,
+    clearAllReplayerState,
 } = replayerSlice.actions;
 
 // ─── Selectors ───────────────────────────────────────────────────────────────
