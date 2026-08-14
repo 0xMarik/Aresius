@@ -1,19 +1,8 @@
-import React, { useState, useMemo, useCallback } from 'react'
-import { Button } from '../ui/button'
-import { Input } from '../ui/input'
-import { useAppDispatch, useAppSelector } from '@/hooks/redux'
-import { useProjectId } from '@/hooks/useProjectId'
-import {
-    addCollection,
-    addSessionToCollection,
-    selectColSess,
-    setExpandedIds,
-    removeCollection,
-    removeSession,
-    renameCollection,
-    renameSession,
-    selectReplayerState,
-} from '@/store/slices/replayerSlice'
+import React, { useState, useMemo, useCallback } from 'react';
+import { Button } from '../ui/button';
+import { Input } from '../ui/input';
+import { useReplayerTree } from '@/context/ReplayerContext';
+import { useProjectId } from '@/hooks/useProjectId';
 import { RsTree, TreeNode, HighlightedText, TreeNodeRenderProps } from 'rstree-ui';
 import { ChevronDownIcon, Plus, Folder, File, MoreHorizontal, Pencil, Trash2 } from 'lucide-react';
 import { ButtonGroup } from '@/components/ui/button-group';
@@ -26,40 +15,39 @@ import {
     DialogHeader,
     DialogTitle,
 } from '@/components/ui/dialog';
-import { ReplayerCollection } from '@/types/replayer.type'
 
 interface RemoveTarget {
     id: string;
     type: 'collection' | 'session';
-    colIndex: number;
-    sessIndex?: number;
+    colId: string;
+    sessId?: string;
     label: string;
 }
 
-const ReplayerSession = ({ collections }: { collections: ReplayerCollection[] }) => {
-    const dispatch = useAppDispatch()
-    const projectId = useProjectId()
-    const { selectedCollectionIndex, expandedIds: reduxExpandedIds } = useAppSelector(selectReplayerState(projectId));
-    const selectedSessionIndex = collections[selectedCollectionIndex]?.selectedSessionIndex ?? null;
+const ReplayerSession = () => {
+    const projectId = useProjectId();
+    const {
+        collections,
+        expandedIds,
+        selectedCollectionId,
+        selectedSessionId,
+        isLoaded,
+        selectSession,
+        setExpandedIdsList,
+        createCollection,
+        createSession,
+        renameCollection,
+        renameSession,
+        deleteCollection,
+        deleteSession,
+    } = useReplayerTree();
 
     const selectedIds = useMemo(() => {
-        if (selectedCollectionIndex < 0 || selectedCollectionIndex >= collections.length) return [];
-        const col = collections[selectedCollectionIndex];
-        if (!col) return [];
-        const colId = col.id || `${selectedCollectionIndex}`;
-        if (selectedSessionIndex !== null && selectedSessionIndex >= 0 && selectedSessionIndex < col.sessions.length) {
-            const sess = col.sessions[selectedSessionIndex];
-            const sessId = sess?.id || `${selectedSessionIndex}`;
-            return [`sess::${colId}::${sessId}`];
-        }
-        return [];
-    }, [selectedCollectionIndex, selectedSessionIndex, collections]);
+        if (!selectedCollectionId || !selectedSessionId) return [];
+        return [`sess::${selectedCollectionId}::${selectedSessionId}`];
+    }, [selectedCollectionId, selectedSessionId]);
 
-    const expandedIds = useMemo(() => {
-        return reduxExpandedIds || [];
-    }, [reduxExpandedIds]);
-
-    const [searchTerm, setSearchTerm] = useState('')
+    const [searchTerm, setSearchTerm] = useState('');
 
     // Inline edit state
     const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
@@ -70,55 +58,44 @@ const ReplayerSession = ({ collections }: { collections: ReplayerCollection[] })
     const [removingItem, setRemovingItem] = useState<RemoveTarget | null>(null);
 
     const data: TreeNode<unknown>[] = useMemo(() => collections.map((collection, colIndex) => {
-        const colId = collection.id || `${colIndex}`;
+        const colId = collection.id;
         return {
             id: colId,
             label: collection.name || `Collection ${colIndex + 1}`,
             icon: <Folder size={16} />,
             children: collection.sessions.map((session, sessIndex) => {
-                const sessId = session.id || `${sessIndex}`;
+                const sessId = session.id;
                 return {
                     id: `sess::${colId}::${sessId}`,
-                    label: session.name || `Session ${sessIndex + 1} - ${session.url}`,
-                    icon: <File size={16} />
+                    label: session.name || `Session ${sessIndex + 1}`,
+                    icon: <File size={16} />,
                 };
-            })
+            }),
         };
     }), [collections]);
 
     const handleExpand = useCallback((newExpandedIds: string[]) => {
-        if (projectId) {
-            dispatch(setExpandedIds({ expandedIds: newExpandedIds, projectId }));
-        }
-    }, [projectId, dispatch]);
+        setExpandedIdsList(newExpandedIds);
+    }, [setExpandedIdsList]);
 
     const handleSelection = useCallback((value: string[]) => {
-        if (!value || value.length === 0 || !projectId) return;
+        if (!value || value.length === 0) return;
         const selectedId = value[0];
 
         if (selectedId && selectedId.startsWith('sess::')) {
             const [_, colPart, sessPart] = selectedId.split('::');
-            let colIdx = collections.findIndex((c, i) => c.id === colPart || `${i}` === colPart || `col_${i}` === colPart);
-            if (colIdx === -1) colIdx = Number(colPart);
-            if (colIdx >= 0 && colIdx < collections.length) {
-                const col = collections[colIdx];
-                let sessIdx = col.sessions.findIndex((s, i) => s.id === sessPart || `${i}` === sessPart);
-                if (sessIdx === -1) sessIdx = Number(sessPart);
-                dispatch(selectColSess({
-                    collectionIndex: colIdx,
-                    sessionIndex: sessIdx >= 0 && sessIdx < col.sessions.length ? sessIdx : (col.sessions.length > 0 ? 0 : null),
-                    projectId
-                }));
+            if (colPart && sessPart) {
+                selectSession(colPart, sessPart);
             }
         }
-    }, [collections, projectId, dispatch]);
+    }, [selectSession]);
 
-    const handleConfirmRemove = () => {
-        if (!removingItem || !projectId) return;
+    const handleConfirmRemove = async () => {
+        if (!removingItem) return;
         if (removingItem.type === 'collection') {
-            dispatch(removeCollection({ collectionIndex: removingItem.colIndex, projectId }));
-        } else if (removingItem.type === 'session' && removingItem.sessIndex !== undefined) {
-            dispatch(removeSession({ collectionIndex: removingItem.colIndex, sessionIndex: removingItem.sessIndex, projectId }));
+            await deleteCollection(removingItem.colId);
+        } else if (removingItem.type === 'session' && removingItem.sessId) {
+            await deleteSession(removingItem.colId, removingItem.sessId);
         }
         setRemoveDialogOpen(false);
         setRemovingItem(null);
@@ -128,33 +105,29 @@ const ReplayerSession = ({ collections }: { collections: ReplayerCollection[] })
         const isSession = node.id.startsWith('sess::');
         const isCollection = !isSession;
 
-        let colIndex = -1;
-        let sessIndex: number | undefined = undefined;
+        let colId = '';
+        let sessId: string | undefined = undefined;
 
         if (isSession) {
             const [_, colPart, sessPart] = node.id.split('::');
-            colIndex = collections.findIndex((c, i) => c.id === colPart || `${i}` === colPart || `col_${i}` === colPart);
-            if (colIndex === -1) colIndex = Number(colPart);
-            if (colIndex >= 0 && colIndex < collections.length) {
-                sessIndex = collections[colIndex].sessions.findIndex((s, i) => s.id === sessPart || `${i}` === sessPart);
-                if (sessIndex === -1) sessIndex = Number(sessPart);
-            }
+            colId = colPart;
+            sessId = sessPart;
         } else {
-            const colPart = node.id;
-            colIndex = collections.findIndex((c, i) => c.id === colPart || `${i}` === colPart || `col_${i}` === colPart);
-            if (colIndex === -1) colIndex = Number(colPart);
+            colId = node.id;
         }
 
-        const isCurrentActiveCollection = isCollection && colIndex === selectedCollectionIndex && selectedSessionIndex !== null;
+        const isCurrentActiveCollection = isCollection && colId === selectedCollectionId && selectedSessionId !== null;
         const isEditing = editingNodeId === node.id;
 
         const handleSaveInline = () => {
-            if (!editingNodeId || !projectId) return;
+            if (!editingNodeId) return;
             const trimmed = editingText.trim();
-            if (isCollection && colIndex >= 0) {
-                dispatch(renameCollection({ collectionIndex: colIndex, name: trimmed, projectId }));
-            } else if (sessIndex !== undefined && colIndex >= 0) {
-                dispatch(renameSession({ collectionIndex: colIndex, sessionIndex: sessIndex, name: trimmed, projectId }));
+            if (trimmed) {
+                if (isCollection) {
+                    renameCollection(colId, trimmed);
+                } else if (sessId) {
+                    renameSession(colId, sessId, trimmed);
+                }
             }
             setEditingNodeId(null);
         };
@@ -171,9 +144,10 @@ const ReplayerSession = ({ collections }: { collections: ReplayerCollection[] })
 
         const handleEditClick = (e: React.MouseEvent) => {
             e.stopPropagation();
+            const col = collections.find(c => c.id === colId);
             const currentLabel = isCollection
-                ? (collections[colIndex]?.name || `Collection ${colIndex + 1}`)
-                : (collections[colIndex]?.sessions[sessIndex!]?.name || `Session ${sessIndex! + 1}`);
+                ? (col?.name || 'Collection')
+                : (col?.sessions.find(s => s.id === sessId)?.name || 'Session');
 
             setEditingNodeId(node.id);
             setEditingText(currentLabel);
@@ -184,9 +158,9 @@ const ReplayerSession = ({ collections }: { collections: ReplayerCollection[] })
             setRemovingItem({
                 id: node.id,
                 type: isCollection ? 'collection' : 'session',
-                colIndex,
-                sessIndex,
-                label: node.label
+                colId,
+                sessId,
+                label: node.label,
             });
             setRemoveDialogOpen(true);
         };
@@ -251,18 +225,25 @@ const ReplayerSession = ({ collections }: { collections: ReplayerCollection[] })
         );
     };
 
+    const handleNewSession = () => {
+        const targetColId = selectedCollectionId || collections[0]?.id;
+        if (targetColId) {
+            createSession(targetColId);
+        } else {
+            createCollection().then(() => {
+                if (collections[0]?.id) {
+                    createSession(collections[0].id);
+                }
+            });
+        }
+    };
+
     return (
         <div className='h-full'>
             <ButtonGroup className="my-2 mx-auto">
-                <Button className=' w-full' onClick={
-                    () => {
-                        if (projectId) {
-                            const targetColIdx = (selectedCollectionIndex >= 0 && selectedCollectionIndex < collections.length)
-                                ? selectedCollectionIndex
-                                : 0;
-                            dispatch(addSessionToCollection({ collectionIndex: targetColIdx, isItReplayerPage: true, projectId }));
-                        }
-                    }}><Plus /> New Session</Button>
+                <Button className=' w-full' onClick={handleNewSession}>
+                    <Plus /> New Session
+                </Button>
                 <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                         <Button variant="default" className="pl-2!">
@@ -270,9 +251,7 @@ const ReplayerSession = ({ collections }: { collections: ReplayerCollection[] })
                         </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end" className="w-44">
-                        <DropdownMenuItem onSelect={() => {
-                            if (projectId) dispatch(addCollection(projectId));
-                        }}>
+                        <DropdownMenuItem onSelect={() => createCollection()}>
                             <Plus />
                             New Collection
                         </DropdownMenuItem>
@@ -280,31 +259,35 @@ const ReplayerSession = ({ collections }: { collections: ReplayerCollection[] })
                 </DropdownMenu>
             </ButtonGroup>
             <div className="rounded-lg p-1 w-full h-full ">
-                <Input value={searchTerm}
+                <Input
+                    value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
                     placeholder="Search..."
                 />
-                <RsTree
-                    searchTerm={searchTerm}
-                    className="!h-full bg-transparent border-none"
-                    data={data}
-                    renderNode={renderNode}
-                    treeLineClassName="!border-border/40"
-                    treeNodeClassName="
-    !bg-transparent
-    !text-muted-foreground
-    hover:!bg-accent/50 hover:!text-foreground
-    aria-selected:!bg-accent aria-selected:!text-accent-foreground
-    rounded-sm text-[13px] font-mono transition-colors
-  "
-                    selectedIds={selectedIds}
-                    onSelect={handleSelection}
-                    expandedIds={expandedIds}
-                    onExpand={handleExpand}
-                    clickToToggle={true}
-                    showIcons={false}
-                    virtualizeEnabled={true}
-                />
+                {isLoaded && (
+                    <RsTree
+                        key={projectId || 'replayer-tree'}
+                        searchTerm={searchTerm}
+                        className="!h-full bg-transparent border-none"
+                        data={data}
+                        renderNode={renderNode}
+                        treeLineClassName="!border-border/40"
+                        treeNodeClassName="
+                            !bg-transparent
+                            !text-muted-foreground
+                            hover:!bg-accent/50 hover:!text-foreground
+                            aria-selected:!bg-accent aria-selected:!text-accent-foreground
+                            rounded-sm text-[13px] font-mono transition-colors
+                        "
+                        selectedIds={selectedIds}
+                        onSelect={handleSelection}
+                        expandedIds={expandedIds}
+                        onExpand={handleExpand}
+                        clickToToggle={true}
+                        showIcons={false}
+                        virtualizeEnabled={true}
+                    />
+                )}
             </div>
 
             {/* Remove Confirmation Dialog */}
@@ -327,7 +310,7 @@ const ReplayerSession = ({ collections }: { collections: ReplayerCollection[] })
                 </DialogContent>
             </Dialog>
         </div>
-    )
-}
+    );
+};
 
-export default ReplayerSession
+export default React.memo(ReplayerSession);

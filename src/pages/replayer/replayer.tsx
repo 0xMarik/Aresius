@@ -1,29 +1,25 @@
 import { basicSetup, EditorView } from "codemirror";
-import './replayer.style.css'
-import { EditorState, } from '@codemirror/state';
-import { useEffect, useRef } from 'react'
+import './replayer.style.css';
+import { EditorState } from '@codemirror/state';
+import { useEffect, useRef } from 'react';
 import { http } from '@/components/http-parser.component';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { getCodeMirrorScrollTheme } from '@/components/codemirror-scroll.theme';
 import { useTheme } from '@/components/theme-provider';
-import { useAppDispatch, useAppSelector } from '@/hooks/redux';
-import { useProjectId } from '@/hooks/useProjectId';
-import { addReplayerHistory, fetchReplayerData, resetReplayerReceivedSession, selectedHisotryIndex, setReaplayerURL, selectReplayerState } from '@/store/slices/replayerSlice';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { invoke } from '@tauri-apps/api/core';
-import { ReplayerHistoryItem } from '@/types/replayer.type';
-import React from 'react';
-
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { EmptyState } from '@/components/ui/empty-state';
-import { stripPath, ValidateUrlInput } from "@/components/ValidateUrlInput";
+import { ValidateUrlInput } from "@/components/ValidateUrlInput";
 import HistoryRequests, { getStatusBadgeStyle } from "@/components/Replayer/HistoryRequests";
 import RequestCodeEditor from "@/components/Replayer/RequestCodeEditor";
 import { AlertTriangle, Loader2, Play, Repeat, Square } from "lucide-react";
 import ReplayerSession from "@/components/Replayer/ReplayerSession";
-import { parseResponse } from "@/components/utils";
+import { ReplayerProvider, useReplayerEditor } from "@/context/ReplayerContext";
+import { useAppDispatch } from '@/hooks/redux';
+import { useProjectId } from '@/hooks/useProjectId';
+import { resetReplayerReceivedSession } from '@/store/slices/replayerSlice';
 import { cn } from "@/lib/utils";
 
 const fullHeightTheme = EditorView.theme({
@@ -43,19 +39,12 @@ const ResponseCodeEditor = () => {
     const viewRef = useRef<EditorView | null>(null);
     const { theme } = useTheme();
     const isDark = theme === "dark" || (theme === "system" && typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches);
-    const projectId = useProjectId();
-    const { collections, selectedCollectionIndex } = useAppSelector(selectReplayerState(projectId));
-    const collection = collections[selectedCollectionIndex];
-    const selectedSessionIndex = collection?.selectedSessionIndex ?? null;
-    const session = selectedSessionIndex !== null && collection
-        ? collection.sessions[selectedSessionIndex]
-        : null;
-    const history = session?.history ?? [];
-    const selectedHistoryIndex = session?.selectedHistoryIndex ?? null;
+
+    const { activeHistoryItem, selectedSessionId } = useReplayerEditor();
+    const responseRaw = activeHistoryItem?.responseRaw ?? "";
 
     useEffect(() => {
-        if (!editorRef.current) return;
-        if (selectedSessionIndex === null) return;
+        if (!editorRef.current || !selectedSessionId) return;
 
         if (viewRef.current) {
             viewRef.current.destroy();
@@ -63,9 +52,7 @@ const ResponseCodeEditor = () => {
         }
 
         const state = EditorState.create({
-            doc: selectedHistoryIndex !== null && history[selectedHistoryIndex]
-                ? history[selectedHistoryIndex].responseRaw
-                : "",
+            doc: responseRaw,
             extensions: [
                 basicSetup,
                 http(),
@@ -89,134 +76,46 @@ const ResponseCodeEditor = () => {
                 view.destroy();
             }
         };
-    }, [history, selectedHistoryIndex, selectedCollectionIndex, selectedSessionIndex, isDark]);
+    }, [responseRaw, selectedSessionId, isDark]);
 
     return (
         <div ref={editorRef} className="h-full w-full">
         </div>
-    )
-}
+    );
+};
 
-function Replayer() {
-
+function ReplayerContent() {
     const projectId = useProjectId();
-    const { collections, selectedCollectionIndex } = useAppSelector(selectReplayerState(projectId));
-    const collection = collections[selectedCollectionIndex];
-    const selectedSessionIndex = collection?.selectedSessionIndex ?? null;
-    const session = selectedSessionIndex !== null && collection
-        ? collection.sessions[selectedSessionIndex]
-        : null;
-
-    const url = session?.url ?? "";
-    const requestTmp = session?.requestTmp ?? "";
-    const history = session?.history ?? [];
-    const selectedHistoryIndex = session?.selectedHistoryIndex ?? null;
-
-    const [responseLoading, setResponseLoading] = React.useState<boolean>(false);
-    const activeRequestIdRef = useRef<string | null>(null);
     const dispatch = useAppDispatch();
+
+    const {
+        selectedSessionId,
+        activeDraft,
+        responseLoading,
+        activeHistoryItem,
+        activeStatus,
+        hasError,
+        errorMessage,
+        updateDraftUrl,
+        triggerReplay,
+        cancelReplay,
+    } = useReplayerEditor();
 
     useEffect(() => {
         if (projectId) {
-            dispatch(fetchReplayerData(projectId));
             dispatch(resetReplayerReceivedSession(projectId));
         }
     }, [dispatch, projectId]);
 
-    const triggerRequest = async () => {
-        if (selectedSessionIndex === null || !projectId) return; // no active session, nothing to run
-
-        const reqId = crypto.randomUUID();
-        activeRequestIdRef.current = reqId;
-        setResponseLoading(true);
-
-        const stripedUrl = stripPath(url);
-        dispatch(setReaplayerURL({ url: stripedUrl, urlIsValid: true, projectId })); // update the url in the store to be stripped of path
-        try {
-            const response = await invoke<ReplayerHistoryItem>('replay_request', {
-                requestTmp: requestTmp,
-                url: stripedUrl,
-                reqId,
-            });
-            if (activeRequestIdRef.current === reqId) {
-                setResponseLoading(false);
-                activeRequestIdRef.current = null;
-                const parsed = parseResponse(response.responseRaw);
-                const statusCodeStr = parsed.statusCode
-                    ? `${parsed.statusCode}${parsed.statusText ? ' ' + parsed.statusText : ''}`
-                    : '200 OK';
-                const itemWithStatus: ReplayerHistoryItem = {
-                    ...response,
-                    status: statusCodeStr,
-                    errorMessage: null,
-                };
-                dispatch(addReplayerHistory({ historyItem: itemWithStatus, projectId }));
-                dispatch(selectedHisotryIndex({ historyIndex: 0, projectId }));
-            }
-        } catch (error) {
-            if (activeRequestIdRef.current === reqId) {
-                console.error('Error replaying request:', error);
-                setResponseLoading(false);
-                activeRequestIdRef.current = null;
-                const errStr = typeof error === 'string' ? error : (error as any)?.message || 'Request failed';
-                const isCanceled = errStr.toLowerCase().includes('cancel');
-                const errorItem: ReplayerHistoryItem = {
-                    requestRaw: requestTmp,
-                    responseRaw: "",
-                    baseUrl: stripedUrl,
-                    responseTime: 0,
-                    status: isCanceled ? 'Canceled' : 'Error',
-                    errorMessage: isCanceled ? null : errStr,
-                };
-                dispatch(addReplayerHistory({ historyItem: errorItem, projectId }));
-                dispatch(selectedHisotryIndex({ historyIndex: 0, projectId }));
-            }
-        }
-    };
-
-    const handleCancelRequest = async () => {
-        const reqId = activeRequestIdRef.current;
-        activeRequestIdRef.current = null;
-        setResponseLoading(false);
-        if (reqId) {
-            try {
-                await invoke('cancel_replayer_request', { reqId });
-            } catch (e) {
-                console.error('Failed to cancel replayer request:', e);
-            }
-            const cancelItem: ReplayerHistoryItem = {
-                requestRaw: requestTmp,
-                responseRaw: "",
-                baseUrl: stripPath(url),
-                responseTime: 0,
-                status: 'Canceled',
-                errorMessage: null,
-            };
-            dispatch(addReplayerHistory({ historyItem: cancelItem, projectId }));
-            dispatch(selectedHisotryIndex({ historyIndex: 0, projectId }));
-        }
-    };
-
-    const noSessionSelected = selectedSessionIndex === null;
-
-    const currentHistoryItem = selectedHistoryIndex !== null ? history[selectedHistoryIndex] : null;
-    const parsedResponse = currentHistoryItem?.responseRaw ? parseResponse(currentHistoryItem.responseRaw) : null;
-    const currentStatus = responseLoading
-        ? 'pending'
-        : (currentHistoryItem?.status || (parsedResponse?.statusCode ? String(parsedResponse.statusCode) : ''));
-    const hasError = !responseLoading && (currentHistoryItem?.status === 'Error' || !!currentHistoryItem?.errorMessage);
+    const noSessionSelected = !selectedSessionId;
 
     return (
-        <ResizablePanelGroup direction='horizontal' autoSaveId="aresius-repeater-layout" >
+        <ResizablePanelGroup direction='horizontal' autoSaveId="aresius-repeater-layout">
             <ResizablePanel defaultSize={15} minSize={13} maxSize={50}>
-                <ReplayerSession collections={collections} />
+                <ReplayerSession />
             </ResizablePanel>
 
             <ResizableHandle withHandle />
-            {/* <ResizableHandle
-                withHandle
-                className="hover:bg-primary [&:hover>div]:bg-primary [&:hover>div]:border-primary [&:hover>div>svg]:text-primary-foreground"
-            /> */}
             <ResizablePanel defaultSize={85} minSize={20}>
                 {noSessionSelected ? (
                     <EmptyState
@@ -227,16 +126,15 @@ function Replayer() {
                 ) : (
                     <div className='h-full flex flex-col'>
                         <div className='flex items-center h-12 bg-card/40 gap-3 shrink-0 p-2'>
-                            {/* <Input placeholder='Enter URL to replay...' className='flex-1 font-mono text-xs h-8 bg-background'
-                                value={url}
-                                onChange={(event) => dispatch(setReaplayerURL({ url: event.target.value }))}
-                            /> */}
-                            <ValidateUrlInput url={session?.url || ""} onChange={(url, urlIsValid) => {
-                                if (projectId) dispatch(setReaplayerURL({ url, urlIsValid, projectId }));
-                            }} />
+                            <ValidateUrlInput
+                                url={activeDraft?.url || ""}
+                                onChange={(url, urlIsValid) => {
+                                    updateDraftUrl(url, urlIsValid);
+                                }}
+                            />
                             {responseLoading ? (
                                 <Button
-                                    onClick={handleCancelRequest}
+                                    onClick={cancelReplay}
                                     variant="destructive"
                                     size="sm"
                                     className="h-8 font-semibold gap-1.5 shrink-0"
@@ -246,9 +144,9 @@ function Replayer() {
                                 </Button>
                             ) : (
                                 <Button
-                                    onClick={triggerRequest}
+                                    onClick={triggerReplay}
                                     size="sm"
-                                    disabled={session?.urlIsValid === false}
+                                    disabled={activeDraft?.urlIsValid === false}
                                     className="h-8 font-semibold gap-1.5 shrink-0"
                                 >
                                     <Play className="w-3.5 h-3.5 fill-current" />
@@ -256,7 +154,7 @@ function Replayer() {
                                 </Button>
                             )}
 
-                            <HistoryRequests history={history} selectedHistoryIndex={selectedHistoryIndex} />
+                            <HistoryRequests />
                         </div>
                         <ResizablePanelGroup direction='horizontal' autoSaveId="repeater-req-res" className="flex-1 min-h-0">
                             <ResizablePanel defaultSize={50} minSize={20}>
@@ -275,12 +173,12 @@ function Replayer() {
                                     <div className="flex items-center justify-between px-3 py-1.5 border-b border-border/40 bg-muted/30 shrink-0 select-none">
                                         <div className="flex items-center gap-2">
                                             <span className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">Response</span>
-                                            {currentStatus && (
+                                            {activeStatus && (
                                                 <Badge
                                                     variant="outline"
-                                                    className={cn("text-[10px] font-mono px-1.5 py-0 font-medium capitalize", getStatusBadgeStyle(currentStatus))}
+                                                    className={cn("text-[10px] font-mono px-1.5 py-0 font-medium capitalize", getStatusBadgeStyle(activeStatus))}
                                                 >
-                                                    {currentStatus}
+                                                    {activeStatus}
                                                 </Badge>
                                             )}
                                             {hasError && (
@@ -290,7 +188,6 @@ function Replayer() {
                                                             <button
                                                                 type="button"
                                                                 className="inline-flex items-center justify-center text-rose-500 hover:text-rose-400 transition-colors p-0.5 rounded focus:outline-none focus:ring-1 focus:ring-rose-500/50"
-                                                            // title="View Error Details"
                                                             >
                                                                 <AlertTriangle className="w-3.5 h-3.5" />
                                                             </button>
@@ -305,16 +202,16 @@ function Replayer() {
                                                                 <span>Request Error</span>
                                                             </div>
                                                             <p className="font-mono text-[11px] text-muted-foreground whitespace-pre-wrap break-all leading-relaxed">
-                                                                {currentHistoryItem?.errorMessage || "An error occurred while sending the request."}
+                                                                {errorMessage || "An error occurred while sending the request."}
                                                             </p>
                                                         </TooltipContent>
                                                     </Tooltip>
                                                 </TooltipProvider>
                                             )}
                                         </div>
-                                        {currentHistoryItem?.responseTime !== undefined && currentHistoryItem.responseTime > 0 && (
+                                        {activeHistoryItem?.responseTime !== undefined && activeHistoryItem.responseTime > 0 && (
                                             <span className="text-[11px] font-mono text-muted-foreground">
-                                                {currentHistoryItem.responseTime} ms
+                                                {activeHistoryItem.responseTime} ms
                                             </span>
                                         )}
                                     </div>
@@ -335,7 +232,13 @@ function Replayer() {
                 )}
             </ResizablePanel>
         </ResizablePanelGroup>
-    )
+    );
 }
 
-export default Replayer
+export default function Replayer() {
+    return (
+        <ReplayerProvider>
+            <ReplayerContent />
+        </ReplayerProvider>
+    );
+}

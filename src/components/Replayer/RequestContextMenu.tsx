@@ -2,9 +2,7 @@ import { Copy } from "lucide-react";
 import { ContextMenuItem, ContextMenuShortcut } from "../ui/context-menu";
 import { EditorView } from "codemirror";
 import SendToFuzzer from "../ContextMenu/SendToFuzzer";
-import { useAppSelector } from "@/hooks/redux";
-import { useProjectId } from "@/hooks/useProjectId";
-import { selectReplayerState } from "@/store/slices/replayerSlice";
+import { useReplayerEditor } from "@/context/ReplayerContext";
 import { Kbd, KbdGroup } from "../ui/kbd";
 
 const handleCopy = ({ viewRef }: { viewRef: React.MutableRefObject<EditorView | null> }) => {
@@ -22,13 +20,7 @@ const handleCopy = ({ viewRef }: { viewRef: React.MutableRefObject<EditorView | 
 };
 
 const RequestContextMenu = ({ viewRef }: { viewRef: React.MutableRefObject<EditorView | null> }) => {
-    const projectId = useProjectId();
-    const { collections, selectedCollectionIndex } = useAppSelector(selectReplayerState(projectId));
-    const collection = collections[selectedCollectionIndex];
-    const selectedSessionIndex = collection?.selectedSessionIndex ?? null;
-    const session = selectedSessionIndex !== null && collection
-        ? collection.sessions[selectedSessionIndex]
-        : null;
+    const { activeDraft } = useReplayerEditor();
 
     return (
         <>
@@ -43,7 +35,7 @@ const RequestContextMenu = ({ viewRef }: { viewRef: React.MutableRefObject<Edito
                     </KbdGroup>
                 </ContextMenuShortcut>
             </ContextMenuItem>
-            <SendToFuzzer rawRequest={session?.requestTmp ?? ""} host={session?.url ?? ""} />
+            <SendToFuzzer rawRequest={activeDraft?.requestTmp ?? ""} host={activeDraft?.url ?? ""} />
             <ContextMenuItem />
         </>
     );

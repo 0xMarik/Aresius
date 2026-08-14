@@ -1,6 +1,4 @@
-import { useAppDispatch, useAppSelector } from "@/hooks/redux";
-import { useProjectId } from "@/hooks/useProjectId";
-import { setReaplayerContent, selectReplayerState } from "@/store/slices/replayerSlice";
+import { useReplayerEditor } from "@/context/ReplayerContext";
 import { basicSetup, EditorView } from "codemirror";
 import { useEffect, useRef } from "react";
 import { EditorState } from '@codemirror/state';
@@ -29,20 +27,12 @@ const RequestCodeEditor = () => {
     const { theme } = useTheme();
     const isDark = theme === "dark" || (theme === "system" && typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches);
 
-    const projectId = useProjectId();
-    const { collections, selectedCollectionIndex } = useAppSelector(selectReplayerState(projectId));
-    const collection = collections[selectedCollectionIndex];
-    const selectedSessionIndex = collection?.selectedSessionIndex ?? null;
-    const session = selectedSessionIndex !== null && collection
-        ? collection.sessions[selectedSessionIndex]
-        : null;
-    const requestTmp = session?.requestTmp ?? "";
-    const selectedHistoryIndex = session?.selectedHistoryIndex ?? null;
-    const dispatch = useAppDispatch();
+    const { activeDraft, updateDraftContent, selectedHistoryIndex } = useReplayerEditor();
+    const sessionId = activeDraft?.sessionId;
+    const requestTmp = activeDraft?.requestTmp ?? "";
 
     useEffect(() => {
-        if (!editorRef.current || !projectId) return;
-        if (selectedSessionIndex === null) return;
+        if (!editorRef.current || !sessionId) return;
 
         if (viewRef.current) {
             viewRef.current.destroy();
@@ -52,7 +42,7 @@ const RequestCodeEditor = () => {
         const updateListener = EditorView.updateListener.of((update) => {
             if (update.docChanged) {
                 const code = update.state.doc.sliceString(0, update.state.doc.length, update.state.lineBreak);
-                dispatch(setReaplayerContent({ rawRequest: code, projectId }));
+                updateDraftContent(code);
             }
         });
 
@@ -82,7 +72,7 @@ const RequestCodeEditor = () => {
                 view.destroy();
             }
         };
-    }, [selectedHistoryIndex, selectedCollectionIndex, selectedSessionIndex, isDark, projectId]);
+    }, [sessionId, selectedHistoryIndex, isDark]);
 
     return (
         <div className="bg-card w-full h-full">

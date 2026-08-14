@@ -1,16 +1,13 @@
-import { useState } from 'react'
-import { ButtonGroup } from '../ui/button-group'
-import { Button } from '../ui/button'
-import { ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react'
-import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/table'
-import { Badge } from '../ui/badge'
-import { parseRequest, parseResponse } from '../utils'
-import { useAppDispatch } from '@/hooks/redux'
-import { useProjectId } from '@/hooks/useProjectId'
-import { selectedHisotryIndex } from '@/store/slices/replayerSlice'
-import { ReplayerHistoryItem } from '@/types/replayer.type'
-import { cn } from '@/lib/utils'
+import { useState } from 'react';
+import { ButtonGroup } from '../ui/button-group';
+import { Button } from '../ui/button';
+import { ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/table';
+import { Badge } from '../ui/badge';
+import { parseRequest, parseResponse } from '../utils';
+import { useReplayerEditor } from '@/context/ReplayerContext';
+import { cn } from '@/lib/utils';
 
 export function getStatusBadgeStyle(status: string) {
     if (!status) return 'bg-muted text-muted-foreground border-border';
@@ -34,24 +31,22 @@ export function getStatusBadgeStyle(status: string) {
     return 'bg-muted text-muted-foreground border-border';
 }
 
-const HistoryRequests = ({ selectedHistoryIndex, history }: { selectedHistoryIndex: number | null; history: ReplayerHistoryItem[] }) => {
+const HistoryRequests = () => {
     const [open, setOpen] = useState(false);
-    const dispatch = useAppDispatch();
-    const projectId = useProjectId();
+    const { history, selectedHistoryIndex, selectHistoryIndex } = useReplayerEditor();
 
     const goNewer = () => {
-        if (selectedHistoryIndex === null || selectedHistoryIndex === 0 || !projectId) return;
-        dispatch(selectedHisotryIndex({ historyIndex: selectedHistoryIndex - 1, projectId }));
+        if (selectedHistoryIndex === null || selectedHistoryIndex === 0) return;
+        selectHistoryIndex(selectedHistoryIndex - 1);
     };
 
     const goOlder = () => {
-        if (selectedHistoryIndex === null || selectedHistoryIndex >= history.length - 1 || !projectId) return;
-        dispatch(selectedHisotryIndex({ historyIndex: selectedHistoryIndex + 1, projectId }));
+        if (selectedHistoryIndex === null || selectedHistoryIndex >= history.length - 1) return;
+        selectHistoryIndex(selectedHistoryIndex + 1);
     };
 
-    const handleSelectedHisotry = (value: string) => {
-        if (!projectId) return;
-        dispatch(selectedHisotryIndex({ historyIndex: parseInt(value), projectId }));
+    const handleSelect = (index: number) => {
+        selectHistoryIndex(index);
         setOpen(false);
     };
 
@@ -129,7 +124,7 @@ const HistoryRequests = ({ selectedHistoryIndex, history }: { selectedHistoryInd
                                     return (
                                         <TableRow
                                             key={item.id ?? index}
-                                            onClick={() => handleSelectedHisotry(index.toString())}
+                                            onClick={() => handleSelect(index)}
                                             className={`cursor-pointer ${selectedHistoryIndex === index ? 'bg-muted' : ''}`}
                                         >
                                             <TableCell className="py-1">
@@ -169,7 +164,7 @@ const HistoryRequests = ({ selectedHistoryIndex, history }: { selectedHistoryInd
                 <ChevronRight className="w-4 h-4" />
             </Button>
         </ButtonGroup>
-    )
-}
+    );
+};
 
-export default HistoryRequests
+export default HistoryRequests;
