@@ -139,6 +139,7 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             createdAt: item.createdAt,
             status: item.status,
             errorMessage: item.errorMessage,
+            baseUrl: item.baseUrl || null,
         }).catch(console.error);
     }, []);
 
@@ -189,7 +190,7 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                             createdAt: h.createdAt,
                             status: h.status,
                             errorMessage: h.errorMessage,
-                            baseUrl: s.url,
+                            baseUrl: h.baseUrl || s.url,
                         })),
                         selectedHistoryIndex: s.history.length > 0 ? 0 : null,
                     };
@@ -563,7 +564,7 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         }).catch(console.error);
     }, [activeDraft?.sessionId]);
 
-    // Select History Item
+    // Select History Item (restores raw request AND the base URL that was sent to)
     const selectHistoryIndex = useCallback((index: number) => {
         setSelectedHistoryIndex(index);
         if (activeDraft?.sessionId && sessionCacheRef.current[activeDraft.sessionId]) {
@@ -572,16 +573,26 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
         if (history[index]) {
             const hItem = history[index];
-            setActiveDraft(prev => prev ? { ...prev, requestTmp: hItem.requestRaw } : null);
+            const historyBaseUrl = hItem.baseUrl;
+            const targetUrl = historyBaseUrl && historyBaseUrl.trim() !== '' ? historyBaseUrl : (activeDraft?.url || 'https://');
+            const urlIsValid = !targetUrl.startsWith('https://') || targetUrl.length > 8;
+
+            setActiveDraft(prev => prev ? {
+                ...prev,
+                requestTmp: hItem.requestRaw,
+                url: targetUrl,
+                urlIsValid,
+            } : null);
+
             if (activeDraft?.sessionId) {
                 invoke('update_replayer_session_draft', {
                     sessionId: activeDraft.sessionId,
                     requestTmp: hItem.requestRaw,
-                    baseUrl: null,
+                    baseUrl: targetUrl,
                 }).catch(console.error);
             }
         }
-    }, [activeDraft?.sessionId, history]);
+    }, [activeDraft?.sessionId, activeDraft?.url, history]);
 
     // Trigger Replay
     const triggerReplay = useCallback(async () => {

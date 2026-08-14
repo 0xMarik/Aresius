@@ -46,6 +46,7 @@ export interface ReplayerFullData {
                 createdAt: string;
                 status?: string;
                 errorMessage?: string | null;
+                baseUrl?: string;
             }>;
             selectedHistoryIndex?: number | null;
             urlIsValid: boolean;

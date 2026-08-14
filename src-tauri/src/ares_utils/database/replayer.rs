@@ -37,6 +37,7 @@ pub struct ReplayerHistoryRow {
     pub sort_order: i64,
     pub status: String,
     pub error_message: Option<String>,
+    pub base_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,6 +50,7 @@ pub struct ReplayerHistoryItemFull {
     pub created_at: String,
     pub status: String,
     pub error_message: Option<String>,
+    pub base_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -175,7 +177,7 @@ pub async fn get_replayer_data(
             }
 
             let histories = sqlx::query_as::<_, ReplayerHistoryRow>(
-                "SELECT id, session_id, request_raw, response_raw, response_time, created_at, sort_order, status, error_message FROM replayer_history WHERE session_id = ? ORDER BY sort_order ASC, rowid DESC",
+                "SELECT id, session_id, request_raw, response_raw, response_time, created_at, sort_order, status, error_message, base_url FROM replayer_history WHERE session_id = ? ORDER BY sort_order ASC, rowid DESC",
             )
             .bind(&sess_row.id)
             .fetch_all(&pool)
@@ -197,6 +199,14 @@ pub async fn get_replayer_data(
                             }
                         }
                     }
+                    let base_url = h.base_url.or_else(|| {
+                        if sess_row.base_url.is_empty() {
+                            None
+                        } else {
+                            Some(sess_row.base_url.clone())
+                        }
+                    });
+
                     ReplayerHistoryItemFull {
                         id: h.id,
                         request_raw: h.request_raw,
@@ -205,6 +215,7 @@ pub async fn get_replayer_data(
                         created_at: h.created_at,
                         status,
                         error_message: h.error_message,
+                        base_url,
                     }
                 })
                 .collect();
@@ -497,10 +508,11 @@ pub async fn add_replayer_history_entry(
     created_at: String,
     status: Option<String>,
     error_message: Option<String>,
+    base_url: Option<String>,
 ) -> Result<(), String> {
     let pool = db.pool().await?;
     sqlx::query(
-        "INSERT INTO replayer_history (id, session_id, request_raw, response_raw, response_time, created_at, sort_order, status, error_message) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)",
+        "INSERT INTO replayer_history (id, session_id, request_raw, response_raw, response_time, created_at, sort_order, status, error_message, base_url) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)",
     )
     .bind(&history_id)
     .bind(&session_id)
@@ -510,6 +522,7 @@ pub async fn add_replayer_history_entry(
     .bind(&created_at)
     .bind(status.unwrap_or_default())
     .bind(error_message)
+    .bind(base_url)
     .execute(&pool)
     .await
     .map_err(|e| e.to_string())?;

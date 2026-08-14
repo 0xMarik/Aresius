@@ -27,18 +27,15 @@ export function getStatusBadgeStyle(status: string) {
     return 'bg-muted text-muted-foreground border-border';
 }
 
-function formatHistoryHost(item: ReplayerHistoryItem, headers?: Record<string, string>): string {
-    const hostHeader = Object.entries(headers || {}).find(([k]) => k.toLowerCase() === 'host')?.[1];
-    let host = hostHeader || item.baseUrl || '';
-    if (!host) return '—';
-    if (host.includes('://')) {
-        try {
-            return new URL(host).host;
-        } catch {
-            return host;
-        }
+function formatHistoryBaseUrl(item: ReplayerHistoryItem, headers?: Record<string, string>): string {
+    if (item.baseUrl && item.baseUrl !== 'https://' && item.baseUrl.trim() !== '') {
+        return item.baseUrl;
     }
-    return host;
+    const hostHeader = Object.entries(headers || {}).find(([k]) => k.toLowerCase() === 'host')?.[1];
+    if (hostHeader) {
+        return hostHeader;
+    }
+    return item.baseUrl || '—';
 }
 
 function formatHistoryTime(item: ReplayerHistoryItem): string {
@@ -90,14 +87,14 @@ const HistoryRequests = () => {
                         History <ChevronDown className="w-3.5 h-3.5" />
                     </Button>
                 </PopoverTrigger>
-                <PopoverContent className="w-[580px] p-0" align="start">
+                <PopoverContent className="w-[620px] p-0" align="start">
                     <div className="max-h-80 overflow-auto">
                         <Table>
                             <TableHeader className="sticky top-0 bg-muted">
                                 <TableRow>
                                     <TableHead>Status</TableHead>
                                     <TableHead>Method</TableHead>
-                                    <TableHead>Host</TableHead>
+                                    <TableHead>Base Url</TableHead>
                                     <TableHead>Path</TableHead>
                                     <TableHead>Time</TableHead>
                                 </TableRow>
@@ -114,6 +111,7 @@ const HistoryRequests = () => {
                                     const req = parseRequest(item.requestRaw);
                                     const parsedRes = item.responseRaw ? parseResponse(item.responseRaw) : null;
                                     const status = item.status || (parsedRes?.statusCode ? String(parsedRes.statusCode) : '');
+                                    const baseUrlDisplay = formatHistoryBaseUrl(item, req.headers);
 
                                     return (
                                         <TableRow
@@ -134,8 +132,12 @@ const HistoryRequests = () => {
                                                 )}
                                             </TableCell>
                                             <TableCell className="font-mono text-xs font-semibold">{req.method}</TableCell>
-                                            <TableCell className="text-xs truncate max-w-[140px]">{formatHistoryHost(item, req.headers)}</TableCell>
-                                            <TableCell className="truncate max-w-[150px] font-mono text-xs">{req.path}</TableCell>
+                                            <TableCell className="text-xs truncate max-w-[160px] font-mono" title={baseUrlDisplay}>
+                                                {baseUrlDisplay}
+                                            </TableCell>
+                                            <TableCell className="truncate max-w-[140px] font-mono text-xs" title={req.path}>
+                                                {req.path}
+                                            </TableCell>
                                             <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
                                                 {formatHistoryTime(item)}
                                             </TableCell>
