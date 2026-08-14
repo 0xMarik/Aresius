@@ -128,6 +128,10 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         if (sessionCacheRef.current[sessId]) {
             sessionCacheRef.current[sessId].history = [item, ...sessionCacheRef.current[sessId].history];
             sessionCacheRef.current[sessId].selectedHistoryIndex = 0;
+            sessionCacheRef.current[sessId].requestTmp = item.requestRaw;
+            if (item.baseUrl) {
+                sessionCacheRef.current[sessId].url = item.baseUrl;
+            }
         }
 
         invoke('add_replayer_history_entry', {
@@ -140,6 +144,13 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             status: item.status,
             errorMessage: item.errorMessage,
             baseUrl: item.baseUrl || null,
+        }).catch(console.error);
+
+        invoke('update_replayer_session_draft', {
+            sessionId: sessId,
+            requestTmp: item.requestRaw,
+            baseUrl: item.baseUrl || null,
+            selectedHistoryIndex: 0,
         }).catch(console.error);
     }, []);
 
@@ -192,7 +203,9 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                             errorMessage: h.errorMessage,
                             baseUrl: h.baseUrl || s.url,
                         })),
-                        selectedHistoryIndex: s.history.length > 0 ? 0 : null,
+                        selectedHistoryIndex: s.selectedHistoryIndex !== undefined && s.selectedHistoryIndex !== null
+                            ? s.selectedHistoryIndex
+                            : (s.history.length > 0 ? 0 : null),
                     };
                 });
 
@@ -226,16 +239,20 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                 const col = treeCols.find(c => c.sessions.some(s => s.id === finalActiveSessId));
                 const sessMeta = col?.sessions.find(s => s.id === finalActiveSessId);
 
+                const targetHistIdx = sCache.selectedHistoryIndex !== null && sCache.selectedHistoryIndex !== undefined && sCache.history[sCache.selectedHistoryIndex]
+                    ? sCache.selectedHistoryIndex
+                    : (sCache.history.length > 0 ? 0 : null);
+
                 setActiveDraft({
                     sessionId: finalActiveSessId,
                     collectionId: col?.id || null,
                     name: sessMeta?.name || 'Session',
-                    url: sCache.url,
+                    url: sCache.url || 'https://',
                     urlIsValid: sCache.urlIsValid,
-                    requestTmp: sCache.requestTmp,
+                    requestTmp: sCache.requestTmp || 'GET / HTTP/1.1\r\n\r\n',
                 });
                 setHistory(sCache.history);
-                setSelectedHistoryIndex(sCache.selectedHistoryIndex);
+                setSelectedHistoryIndex(targetHistIdx);
             } else {
                 setActiveDraft(null);
                 setHistory([]);
@@ -267,16 +284,20 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         const sessMeta = col?.sessions.find(s => s.id === sessionId);
 
         if (sCache) {
+            const targetHistIdx = sCache.selectedHistoryIndex !== null && sCache.selectedHistoryIndex !== undefined && sCache.history[sCache.selectedHistoryIndex]
+                ? sCache.selectedHistoryIndex
+                : (sCache.history.length > 0 ? 0 : null);
+
             setActiveDraft({
                 sessionId,
                 collectionId,
                 name: sessMeta?.name || 'Session',
-                url: sCache.url,
+                url: sCache.url || 'https://',
                 urlIsValid: sCache.urlIsValid,
-                requestTmp: sCache.requestTmp,
+                requestTmp: sCache.requestTmp || 'GET / HTTP/1.1\r\n\r\n',
             });
             setHistory(sCache.history);
-            setSelectedHistoryIndex(sCache.selectedHistoryIndex);
+            setSelectedHistoryIndex(targetHistIdx);
         } else {
             setActiveDraft({
                 sessionId,
@@ -537,6 +558,7 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                 sessionId: sessId,
                 requestTmp: newRequestTmp,
                 baseUrl: null,
+                selectedHistoryIndex: null,
             }).catch(console.error);
         }, 300);
     }, [activeDraft?.sessionId]);
@@ -561,10 +583,11 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             sessionId: sessId,
             requestTmp: null,
             baseUrl: url,
+            selectedHistoryIndex: null,
         }).catch(console.error);
     }, [activeDraft?.sessionId]);
 
-    // Select History Item (restores raw request AND the base URL that was sent to)
+    // Select History Item (persists both requestTmp, baseUrl, and selectedHistoryIndex to SQLite)
     const selectHistoryIndex = useCallback((index: number) => {
         setSelectedHistoryIndex(index);
         if (activeDraft?.sessionId && sessionCacheRef.current[activeDraft.sessionId]) {
@@ -585,10 +608,18 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             } : null);
 
             if (activeDraft?.sessionId) {
+                if (sessionCacheRef.current[activeDraft.sessionId]) {
+                    sessionCacheRef.current[activeDraft.sessionId].requestTmp = hItem.requestRaw;
+                    sessionCacheRef.current[activeDraft.sessionId].url = targetUrl;
+                    sessionCacheRef.current[activeDraft.sessionId].urlIsValid = urlIsValid;
+                    sessionCacheRef.current[activeDraft.sessionId].selectedHistoryIndex = index;
+                }
+
                 invoke('update_replayer_session_draft', {
                     sessionId: activeDraft.sessionId,
                     requestTmp: hItem.requestRaw,
                     baseUrl: targetUrl,
+                    selectedHistoryIndex: index,
                 }).catch(console.error);
             }
         }

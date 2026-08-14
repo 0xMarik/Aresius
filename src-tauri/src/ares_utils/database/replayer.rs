@@ -23,6 +23,7 @@ pub struct ReplayerSessionRow {
     pub request_tmp: String,
     pub sort_order: i64,
     pub is_selected: i64,
+    pub selected_history_index: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
@@ -161,7 +162,7 @@ pub async fn get_replayer_data(
         }
 
         let sessions = sqlx::query_as::<_, ReplayerSessionRow>(
-            "SELECT id, collection_id, name, base_url, request_tmp, sort_order, is_selected FROM replayer_sessions WHERE collection_id = ? ORDER BY sort_order ASC, rowid ASC",
+            "SELECT id, collection_id, name, base_url, request_tmp, sort_order, is_selected, selected_history_index FROM replayer_sessions WHERE collection_id = ? ORDER BY sort_order ASC, rowid ASC",
         )
         .bind(&col_row.id)
         .fetch_all(&pool)
@@ -222,6 +223,14 @@ pub async fn get_replayer_data(
 
             let has_history = !full_histories.is_empty();
             let url_is_valid = !sess_row.base_url.is_empty() && sess_row.base_url != "https://";
+            let selected_hist_idx = if has_history {
+                sess_row.selected_history_index
+                    .map(|i| i as usize)
+                    .filter(|&i| i < full_histories.len())
+                    .or(Some(0))
+            } else {
+                None
+            };
 
             full_sessions.push(ReplayerSessionFull {
                 id: sess_row.id,
@@ -229,7 +238,7 @@ pub async fn get_replayer_data(
                 url: sess_row.base_url,
                 request_tmp: sess_row.request_tmp,
                 history: full_histories,
-                selected_history_index: if has_history { Some(0) } else { None },
+                selected_history_index: selected_hist_idx,
                 url_is_valid,
             });
         }
@@ -462,6 +471,7 @@ pub async fn update_replayer_session_draft(
     session_id: String,
     request_tmp: Option<String>,
     base_url: Option<String>,
+    selected_history_index: Option<i64>,
 ) -> Result<(), String> {
     let pool = db.pool().await?;
     if let Some(req) = request_tmp {
@@ -475,6 +485,14 @@ pub async fn update_replayer_session_draft(
     if let Some(url) = base_url {
         sqlx::query("UPDATE replayer_sessions SET base_url = ? WHERE id = ?")
             .bind(&url)
+            .bind(&session_id)
+            .execute(&pool)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+    if let Some(idx) = selected_history_index {
+        sqlx::query("UPDATE replayer_sessions SET selected_history_index = ? WHERE id = ?")
+            .bind(idx)
             .bind(&session_id)
             .execute(&pool)
             .await
