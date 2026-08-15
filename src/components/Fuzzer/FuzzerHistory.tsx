@@ -4,16 +4,19 @@ import { selectFuzzerState } from '@/store/slices/fuzzerSlice';
 import { CodeMirrorEditor } from '../result-table.components';
 import { createColumnHelper, ColumnDef } from '@tanstack/react-table';
 import Table, { isRowSelected, BaseRow } from '@/components/Table';
-import { FuzzerRequest, FuzzerParameter, FuzzConfig } from '@/types/fuzzer.type';
+import { FuzzerRequest, FuzzerParameter, FuzzConfig, initialFuzzRunState } from '@/types/fuzzer.type';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { parseRequest, parseResponse } from '../utils';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '../ui/resizable';
 import { renderFuzzerHistoryTableContextMenu } from './FuzzerHistoryTableContextMenu';
 import { FuzzerRunToolbar, resendSingleFuzzRequest } from './FuzzerRunToolbar';
-import { initialFuzzRunState } from '@/types/fuzzer.type';
 import { Button } from '../ui/button';
-import { RotateCcw } from 'lucide-react';
+import { Badge } from '../ui/badge';
+import { EmptyState } from '../ui/empty-state';
+import { AlertTriangle, Clipboard, RotateCcw } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
+import { cn } from '@/lib/utils';
+import { getStatusBadgeStyle } from '../Replayer/HistoryRequests';
 
 /**
  * Each row corresponds to a single FuzzerRequest (one fuzzed HTTP call),
@@ -480,40 +483,71 @@ function FuzzerHistoryBody({
                 <ResizableHandle withHandle />
                 <ResizablePanel defaultSize={70} minSize={15}>
                     <div className='h-full'>
-
-                        {focusedResult && (
-                            <ResizablePanelGroup direction='horizontal' autoSaveId="fuzzing-history-req-res" >
+                        {!focusedResult ? (
+                            <div className="h-full bg-card">
+                                <EmptyState
+                                    icon={Clipboard}
+                                    title="No Request Selected"
+                                    description="Choose a request from the fuzzer history table above to view its details."
+                                />
+                            </div>
+                        ) : (
+                            <ResizablePanelGroup direction='horizontal' autoSaveId="fuzzing-history-req-res">
                                 <ResizablePanel defaultSize={50} minSize={15}>
-                                    <div className="flex h-full flex-col overflow-hidden rounded-lg border border-gray-800 bg-gray-900">
-                                        <div className="flex flex-shrink-0 items-center justify-between border-b border-gray-800 p-2">
-                                            <h3 className="text-xs font-semibold text-white">Request</h3>
+                                    <div className="flex flex-col h-full min-h-0 overflow-hidden bg-card">
+                                        <div className="flex items-center justify-between px-3 py-1.5 border-b border-border/40 bg-muted/30 shrink-0 select-none">
+                                            <span className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">Request</span>
                                             <div className="flex items-center gap-2">
-                                                <span className="font-mono text-xs text-gray-500">{focusedResult.parsedRequest.method}</span>
+                                                <Badge variant="outline" className="font-mono text-[10px] px-1.5 py-0 font-medium">
+                                                    {focusedResult.parsedRequest.method || 'GET'}
+                                                </Badge>
                                                 {focusedResult.payloadValues.length > 0 && (
-                                                    <span className="rounded bg-gray-800 px-1.5 py-0.5 font-mono text-[11px] text-gray-300">
-                                                        {focusedResult.payloadValues.length === 1
-                                                            ? focusedResult.payloadValues[0].value
-                                                            : focusedResult.payloadValues.map((p) => p.value).join(', ')}
+                                                    <span className="rounded bg-muted/60 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground truncate max-w-[200px]" title={focusedResult.payloadPreview}>
+                                                        {focusedResult.payloadPreview}
                                                     </span>
                                                 )}
                                             </div>
                                         </div>
-                                        <div className="flex-1 overflow-hidden">
+                                        <div className="flex-1 min-h-0">
                                             <CodeMirrorEditor value={focusedResult.rawRequest} />
                                         </div>
                                     </div>
                                 </ResizablePanel>
                                 <ResizableHandle withHandle />
                                 <ResizablePanel defaultSize={50} minSize={15}>
-                                    <div className="flex h-full flex-col overflow-hidden rounded-lg border border-gray-800 bg-gray-900">
-                                        <div className="flex flex-shrink-0 items-center justify-between border-b border-gray-800 p-2">
-                                            <h3 className="text-xs font-semibold text-white">Response</h3>
+                                    <div className="flex flex-col h-full min-h-0 overflow-hidden bg-card">
+                                        <div className="flex items-center justify-between px-3 py-1.5 border-b border-border/40 bg-muted/30 shrink-0 select-none">
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">Response</span>
+                                                {focusedResult.statusCode !== undefined && (
+                                                    <Badge
+                                                        variant="outline"
+                                                        className={cn(
+                                                            "text-[10px] font-mono px-1.5 py-0 font-medium",
+                                                            getStatusBadgeStyle(String(focusedResult.statusCode))
+                                                        )}
+                                                    >
+                                                        {focusedResult.statusCode}
+                                                    </Badge>
+                                                )}
+                                                {focusedResult.status && focusedResult.statusCode === undefined && (
+                                                    <Badge
+                                                        variant="outline"
+                                                        className={cn(
+                                                            "text-[10px] font-mono px-1.5 py-0 font-medium capitalize",
+                                                            getStatusBadgeStyle(focusedResult.status)
+                                                        )}
+                                                    >
+                                                        {focusedResult.status}
+                                                    </Badge>
+                                                )}
+                                            </div>
                                             <div className="flex items-center gap-2">
                                                 {canResendFocused && (
                                                     <Button
                                                         variant="outline"
                                                         size="sm"
-                                                        className="h-6 gap-1 border-gray-700 bg-gray-800 text-[11px] text-gray-200 hover:bg-gray-700"
+                                                        className="h-6 gap-1 px-2 text-[11px] font-medium"
                                                         onClick={() => resendSingleFuzzRequest(
                                                             dispatch,
                                                             sessionIndex,
@@ -524,39 +558,39 @@ function FuzzerHistoryBody({
                                                             projectId,
                                                         )}
                                                     >
-                                                        <RotateCcw className="size-3" />
+                                                        <RotateCcw className="w-3 h-3" />
                                                         Resend
                                                     </Button>
                                                 )}
-                                                {focusedResult.statusCode !== undefined && (
-                                                    <span className={`font-mono text-xs font-semibold ${getStatusCodeColor(focusedResult.statusCode)}`}>
-                                                        {focusedResult.statusCode}
+                                                {focusedResult.response?.responseTime !== undefined && focusedResult.response.responseTime > 0 && (
+                                                    <span className="text-[11px] font-mono text-muted-foreground">
+                                                        {focusedResult.response.responseTime} ms
                                                     </span>
                                                 )}
-                                                {focusedResult.response?.responseTime !== undefined && (
-                                                    <span className="text-xs text-gray-500">{focusedResult.response.responseTime}ms</span>
-                                                )}
                                                 {focusedResult.contentLength > 0 && (
-                                                    <span className="text-xs text-gray-500">{focusedResult.contentLength} bytes</span>
+                                                    <span className="text-[11px] font-mono text-muted-foreground">
+                                                        {focusedResult.contentLength} B
+                                                    </span>
                                                 )}
                                             </div>
                                         </div>
-                                        <div className="flex-1 overflow-hidden">
+                                        <div className="flex-1 min-h-0">
                                             {focusedResult.status === 'error' || focusedResult.connectionDropped ? (
-                                                <div className="flex h-full flex-col gap-2 p-3">
-                                                    <div className="rounded-md border border-red-900/50 bg-red-950/40 p-3">
-                                                        <p className="text-xs font-semibold text-red-400">
+                                                <div className="flex h-full flex-col gap-3 p-4 bg-card">
+                                                    <div className="rounded-md border border-destructive/30 bg-destructive/10 p-3">
+                                                        <p className="text-xs font-semibold text-destructive flex items-center gap-1.5">
+                                                            <AlertTriangle className="w-4 h-4 shrink-0" />
                                                             {focusedResult.connectionDropped ? 'Connection dropped' : 'Request failed'}
                                                         </p>
-                                                        <p className="mt-1 font-mono text-[11px] leading-relaxed text-red-300/90">
-                                                            {focusedResult.errorMessage ?? 'Unknown error'}
+                                                        <p className="mt-1 font-mono text-[11px] leading-relaxed text-muted-foreground whitespace-pre-wrap">
+                                                            {focusedResult.errorMessage ?? 'Unknown error occurred while executing this fuzzed request.'}
                                                         </p>
                                                     </div>
                                                     {canResendFocused && (
                                                         <Button
                                                             variant="outline"
                                                             size="sm"
-                                                            className="w-fit gap-1 border-gray-700 text-gray-200"
+                                                            className="w-fit h-7 gap-1.5 text-xs font-medium"
                                                             onClick={() => resendSingleFuzzRequest(
                                                                 dispatch,
                                                                 sessionIndex,
@@ -567,7 +601,7 @@ function FuzzerHistoryBody({
                                                                 projectId,
                                                             )}
                                                         >
-                                                            <RotateCcw className="size-3" />
+                                                            <RotateCcw className="w-3.5 h-3.5" />
                                                             Resend request
                                                         </Button>
                                                     )}
@@ -579,9 +613,7 @@ function FuzzerHistoryBody({
                                     </div>
                                 </ResizablePanel>
                             </ResizablePanelGroup>
-                        )
-                        }
-
+                        )}
                     </div>
                 </ResizablePanel>
             </ResizablePanelGroup>

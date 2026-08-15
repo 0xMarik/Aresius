@@ -3,9 +3,10 @@ import { useProjectId } from '@/hooks/useProjectId';
 import { markFailedRequestsPending, markRequestPending, markWorkerRequestsPending } from '@/store/slices/fuzzerSlice';
 import { FuzzRunState } from '@/types/fuzzer.type';
 import { invoke } from '@tauri-apps/api/core';
-import { Activity, AlertTriangle, ChevronDown, Cpu, RotateCcw, Square, WifiOff } from 'lucide-react';
+import { Activity, AlertTriangle, ChevronDown, Cpu, RotateCcw, Square, WifiOff, Globe } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
+import { Badge } from '@/components/ui/badge';
 import {
     DropdownMenu,
     DropdownMenuContent,
@@ -17,6 +18,8 @@ import {
 import { selectActiveScope } from '@/store/slices/scopeSlice';
 import { isInScope } from '@/lib/scopeMatcher';
 import { useMemo } from 'react';
+import { cn } from '@/lib/utils';
+import { getStatusBadgeStyle } from '@/components/Replayer/HistoryRequests';
 
 interface FuzzerRunToolbarProps {
     sessionIndex: number;
@@ -64,7 +67,7 @@ export function FuzzerRunToolbar({
         running: 'Running',
         completed: 'Completed',
         cancelled: 'Cancelled',
-        connection_dropped: 'Connection dropped',
+        connection_dropped: 'Connection Dropped',
     };
 
     const handleCancel = async () => {
@@ -114,59 +117,86 @@ export function FuzzerRunToolbar({
         }
     };
 
+    const statusBadgeClass = useMemo(() => {
+        if (isRunning) return 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/30 font-semibold';
+        if (runState.status === 'completed') return 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/30';
+        if (runState.status === 'connection_dropped') return 'bg-rose-500/15 text-rose-700 dark:text-rose-400 border-rose-500/30';
+        if (runState.status === 'cancelled') return 'bg-muted text-muted-foreground border-border';
+        return getStatusBadgeStyle(runState.status);
+    }, [isRunning, runState.status]);
+
     return (
-        <div className="flex flex-col gap-2 p-3 bg-muted/20 border-b border-border">
-            <div className="flex items-center justify-between gap-4">
-                {/* Status + Progress indicator */}
+        <div className="flex flex-col shrink-0 bg-card/40 border-b border-border/40 select-none">
+            {/* Main Header Toolbar */}
+            <div className="flex items-center justify-between px-3 h-12 gap-4">
+                {/* Left: Status + Progress + Target */}
                 <div className="flex items-center gap-3 flex-1 min-w-0">
                     <div className="flex items-center gap-2 shrink-0">
                         {isRunning ? (
-                            <Activity className="size-4 text-emerald-500 animate-pulse" />
+                            <Activity className="w-3.5 h-3.5 text-emerald-500 animate-pulse" />
                         ) : runState.connectionDropped ? (
-                            <WifiOff className="size-4 text-red-500" />
+                            <WifiOff className="w-3.5 h-3.5 text-rose-500" />
                         ) : (
-                            <Activity className="size-4 text-muted-foreground" />
+                            <Activity className="w-3.5 h-3.5 text-muted-foreground" />
                         )}
-                        <span className="text-xs font-medium">
+                        <Badge
+                            variant="outline"
+                            className={cn(
+                                "text-[10px] font-mono px-2 py-0.5 capitalize",
+                                statusBadgeClass
+                            )}
+                        >
                             {statusLabel[runState.status] ?? runState.status}
-                        </span>
+                        </Badge>
                     </div>
 
-                    <div className="flex items-center gap-2 flex-1 max-w-xs">
-                        <Progress value={percent} className="h-2" />
-                        <span className="text-xs text-muted-foreground font-mono w-12 text-right">
+                    {/* Target URL Pill */}
+                    {targetUrl && (
+                        <div className="hidden md:flex items-center gap-1 px-2 py-0.5 rounded-md bg-muted/30 border border-border/30 text-muted-foreground shrink-0 max-w-[220px]">
+                            <Globe className="w-3 h-3 text-muted-foreground/60 shrink-0" />
+                            <span className="font-mono text-[11px] truncate" title={targetUrl}>
+                                {targetUrl}
+                            </span>
+                        </div>
+                    )}
+
+                    {/* Progress Bar Capsule */}
+                    <div className="flex items-center gap-2 bg-muted/20 px-2.5 py-1 rounded-md border border-border/40 flex-1 max-w-sm">
+                        <Progress value={percent} className="h-1.5 flex-1" />
+                        <span className="text-[11px] font-mono text-muted-foreground tabular-nums shrink-0">
                             {percent}%
                         </span>
+                        <span className="text-[11px] font-mono text-muted-foreground/60 tabular-nums shrink-0">
+                            ({runState.completed}/{runState.total})
+                        </span>
                     </div>
-
-                    <span className="text-xs text-muted-foreground font-mono shrink-0">
-                        {runState.completed} / {runState.total}
-                    </span>
                 </div>
 
-                {/* Controls */}
+                {/* Right: Actions / Controls */}
                 <div className="flex items-center gap-2 shrink-0">
                     {workers.length > 0 && (
                         <DropdownMenu>
                             <DropdownMenuTrigger asChild>
-                                <Button variant="outline" size="sm" className="h-7 gap-1 text-xs">
-                                    <Cpu className="size-3.5" />
+                                <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs font-medium border-border/50">
+                                    <Cpu className="w-3.5 h-3.5 text-muted-foreground" />
                                     <span>Workers ({workers.length})</span>
                                     {droppedWorkersCount > 0 && (
-                                        <span className="ml-1 rounded-full bg-red-100 px-1.5 py-0.2 text-[10px] font-bold text-red-600 dark:bg-red-950 dark:text-red-400">
+                                        <span className="rounded-full bg-rose-500/15 text-rose-700 dark:text-rose-400 px-1.5 py-0.2 text-[10px] font-bold">
                                             {droppedWorkersCount} dropped
                                         </span>
                                     )}
-                                    <ChevronDown className="size-3 text-muted-foreground" />
+                                    <ChevronDown className="w-3 h-3 text-muted-foreground/70 ml-0.5" />
                                 </Button>
                             </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end" className="w-56">
-                                <DropdownMenuLabel className="text-xs">Worker Threads</DropdownMenuLabel>
+                            <DropdownMenuContent align="end" className="w-56 text-xs">
+                                <DropdownMenuLabel className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
+                                    Worker Threads
+                                </DropdownMenuLabel>
                                 <DropdownMenuSeparator />
                                 {workers.map((w) => (
                                     <DropdownMenuItem
                                         key={w.workerId}
-                                        className="flex items-center justify-between text-xs cursor-pointer"
+                                        className="flex items-center justify-between text-xs cursor-pointer py-1.5"
                                         onClick={() => {
                                             if (w.status === 'dropped' || w.status === 'completed') {
                                                 handleResendWorker(w.workerId);
@@ -174,7 +204,12 @@ export function FuzzerRunToolbar({
                                         }}
                                     >
                                         <div className="flex items-center gap-2">
-                                            <span className={`size-2 rounded-full ${w.status === 'running' ? 'bg-emerald-500 animate-pulse' : w.status === 'dropped' ? 'bg-red-500' : 'bg-gray-400'}`} />
+                                            <span className={cn(
+                                                "w-2 h-2 rounded-full",
+                                                w.status === 'running' ? 'bg-emerald-500 animate-pulse' :
+                                                w.status === 'dropped' ? 'bg-rose-500' :
+                                                w.status === 'completed' ? 'bg-emerald-500/60' : 'bg-muted-foreground/40'
+                                            )} />
                                             <span>Worker #{w.workerId + 1}</span>
                                         </div>
                                         <span className="text-[11px] text-muted-foreground font-mono">
@@ -186,26 +221,27 @@ export function FuzzerRunToolbar({
                         </DropdownMenu>
                     )}
 
-                    {isRunning && (
-                        <Button
-                            variant="destructive"
-                            size="sm"
-                            onClick={handleCancel}
-                            className="h-7 gap-1"
-                        >
-                            <Square className="size-3 fill-current" />
-                            Cancel
-                        </Button>
-                    )}
                     {!isRunning && failedCount > 0 && (
                         <Button
                             variant="outline"
                             size="sm"
                             onClick={handleResendAllFailed}
-                            className="h-7 gap-1"
+                            className="h-8 gap-1.5 text-xs font-medium border-border/50"
                         >
-                            <RotateCcw className="size-3" />
+                            <RotateCcw className="w-3.5 h-3.5" />
                             Resend all ({failedCount})
+                        </Button>
+                    )}
+
+                    {isRunning && (
+                        <Button
+                            variant="destructive"
+                            size="sm"
+                            onClick={handleCancel}
+                            className="h-8 font-semibold gap-1.5 text-xs shrink-0 shadow-xs"
+                        >
+                            <Square className="w-3.5 h-3.5 fill-current" />
+                            CANCEL
                         </Button>
                     )}
                 </div>
@@ -213,20 +249,20 @@ export function FuzzerRunToolbar({
 
             {/* Connection Dropped Banner */}
             {runState.connectionDropped && (
-                <div className="flex items-center justify-between rounded bg-red-50 p-2 border border-red-200 text-red-900 text-xs">
+                <div className="flex items-center justify-between px-3 py-1.5 bg-destructive/10 border-t border-destructive/25 text-destructive text-xs">
                     <div className="flex items-center gap-2">
-                        <AlertTriangle className="size-4 shrink-0 text-red-600" />
+                        <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
                         <span>
-                            Connection was lost on thread(s). Would you like to re-send the failed/dropped requests?
+                            Connection was lost on thread(s). Re-send the dropped requests?
                         </span>
                     </div>
                     <Button
                         variant="outline"
                         size="sm"
                         onClick={handleResendAllFailed}
-                        className="h-6 gap-1 border-red-300 bg-white text-[11px] font-semibold text-red-700 hover:bg-red-100"
+                        className="h-6 gap-1 border-destructive/40 text-[11px] font-semibold text-destructive hover:bg-destructive/15"
                     >
-                        <RotateCcw className="size-3" />
+                        <RotateCcw className="w-3 h-3" />
                         Re-send Dropped Requests
                     </Button>
                 </div>
@@ -234,8 +270,8 @@ export function FuzzerRunToolbar({
 
             {/* Out-of-scope warning banner */}
             {isTargetOutOfScope && (
-                <div className="flex items-center gap-2 rounded bg-amber-50 dark:bg-amber-500/10 px-2.5 py-1.5 border border-amber-200 dark:border-amber-500/30 text-amber-800 dark:text-amber-400 text-xs">
-                    <AlertTriangle className="size-3.5 shrink-0 text-amber-500" />
+                <div className="flex items-center gap-2 px-3 py-1.5 bg-amber-500/10 border-t border-amber-500/25 text-amber-800 dark:text-amber-400 text-xs">
+                    <AlertTriangle className="w-3.5 h-3.5 shrink-0 text-amber-500" />
                     <span>
                         Target <span className="font-mono font-semibold">{targetUrl}</span> is outside the active scope
                         {' '}(<span className="font-medium" style={{ color: activeScope?.color }}>{activeScope?.name}</span>).
