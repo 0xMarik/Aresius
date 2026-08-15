@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Button } from '../ui/button';
 import { Play } from 'lucide-react';
 import { ValidateUrlInput, stripPath } from '../ValidateUrlInput';
+import { toast } from 'sonner';
 
 type ActiveSessionShape = {
   targetUrl: string
@@ -80,9 +81,6 @@ const FuzzRequestPayload: React.FC = () => {
     const rawTargetUrl = fuzzSession.fuzzConfig.metadata.targetUrl;
     const stripedUrl = stripPath(rawTargetUrl);
 
-    dispatch(setTargerUrl({ targetUrl: stripedUrl, urlIsValid: true, projectId }));
-    dispatch(persistFuzzerSession(projectId, activeSessionIdx));
-
     const updatedSession = {
       ...fuzzSession,
       fuzzConfig: {
@@ -96,28 +94,6 @@ const FuzzRequestPayload: React.FC = () => {
     };
 
     const historyIndex = fuzzSession.fuzzingHistory.length;
-
-    dispatch(addFuzzingHistory({
-      sessionIndex: activeSessionIdx,
-      history: {
-        date: (new Date()).toISOString(),
-        fuzzConfigSnapshot: updatedSession.fuzzConfig,
-        requests: [],
-        runState: { ...initialFuzzRunState(), status: 'running' },
-      },
-      projectId,
-    }));
-
-    invoke('save_fuzzer_session_draft', {
-      projectId,
-      sessionIndex: activeSessionIdx,
-      name: fuzzSession.name,
-      rawRequest: fuzzSession.fuzzConfig.rawRequest,
-      targetUrl: stripedUrl,
-      attackType: fuzzSession.fuzzConfig.fuzzingAttackType,
-      numThreads: fuzzSession.fuzzConfig.numThreads,
-      delayMs: fuzzSession.fuzzConfig.delayMs,
-    }).catch(console.error);
 
     const executeProps = {
       session: updatedSession,
@@ -144,8 +120,35 @@ const FuzzRequestPayload: React.FC = () => {
       }
     } catch (err) {
       console.error('Failed to start fuzzing:', err);
+      const errStr = typeof err === 'string' ? err : (err as any)?.message || 'Connection failed';
+      toast.error(errStr, { position: 'top-center' });
       return;
     }
+
+    dispatch(setTargerUrl({ targetUrl: stripedUrl, urlIsValid: true, projectId }));
+    dispatch(persistFuzzerSession(projectId, activeSessionIdx));
+
+    dispatch(addFuzzingHistory({
+      sessionIndex: activeSessionIdx,
+      history: {
+        date: (new Date()).toISOString(),
+        fuzzConfigSnapshot: updatedSession.fuzzConfig,
+        requests: [],
+        runState: { ...initialFuzzRunState(), status: 'running' },
+      },
+      projectId,
+    }));
+
+    invoke('save_fuzzer_session_draft', {
+      projectId,
+      sessionIndex: activeSessionIdx,
+      name: fuzzSession.name,
+      rawRequest: fuzzSession.fuzzConfig.rawRequest,
+      targetUrl: stripedUrl,
+      attackType: fuzzSession.fuzzConfig.fuzzingAttackType,
+      numThreads: fuzzSession.fuzzConfig.numThreads,
+      delayMs: fuzzSession.fuzzConfig.delayMs,
+    }).catch(console.error);
 
     dispatch(setFuzzRunTargets({
       sessionIndex: activeSessionIdx,

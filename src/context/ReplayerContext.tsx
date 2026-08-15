@@ -3,7 +3,8 @@ import { invoke } from '@tauri-apps/api/core';
 import { useProjectId } from '@/hooks/useProjectId';
 import { useAppDispatch, useAppSelector } from '@/hooks/redux';
 import { parseResponse } from '@/components/utils';
-import { stripPath } from '@/components/ValidateUrlInput';
+import { stripPath, isDnsResolutionError } from '@/components/ValidateUrlInput';
+import { toast } from 'sonner';
 import { ReplayerHistoryItem } from '@/types/replayer.type';
 import {
     ReplayerCollectionMeta,
@@ -442,6 +443,11 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
                 const errStr = typeof error === 'string' ? error : (error as any)?.message || 'Request failed';
                 const isCanceled = errStr.toLowerCase().includes('cancel');
+
+                if (!isCanceled && isDnsResolutionError(errStr)) {
+                    toast.error(errStr, { position: 'top-center' });
+                    return;
+                }
 
                 const errItem: ReplayerHistoryItem = {
                     id: crypto.randomUUID(),

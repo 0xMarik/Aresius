@@ -37,6 +37,20 @@ export function validateUrl(value: string): string | null {
     return null
 }
 
+export function isDnsResolutionError(error: unknown): boolean {
+    if (!error) return false;
+    const str = (typeof error === 'string' ? error : (error as any)?.message || String(error)).toLowerCase();
+    return (
+        str.includes('11001') ||
+        str.includes('no such host is known') ||
+        str.includes('failed to lookup address') ||
+        str.includes('name or service not known') ||
+        str.includes('nodename nor servname provided') ||
+        str.includes('dns') ||
+        str.includes('url parsing failed')
+    );
+}
+
 export function normalizeUrlWithScheme(url: string): string {
     const trimmed = url.trim()
     if (!trimmed) return trimmed

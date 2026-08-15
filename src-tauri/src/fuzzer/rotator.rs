@@ -1,5 +1,6 @@
 use tauri::AppHandle;
 
+use crate::ares_utils::http_connection::HttpConnection;
 use crate::fuzzer::engine::{run_fuzz_targets, FuzzRunConfig, FuzzTarget};
 use crate::fuzzer::utils::building_raw_request;
 use crate::types::FuzzerSession;
@@ -34,11 +35,17 @@ pub async fn execute_rotator_fuzzing(
     selected_session: u32,
     fuzz_history: u32,
 ) -> Result<Vec<FuzzTarget>, String> {
+    let url = session.fuzz_config.metadata.target_url.clone();
+    let mut test_conn = HttpConnection::new(&url)
+        .await
+        .map_err(|e| format!("Connection failed: {e}"))?;
+    let _ = test_conn.close().await;
+
     let targets = build_fuzz_requests(&session);
     let returned = targets.clone();
 
     let config = FuzzRunConfig {
-        url: session.fuzz_config.metadata.target_url.clone(),
+        url,
         delay_ms: session.fuzz_config.delay_ms,
         num_tasks,
         selected_session,
