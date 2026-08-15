@@ -21,9 +21,9 @@ use crate::fuzzer::engine::{
     resend_failed_fuzz_requests, resend_fuzz_request, resend_worker_fuzz_requests,
 };
 use crate::ares_utils::database::fuzzer::{
-    create_fuzzer_session_db, delete_fuzzer_session_db, get_fuzzer_project_data,
-    save_fuzzer_parameters_db, save_fuzzer_session_draft, set_fuzzer_expanded_ids,
-    set_fuzzer_session_selection,
+    create_fuzzer_session_db, delete_fuzzer_history_db, delete_fuzzer_session_db,
+    get_fuzzer_project_data, save_fuzzer_parameters_db, save_fuzzer_session_draft,
+    set_fuzzer_expanded_ids, set_fuzzer_session_selection,
 };
 use crate::fuzzer::rotator::execute_rotator_fuzzing;
 use crate::fuzzer::zipped::execute_zipped_fuzzing;
@@ -78,6 +78,7 @@ pub fn run() {
             set_fuzzer_expanded_ids,
             create_fuzzer_session_db,
             delete_fuzzer_session_db,
+            delete_fuzzer_history_db,
             save_fuzzer_session_draft,
             save_fuzzer_parameters_db,
             // Replayer

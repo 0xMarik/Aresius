@@ -84,7 +84,15 @@ export function stripPath(url: string): string {
 }
 
 
-export function ValidateUrlInput({ url, onChange }: { url: string; onChange: (url: string, urlIsValid: boolean) => void }) {
+export function ValidateUrlInput({
+    url,
+    onChange,
+    disabled = false,
+}: {
+    url: string;
+    onChange: (url: string, urlIsValid: boolean) => void;
+    disabled?: boolean;
+}) {
     const [touched, setTouched] = useState(false)
 
     const error = useMemo(() => validateUrl(url), [url])
@@ -112,6 +120,7 @@ export function ValidateUrlInput({ url, onChange }: { url: string; onChange: (ur
                                 size="icon"
                                 className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground"
                                 aria-label="URL format help"
+                                disabled={disabled}
                             >
                                 <HelpCircle className="h-4 w-4" />
                             </Button>
@@ -130,6 +139,7 @@ export function ValidateUrlInput({ url, onChange }: { url: string; onChange: (ur
 
                 <Input
                     placeholder="Enter an URL... (e.g. https://example.com)"
+                    disabled={disabled}
                     className={cn(
                         'flex-1 font-mono text-xs h-8 bg-background',
                         showError && 'border-destructive focus-visible:ring-destructive'

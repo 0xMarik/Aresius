@@ -66,6 +66,8 @@ pub async fn execute_zipped_fuzzing(
 
     let returned = targets.clone();
 
+    let config_snapshot = serde_json::to_string(&session.fuzz_config).ok();
+
     let config = FuzzRunConfig {
         url,
         delay_ms: session.fuzz_config.delay_ms,
@@ -73,6 +75,7 @@ pub async fn execute_zipped_fuzzing(
         selected_session,
         fuzz_history,
         register_cancel: true,
+        config_snapshot,
     };
 
     tokio::spawn(async move {

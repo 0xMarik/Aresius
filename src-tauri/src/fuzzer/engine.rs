@@ -396,6 +396,7 @@ pub struct FuzzRunConfig {
     pub fuzz_history: u32,
     /// When true, registers a cancel token for the whole run (initial fuzz only).
     pub register_cancel: bool,
+    pub config_snapshot: Option<String>,
 }
 
 static FUZZ_CANCELLATIONS: OnceLock<Mutex<HashMap<String, Arc<AtomicBool>>>> = OnceLock::new();
@@ -857,30 +858,45 @@ pub async fn run_fuzz_targets(app: AppHandle, config: FuzzRunConfig, targets: Ve
             }
         };
 
-        let config_snapshot_json = serde_json::json!({
-            "numThreads": config.num_tasks,
-            "delayMs": config.delay_ms,
-            "metadata": {
-                "targetUrl": config.url,
-                "urlIsValid": !config.url.is_empty(),
-            },
-            "parameters": [],
-            "rawRequest": "",
-        }).to_string();
-
         let now = chrono::Utc::now().timestamp_millis();
-        let _ = sqlx::query(
-            "INSERT INTO fuzzer_runs (id, session_id, config_snapshot, status, total, completed, completed_base, connection_dropped, started_at)
-             VALUES (?, ?, ?, 'running', ?, 0, 0, 0, ?)
-             ON CONFLICT(id) DO UPDATE SET status = 'running', total = excluded.total, config_snapshot = excluded.config_snapshot, started_at = excluded.started_at"
-        )
-        .bind(&run_id)
-        .bind(&session_id)
-        .bind(&config_snapshot_json)
-        .bind(total as i64)
-        .bind(now)
-        .execute(pool)
-        .await;
+        if let Some(ref snapshot_str) = config.config_snapshot {
+            let _ = sqlx::query(
+                "INSERT INTO fuzzer_runs (id, session_id, config_snapshot, status, total, completed, completed_base, connection_dropped, started_at)
+                 VALUES (?, ?, ?, 'running', ?, 0, 0, 0, ?)
+                 ON CONFLICT(id) DO UPDATE SET status = 'running', total = excluded.total, config_snapshot = excluded.config_snapshot, started_at = excluded.started_at"
+            )
+            .bind(&run_id)
+            .bind(&session_id)
+            .bind(snapshot_str)
+            .bind(total as i64)
+            .bind(now)
+            .execute(pool)
+            .await;
+        } else {
+            let default_snapshot = serde_json::json!({
+                "numThreads": config.num_tasks,
+                "delayMs": config.delay_ms,
+                "metadata": {
+                    "targetUrl": config.url,
+                    "urlIsValid": !config.url.is_empty(),
+                },
+                "parameters": [],
+                "rawRequest": "",
+            }).to_string();
+
+            let _ = sqlx::query(
+                "INSERT INTO fuzzer_runs (id, session_id, config_snapshot, status, total, completed, completed_base, connection_dropped, started_at)
+                 VALUES (?, ?, ?, 'running', ?, 0, 0, 0, ?)
+                 ON CONFLICT(id) DO UPDATE SET status = 'running', total = excluded.total, started_at = excluded.started_at"
+            )
+            .bind(&run_id)
+            .bind(&session_id)
+            .bind(&default_snapshot)
+            .bind(total as i64)
+            .bind(now)
+            .execute(pool)
+            .await;
+        }
 
         for (w_id, chunk) in targets.chunks(chunk_size.max(1)).enumerate() {
             let _ = sqlx::query(
@@ -1187,6 +1203,7 @@ pub async fn resend_fuzz_request(
         selected_session,
         fuzz_history,
         register_cancel: false,
+        config_snapshot: None,
     };
 
     tokio::spawn(async move {
@@ -1499,6 +1516,7 @@ pub async fn resend_worker_fuzz_requests(
         selected_session,
         fuzz_history,
         register_cancel: false,
+        config_snapshot: None,
     };
 
     let db_pool = if let Some(db_state) = app.try_state::<crate::ares_utils::database::DbState>() {

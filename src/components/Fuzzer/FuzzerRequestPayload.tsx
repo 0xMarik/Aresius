@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useAppDispatch, useAppSelector } from '@/hooks/redux';
 import { useProjectId } from '@/hooks/useProjectId';
 import type { RootState } from '@/store';
@@ -11,7 +11,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { useStore } from 'react-redux';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { Button } from '../ui/button';
-import { Play } from 'lucide-react';
+import { Play, Loader2 } from 'lucide-react';
 import { ValidateUrlInput, stripPath } from '../ValidateUrlInput';
 import { toast } from 'sonner';
 
@@ -57,6 +57,7 @@ const FuzzRequestPayload: React.FC = () => {
   const dispatch = useAppDispatch();
   const store = useStore();
   const projectId = useProjectId();
+  const [isVerifying, setIsVerifying] = useState(false);
 
   const { activeSessionIndex, fuzzerSessions } = useAppSelector(selectFuzzerState(projectId));
   const activeSession = useAppSelector(selectActiveSessionShape(projectId), shallowEqualActiveSession);
@@ -64,13 +65,14 @@ const FuzzRequestPayload: React.FC = () => {
   if (activeSessionIndex === null || fuzzerSessions[activeSessionIndex] === undefined) return null;
 
   const isFuzzDisabled =
+    isVerifying ||
     !activeSession?.targetUrl ||
     !activeSession.targetUrl.trim() ||
     activeSession.targetUrl === 'https://' ||
     activeSession.urlIsValid === false;
 
   const triggerFuzzing = async () => {
-    if (!projectId) return;
+    if (!projectId || isVerifying) return;
     const currentStoreState = store.getState() as RootState;
     const fstate = currentStoreState.fuzzerstate[projectId] ?? defaultFuzzerState();
     const activeSessionIdx = fstate.activeSessionIndex;
@@ -94,29 +96,30 @@ const FuzzRequestPayload: React.FC = () => {
       return;
     }
 
-    const updatedSession = {
-      ...fuzzSession,
-      fuzzConfig: {
-        ...fuzzSession.fuzzConfig,
-        metadata: {
-          ...fuzzSession.fuzzConfig.metadata,
-          targetUrl: stripedUrl,
-          urlIsValid: true,
-        },
-      },
-    };
-
-    const historyIndex = fuzzSession.fuzzingHistory.length;
-
-    const executeProps = {
-      session: updatedSession,
-      numTasks: fuzzSession.fuzzConfig.numThreads,
-      selectedSession: activeSessionIdx,
-      fuzzHistory: historyIndex,
-    };
-
-    let targets: { id: string; request: string }[] = [];
+    setIsVerifying(true);
     try {
+      const updatedSession = {
+        ...fuzzSession,
+        fuzzConfig: {
+          ...fuzzSession.fuzzConfig,
+          metadata: {
+            ...fuzzSession.fuzzConfig.metadata,
+            targetUrl: stripedUrl,
+            urlIsValid: true,
+          },
+        },
+      };
+
+      const historyIndex = fuzzSession.fuzzingHistory.length;
+
+      const executeProps = {
+        session: updatedSession,
+        numTasks: fuzzSession.fuzzConfig.numThreads,
+        selectedSession: activeSessionIdx,
+        fuzzHistory: historyIndex,
+      };
+
+      let targets: { id: string; request: string }[] = [];
       switch (fuzzSession.fuzzConfig.fuzzingAttackType) {
         case FuzzingAttackType.ROTATOR:
           targets = await invoke("execute_rotator_fuzzing", executeProps);
@@ -131,44 +134,45 @@ const FuzzRequestPayload: React.FC = () => {
           targets = await invoke("execute_combinatorial_fuzzing", executeProps);
           break;
       }
+
+      dispatch(setTargerUrl({ targetUrl: stripedUrl, urlIsValid: true, projectId }));
+      dispatch(persistFuzzerSession(projectId, activeSessionIdx));
+
+      dispatch(addFuzzingHistory({
+        sessionIndex: activeSessionIdx,
+        history: {
+          date: (new Date()).toISOString(),
+          fuzzConfigSnapshot: updatedSession.fuzzConfig,
+          requests: [],
+          runState: { ...initialFuzzRunState(), status: 'running' },
+        },
+        projectId,
+      }));
+
+      invoke('save_fuzzer_session_draft', {
+        projectId,
+        sessionIndex: activeSessionIdx,
+        name: fuzzSession.name,
+        rawRequest: fuzzSession.fuzzConfig.rawRequest,
+        targetUrl: stripedUrl,
+        attackType: fuzzSession.fuzzConfig.fuzzingAttackType,
+        numThreads: fuzzSession.fuzzConfig.numThreads,
+        delayMs: fuzzSession.fuzzConfig.delayMs,
+      }).catch(console.error);
+
+      dispatch(setFuzzRunTargets({
+        sessionIndex: activeSessionIdx,
+        historyIndex,
+        targets,
+        projectId,
+      }));
     } catch (err) {
       console.error('Failed to start fuzzing:', err);
       const errStr = typeof err === 'string' ? err : (err as any)?.message || 'Connection failed';
       toast.error(errStr, { position: 'top-center' });
-      return;
+    } finally {
+      setIsVerifying(false);
     }
-
-    dispatch(setTargerUrl({ targetUrl: stripedUrl, urlIsValid: true, projectId }));
-    dispatch(persistFuzzerSession(projectId, activeSessionIdx));
-
-    dispatch(addFuzzingHistory({
-      sessionIndex: activeSessionIdx,
-      history: {
-        date: (new Date()).toISOString(),
-        fuzzConfigSnapshot: updatedSession.fuzzConfig,
-        requests: [],
-        runState: { ...initialFuzzRunState(), status: 'running' },
-      },
-      projectId,
-    }));
-
-    invoke('save_fuzzer_session_draft', {
-      projectId,
-      sessionIndex: activeSessionIdx,
-      name: fuzzSession.name,
-      rawRequest: fuzzSession.fuzzConfig.rawRequest,
-      targetUrl: stripedUrl,
-      attackType: fuzzSession.fuzzConfig.fuzzingAttackType,
-      numThreads: fuzzSession.fuzzConfig.numThreads,
-      delayMs: fuzzSession.fuzzConfig.delayMs,
-    }).catch(console.error);
-
-    dispatch(setFuzzRunTargets({
-      sessionIndex: activeSessionIdx,
-      historyIndex,
-      targets,
-      projectId,
-    }));
   };
 
   return (
@@ -177,6 +181,7 @@ const FuzzRequestPayload: React.FC = () => {
 
         <ValidateUrlInput
           url={activeSession?.targetUrl ?? ''}
+          disabled={isVerifying}
           onChange={(url, urlIsValid) => {
             if (projectId && activeSessionIndex !== null) {
               dispatch(setTargerUrl({ targetUrl: url, urlIsValid, projectId }));
@@ -186,6 +191,7 @@ const FuzzRequestPayload: React.FC = () => {
         />
 
         <Select
+          disabled={isVerifying}
           defaultValue={"1"}
           value={activeSession?.fuzzingAttackType}
           onValueChange={(value) => {
@@ -212,8 +218,17 @@ const FuzzRequestPayload: React.FC = () => {
           disabled={isFuzzDisabled}
           className="h-8 px-4 font-semibold gap-1.5 shrink-0"
         >
-          <Play className="w-3.5 h-3.5 fill-current" />
-          START FUZZ
+          {isVerifying ? (
+            <>
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              Verifying...
+            </>
+          ) : (
+            <>
+              <Play className="w-3.5 h-3.5 fill-current" />
+              START FUZZ
+            </>
+          )}
         </Button>
       </div>
       <ResizablePanelGroup direction='horizontal' autoSaveId="fuzzing-payload-layout" className="flex-1 min-h-0">

@@ -19,38 +19,36 @@ pub struct SessionPayload {
     pub parameters: Vec<FuzzerParameter>,
     pub metadata: PayloadMetadata,
     pub delay_ms: u64,
+    #[serde(default)]
+    pub fuzzing_attack_type: Option<String>,
+    #[serde(default)]
+    pub num_threads: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PayloadMetadata {
     pub target_url: String,
+    #[serde(default)]
+    pub url_is_valid: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FuzzerParameter {
-    pub payload_source: PayloadSource,
+    pub payload_source: String,
     pub values: Vec<String>,
     pub highlight_range: HighlightRange,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum PayloadSource {
-    Manual,
-    Wordlist,
-    Generator,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HighlightRange {
     pub id: String,
-    pub from: i32,
-    pub to: i32,
-    pub byte_from: i32,
-    pub byte_to: i32,
+    pub from: i64,
+    pub to: i64,
+    pub byte_from: i64,
+    pub byte_to: i64,
     pub original_text: String,
     pub is_active: bool,
 }

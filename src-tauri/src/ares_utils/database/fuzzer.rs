@@ -117,7 +117,7 @@ pub struct FuzzerRunWithWorkers {
 #[serde(rename_all = "camelCase")]
 pub struct FuzzerProjectData {
     pub sessions: Vec<FuzzerFullSession>,
-    pub selected_session_index: usize,
+    pub selected_session_index: Option<usize>,
     pub expanded_ids: Vec<String>,
 }
 
@@ -152,7 +152,7 @@ pub async fn get_fuzzer_project_data(
         _ => project_id.clone(),
     };
 
-    let mut sessions = sqlx::query_as::<_, FuzzerSessionDb>(
+    let sessions = sqlx::query_as::<_, FuzzerSessionDb>(
         "SELECT * FROM fuzzer_sessions WHERE project_id = ? ORDER BY sort_order ASC, created_at ASC",
     )
     .bind(&real_project_id)
@@ -160,34 +160,12 @@ pub async fn get_fuzzer_project_data(
     .await
     .map_err(|e| e.to_string())?;
 
-    if sessions.is_empty() {
-        let default_sess_id = uuid::Uuid::new_v4().to_string();
-        let now = chrono::Utc::now().timestamp_millis();
-        let _ = sqlx::query(
-            "INSERT INTO fuzzer_sessions (id, project_id, name, raw_request, target_url, sort_order, is_selected, is_expanded, created_at)
-             VALUES (?, ?, 'Session 1', 'GET / HTTP/1.1\r\n\r\n', '', 0, 1, 1, ?)"
-        )
-        .bind(&default_sess_id)
-        .bind(&real_project_id)
-        .bind(now)
-        .execute(&pool)
-        .await;
-
-        sessions = sqlx::query_as::<_, FuzzerSessionDb>(
-            "SELECT * FROM fuzzer_sessions WHERE project_id = ? ORDER BY sort_order ASC, created_at ASC",
-        )
-        .bind(&real_project_id)
-        .fetch_all(&pool)
-        .await
-        .unwrap_or_default();
-    }
-
-    let mut selected_session_index = 0;
+    let mut selected_session_index: Option<usize> = None;
     let mut expanded_ids = Vec::new();
 
     for (idx, sess) in sessions.iter().enumerate() {
         if sess.is_selected {
-            selected_session_index = idx;
+            selected_session_index = Some(idx);
         }
         if sess.is_expanded {
             expanded_ids.push(idx.to_string());
@@ -263,36 +241,47 @@ pub async fn get_fuzzer_project_data(
 pub async fn set_fuzzer_session_selection(
     db: tauri::State<'_, DbState>,
     project_id: String,
-    session_index: usize,
+    session_index: Option<usize>,
     selected_history_index: Option<i64>,
 ) -> Result<(), String> {
     let pool = db.pool().await?;
     let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
 
+    let real_project_id: String = match sqlx::query_scalar::<_, String>("SELECT id FROM projects LIMIT 1")
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?
+    {
+        Some(pid) => pid,
+        None => project_id.clone(),
+    };
+
     sqlx::query("UPDATE fuzzer_sessions SET is_selected = 0 WHERE project_id = ?")
-        .bind(&project_id)
+        .bind(&real_project_id)
         .execute(&mut *tx)
         .await
         .map_err(|e| e.to_string())?;
 
-    let session_id: Option<String> = sqlx::query_scalar(
-        "SELECT id FROM fuzzer_sessions WHERE project_id = ? ORDER BY sort_order ASC, created_at ASC LIMIT 1 OFFSET ?"
-    )
-    .bind(&project_id)
-    .bind(session_index as i64)
-    .fetch_optional(&mut *tx)
-    .await
-    .map_err(|e| e.to_string())?;
-
-    if let Some(s_id) = session_id {
-        sqlx::query(
-            "UPDATE fuzzer_sessions SET is_selected = 1, selected_history_index = ? WHERE id = ?"
+    if let Some(s_idx) = session_index {
+        let session_id: Option<String> = sqlx::query_scalar(
+            "SELECT id FROM fuzzer_sessions WHERE project_id = ? ORDER BY sort_order ASC, created_at ASC LIMIT 1 OFFSET ?"
         )
-        .bind(selected_history_index)
-        .bind(&s_id)
-        .execute(&mut *tx)
+        .bind(&real_project_id)
+        .bind(s_idx as i64)
+        .fetch_optional(&mut *tx)
         .await
         .map_err(|e| e.to_string())?;
+
+        if let Some(s_id) = session_id {
+            sqlx::query(
+                "UPDATE fuzzer_sessions SET is_selected = 1, selected_history_index = ? WHERE id = ?"
+            )
+            .bind(selected_history_index)
+            .bind(&s_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?;
+        }
     }
 
     tx.commit().await.map_err(|e| e.to_string())?;
@@ -420,6 +409,53 @@ pub async fn delete_fuzzer_session_db(
             .execute(&pool)
             .await
             .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn delete_fuzzer_history_db(
+    db: tauri::State<'_, DbState>,
+    project_id: String,
+    session_index: usize,
+    history_index: usize,
+) -> Result<(), String> {
+    let pool = db.pool().await?;
+
+    let real_project_id: String = match sqlx::query_scalar::<_, String>("SELECT id FROM projects LIMIT 1")
+        .fetch_optional(&pool)
+        .await
+    {
+        Ok(Some(pid)) => pid,
+        _ => project_id.clone(),
+    };
+
+    let session_id: Option<String> = sqlx::query_scalar(
+        "SELECT id FROM fuzzer_sessions WHERE project_id = ? ORDER BY sort_order ASC, created_at ASC LIMIT 1 OFFSET ?"
+    )
+    .bind(&real_project_id)
+    .bind(session_index as i64)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    if let Some(s_id) = session_id {
+        let run_id: Option<String> = sqlx::query_scalar(
+            "SELECT id FROM fuzzer_runs WHERE session_id = ? ORDER BY started_at ASC LIMIT 1 OFFSET ?"
+        )
+        .bind(&s_id)
+        .bind(history_index as i64)
+        .fetch_optional(&pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        if let Some(r_id) = run_id {
+            sqlx::query("DELETE FROM fuzzer_runs WHERE id = ?")
+                .bind(&r_id)
+                .execute(&pool)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
     }
     Ok(())
 }

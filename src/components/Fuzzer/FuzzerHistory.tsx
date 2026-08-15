@@ -49,27 +49,45 @@ export function adaptFuzzerRequests(requests: FuzzerRequest[], offset = 0): Fuzz
  * (rotator/echo/zipped/combinatorial) since it doesn't rely on replaying
  * the iteration logic -- it just reads back what was actually sent.
  */
+function getRangeFrom(p: FuzzerParameter): number {
+    return p.highlightRange.byteFrom !== undefined && p.highlightRange.byteFrom !== null
+        ? p.highlightRange.byteFrom
+        : p.highlightRange.from;
+}
+
+function getRangeTo(p: FuzzerParameter): number {
+    return p.highlightRange.byteTo !== undefined && p.highlightRange.byteTo !== null
+        ? p.highlightRange.byteTo
+        : p.highlightRange.to;
+}
+
 function extractPayloadValues(
     rawRequest: string,
     actualRequest: string,
     parameters: FuzzerParameter[],
 ): { id: string; value: string }[] {
-    if (!parameters.length || !rawRequest) return [];
+    if (!parameters.length || !rawRequest || !actualRequest) return [];
 
-    const sorted = [...parameters].sort((a, b) => a.highlightRange.byteFrom - b.highlightRange.byteFrom);
+    const sorted = [...parameters].sort((a, b) => getRangeFrom(a) - getRangeFrom(b));
 
     // Literal text between/around highlight ranges -- guaranteed unchanged by fuzzing.
     const segments: string[] = [];
-    segments.push(rawRequest.slice(0, sorted[0].highlightRange.byteFrom));
+    segments.push(rawRequest.slice(0, getRangeFrom(sorted[0])));
     for (let i = 0; i < sorted.length - 1; i++) {
-        segments.push(rawRequest.slice(sorted[i].highlightRange.byteTo, sorted[i + 1].highlightRange.byteFrom));
+        segments.push(rawRequest.slice(getRangeTo(sorted[i]), getRangeFrom(sorted[i + 1])));
     }
-    segments.push(rawRequest.slice(sorted[sorted.length - 1].highlightRange.byteTo));
+    segments.push(rawRequest.slice(getRangeTo(sorted[sorted.length - 1])));
 
     if (!actualRequest.startsWith(segments[0])) {
-        // Template drifted from what was actually sent (e.g. request was hand-edited
-        // after the fuzz config was built) -- can't safely diff, bail out.
-        return sorted.map((p) => ({ id: p.highlightRange.id, value: '(unavailable)' }));
+        // Fallback: try checking if any known parameter values match
+        const fallbackValues = sorted.map((p) => {
+            const matchedValue = p.values?.find((v) => v && actualRequest.includes(v));
+            return {
+                id: p.highlightRange.id,
+                value: matchedValue ?? p.highlightRange.originalText ?? '(unavailable)',
+            };
+        });
+        return fallbackValues;
     }
 
     const values: { id: string; value: string }[] = [];
