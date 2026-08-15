@@ -20,6 +20,11 @@ use crate::fuzzer::engine::{
     cancel_fuzzing, get_fuzzer_history_window, get_fuzzer_request_by_id,
     resend_failed_fuzz_requests, resend_fuzz_request, resend_worker_fuzz_requests,
 };
+use crate::ares_utils::database::fuzzer::{
+    create_fuzzer_session_db, delete_fuzzer_session_db, get_fuzzer_project_data,
+    save_fuzzer_parameters_db, save_fuzzer_session_draft, set_fuzzer_expanded_ids,
+    set_fuzzer_session_selection,
+};
 use crate::fuzzer::rotator::execute_rotator_fuzzing;
 use crate::fuzzer::zipped::execute_zipped_fuzzing;
 use crate::proxy::utils::HistoryIdCounter;
@@ -68,6 +73,13 @@ pub fn run() {
             resend_worker_fuzz_requests,
             get_fuzzer_history_window,
             get_fuzzer_request_by_id,
+            get_fuzzer_project_data,
+            set_fuzzer_session_selection,
+            set_fuzzer_expanded_ids,
+            create_fuzzer_session_db,
+            delete_fuzzer_session_db,
+            save_fuzzer_session_draft,
+            save_fuzzer_parameters_db,
             // Replayer
             replay_request,
             cancel_replayer_request,

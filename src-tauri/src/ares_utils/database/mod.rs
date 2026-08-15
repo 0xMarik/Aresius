@@ -4,6 +4,7 @@ use sqlx::{
 };
 use std::str::FromStr;
 use tokio::sync::RwLock;
+pub mod fuzzer;
 pub mod http_history;
 pub mod projects;
 pub mod projects_catalog;

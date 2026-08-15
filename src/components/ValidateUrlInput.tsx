@@ -37,22 +37,54 @@ export function validateUrl(value: string): string | null {
     return null
 }
 
-export function stripPath(url: string): string {
-    const match = url.match(URL_PATTERN)
-    if (!match || !match.groups?.host) return url
+export function normalizeUrlWithScheme(url: string): string {
+    const trimmed = url.trim()
+    if (!trimmed) return trimmed
 
-    const { scheme = '', host, port = '' } = match.groups
-    return `${scheme}${host}${port}`
+    const match = trimmed.match(URL_PATTERN)
+    if (!match || !match.groups?.host) {
+        return trimmed
+    }
+
+    const { scheme, host, port = '' } = match.groups
+    if (!scheme) {
+        const hostIndex = trimmed.indexOf(host)
+        const afterHostAndPort = trimmed.slice(hostIndex + host.length + port.length)
+        return `https://${host}${port}${afterHostAndPort}`
+    }
+    return trimmed
+}
+
+export function stripPath(url: string): string {
+    const trimmed = url.trim()
+    if (!trimmed) return trimmed
+
+    const match = trimmed.match(URL_PATTERN)
+    if (!match || !match.groups?.host) {
+        return trimmed.includes('://') ? trimmed : `https://${trimmed}`
+    }
+
+    const { scheme, host, port = '' } = match.groups
+    const finalScheme = scheme || 'https://'
+    return `${finalScheme}${host}${port}`
 }
 
 
 export function ValidateUrlInput({ url, onChange }: { url: string; onChange: (url: string, urlIsValid: boolean) => void }) {
     const [touched, setTouched] = useState(false)
 
-
     const error = useMemo(() => validateUrl(url), [url])
-
     const showError = touched && error
+
+    const handleBlur = () => {
+        setTouched(true)
+        if (url && url.trim() && !validateUrl(url)) {
+            const normalized = normalizeUrlWithScheme(url)
+            if (normalized !== url) {
+                onChange(normalized, true)
+            }
+        }
+    }
 
     return (
         <div className="flex flex-col gap-1 flex-1">
@@ -93,7 +125,7 @@ export function ValidateUrlInput({ url, onChange }: { url: string; onChange: (ur
                         if (!touched) setTouched(true)
                         onChange(event.target.value, !validateUrl(event.target.value))
                     }}
-                    onBlur={() => setTouched(true)}
+                    onBlur={handleBlur}
                     aria-invalid={!!showError}
                 />
             </div>

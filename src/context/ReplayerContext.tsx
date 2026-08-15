@@ -218,7 +218,8 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         const newSessId = crypto.randomUUID();
         const sessionCount = col.sessions.length;
         const name = initialData?.name || `Session ${sessionCount + 1}`;
-        const url = initialData?.url || 'https://';
+        const rawUrl = initialData?.url || 'https://';
+        const url = rawUrl !== 'https://' && rawUrl.trim() && !rawUrl.includes('://') ? `https://${rawUrl}` : rawUrl;
         const requestTmp = initialData?.request || 'GET / HTTP/1.1\r\n\r\n';
         const urlIsValid = initialData?.urlIsValid !== undefined ? initialData.urlIsValid : (!url.startsWith('https://') || url.length > 8);
 

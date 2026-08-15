@@ -5,17 +5,18 @@ import type { RootState } from '@/store';
 import RequestEditor from './request-editor/RequestEditor';
 import FuzzConfig from './FuzzConfig';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '../ui/resizable';
-import { addFuzzingHistory, setFuzzingAttackType, setFuzzRunTargets, setTargerUrl, selectFuzzerState, defaultFuzzerState } from '@/store/slices/fuzzerSlice';
+import { addFuzzingHistory, setFuzzingAttackType, setFuzzRunTargets, setTargerUrl, selectFuzzerState, defaultFuzzerState, persistFuzzerSession } from '@/store/slices/fuzzerSlice';
 import { FuzzingAttackType, initialFuzzRunState } from '@/types/fuzzer.type';
 import { invoke } from '@tauri-apps/api/core';
 import { useStore } from 'react-redux';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { Button } from '../ui/button';
 import { Play } from 'lucide-react';
-import { ValidateUrlInput } from '../ValidateUrlInput';
+import { ValidateUrlInput, stripPath } from '../ValidateUrlInput';
 
 type ActiveSessionShape = {
   targetUrl: string
+  urlIsValid: boolean
   fuzzingAttackType: FuzzingAttackType
   selectedHistoryIndex: number | null
   historyDates: string[]
@@ -30,6 +31,7 @@ export const selectActiveSessionShape = (projectId: string | null) => (state: Ro
   if (!s) return undefined;
   return {
     targetUrl: s.fuzzConfig.metadata.targetUrl,
+    urlIsValid: s.fuzzConfig.metadata.urlIsValid,
     fuzzingAttackType: s.fuzzConfig.fuzzingAttackType,
     selectedHistoryIndex: s.selectedHistoryIndex ?? null,
     historyDates: s.fuzzingHistory.map((h: { date: string }) => h.date),
@@ -40,6 +42,7 @@ export const shallowEqualActiveSession = (a: ActiveSessionShape, b: ActiveSessio
   if (a === b) return true;
   if (!a || !b) return a === b;
   if (a.targetUrl !== b.targetUrl) return false;
+  if (a.urlIsValid !== b.urlIsValid) return false;
   if (a.fuzzingAttackType !== b.fuzzingAttackType) return false;
   if (a.selectedHistoryIndex !== b.selectedHistoryIndex) return false;
   if (a.historyDates.length !== b.historyDates.length) return false;
@@ -59,6 +62,12 @@ const FuzzRequestPayload: React.FC = () => {
 
   if (activeSessionIndex === null || fuzzerSessions[activeSessionIndex] === undefined) return null;
 
+  const isFuzzDisabled =
+    !activeSession?.targetUrl ||
+    !activeSession.targetUrl.trim() ||
+    activeSession.targetUrl === 'https://' ||
+    activeSession.urlIsValid === false;
+
   const triggerFuzzing = async () => {
     if (!projectId) return;
     const currentStoreState = store.getState() as RootState;
@@ -68,21 +77,50 @@ const FuzzRequestPayload: React.FC = () => {
     const fuzzSession = fstate.fuzzerSessions[activeSessionIdx];
     if (!fuzzSession) return;
 
+    const rawTargetUrl = fuzzSession.fuzzConfig.metadata.targetUrl;
+    const stripedUrl = stripPath(rawTargetUrl);
+
+    dispatch(setTargerUrl({ targetUrl: stripedUrl, urlIsValid: true, projectId }));
+    dispatch(persistFuzzerSession(projectId, activeSessionIdx));
+
+    const updatedSession = {
+      ...fuzzSession,
+      fuzzConfig: {
+        ...fuzzSession.fuzzConfig,
+        metadata: {
+          ...fuzzSession.fuzzConfig.metadata,
+          targetUrl: stripedUrl,
+          urlIsValid: true,
+        },
+      },
+    };
+
     const historyIndex = fuzzSession.fuzzingHistory.length;
 
     dispatch(addFuzzingHistory({
       sessionIndex: activeSessionIdx,
       history: {
         date: (new Date()).toISOString(),
-        fuzzConfigSnapshot: fuzzSession.fuzzConfig,
+        fuzzConfigSnapshot: updatedSession.fuzzConfig,
         requests: [],
         runState: { ...initialFuzzRunState(), status: 'running' },
       },
       projectId,
     }));
 
+    invoke('save_fuzzer_session_draft', {
+      projectId,
+      sessionIndex: activeSessionIdx,
+      name: fuzzSession.name,
+      rawRequest: fuzzSession.fuzzConfig.rawRequest,
+      targetUrl: stripedUrl,
+      attackType: fuzzSession.fuzzConfig.fuzzingAttackType,
+      numThreads: fuzzSession.fuzzConfig.numThreads,
+      delayMs: fuzzSession.fuzzConfig.delayMs,
+    }).catch(console.error);
+
     const executeProps = {
-      session: fuzzSession,
+      session: updatedSession,
       numTasks: fuzzSession.fuzzConfig.numThreads,
       selectedSession: activeSessionIdx,
       fuzzHistory: historyIndex,
@@ -124,7 +162,10 @@ const FuzzRequestPayload: React.FC = () => {
         <ValidateUrlInput
           url={activeSession?.targetUrl ?? ''}
           onChange={(url, urlIsValid) => {
-            if (projectId) dispatch(setTargerUrl({ targetUrl: url, urlIsValid, projectId }));
+            if (projectId && activeSessionIndex !== null) {
+              dispatch(setTargerUrl({ targetUrl: url, urlIsValid, projectId }));
+              dispatch(persistFuzzerSession(projectId, activeSessionIndex));
+            }
           }}
         />
 
@@ -132,7 +173,10 @@ const FuzzRequestPayload: React.FC = () => {
           defaultValue={"1"}
           value={activeSession?.fuzzingAttackType}
           onValueChange={(value) => {
-            if (projectId) dispatch(setFuzzingAttackType({ fuzzingAttackingType: value as FuzzingAttackType, projectId }));
+            if (projectId && activeSessionIndex !== null) {
+              dispatch(setFuzzingAttackType({ fuzzingAttackingType: value as FuzzingAttackType, projectId }));
+              dispatch(persistFuzzerSession(projectId, activeSessionIndex));
+            }
           }}
         >
           <SelectTrigger className="w-[180px] h-8 text-xs shrink-0">
@@ -149,6 +193,7 @@ const FuzzRequestPayload: React.FC = () => {
         <Button
           onClick={triggerFuzzing}
           size="sm"
+          disabled={isFuzzDisabled}
           className="h-8 px-4 font-semibold gap-1.5 shrink-0"
         >
           <Play className="w-3.5 h-3.5 fill-current" />

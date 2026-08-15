@@ -710,6 +710,9 @@ interface DataTableProps<TData extends BaseRow> {
     totalCount?: number;
     windowOffset?: number;
     onScrollWindowChange?: (startIndex: number, count: number) => void;
+    sorting?: SortingState;
+    onSortingChange?: (updater: any) => void;
+    manualSorting?: boolean;
 }
 
 export default function DataTable<TData extends BaseRow>({
@@ -727,8 +730,14 @@ export default function DataTable<TData extends BaseRow>({
     totalCount,
     windowOffset,
     onScrollWindowChange,
+    sorting: propsSorting,
+    onSortingChange,
+    manualSorting = false,
 }: DataTableProps<TData>) {
     const [rows, setRows] = useState<TData[]>(data);
+    const [internalSorting, setInternalSorting] = useState<SortingState>([]);
+    const sorting = propsSorting !== undefined ? propsSorting : internalSorting;
+    const setSorting = onSortingChange !== undefined ? onSortingChange : setInternalSorting;
 
     // ------------------------------------------------------------------
     // FIX #1 — local-only edits (grouping, removal) no longer get
@@ -837,7 +846,6 @@ export default function DataTable<TData extends BaseRow>({
         rowsRef.current = rows;
     }, [rows]);
 
-    const [sorting, setSorting] = useState<SortingState>([]);
     const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
     const [columnOrder, setColumnOrder] = useState<string[]>(() => columns.map((c) => c.id as string));
 
@@ -891,10 +899,11 @@ export default function DataTable<TData extends BaseRow>({
         getRowId: (row) => String(row.id),
         state: { sorting, columnVisibility, columnOrder },
         onSortingChange: setSorting,
+        manualSorting,
         onColumnVisibilityChange: setColumnVisibility,
         onColumnOrderChange: setColumnOrder,
         getCoreRowModel: getCoreRowModel(),
-        getSortedRowModel: getSortedRowModel(),
+        getSortedRowModel: manualSorting ? undefined : getSortedRowModel(),
         meta: { selectedIds } as TableMeta,
     });
 

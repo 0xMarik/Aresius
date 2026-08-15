@@ -35,18 +35,24 @@ pub async fn replay_request(
     }
 
     let req_id_clone = req_id.clone();
-    let task = async {
+    let target_url = if !url.contains("://") {
+        format!("https://{}", url)
+    } else {
+        url
+    };
+    let task_url = target_url.clone();
+    let task = async move {
         let req = request_tmp;
 
-        let mut conn = HttpConnection::new(&url)
+        let mut conn = HttpConnection::new(&task_url)
             .await
             .map_err(|e| format!("Connection failed: {e}"))?;
 
         let result = conn.send_request(&req.as_bytes()).await;
 
         match timeout(Duration::from_secs(5), conn.close()).await {
-            Ok(Err(e)) => eprintln!("warning: failed to cleanly close connection to {url}: {e}"),
-            Err(_) => eprintln!("warning: close on {url} timed out after 5s"),
+            Ok(Err(e)) => eprintln!("warning: failed to cleanly close connection to {task_url}: {e}"),
+            Err(_) => eprintln!("warning: close on {task_url} timed out after 5s"),
             Ok(Ok(())) => {}
         }
 
@@ -56,7 +62,7 @@ pub async fn replay_request(
             response_raw: response.as_text_lossy(),
             response_time: response.elapsed.as_millis(),
             request_raw: req,
-            base_url: url.clone(),
+            base_url: task_url,
         })
     };
 

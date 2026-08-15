@@ -6,7 +6,7 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@
 import { useAppDispatch, useAppSelector } from "@/hooks/redux";
 import { useProjectId } from "@/hooks/useProjectId";
 import { PayloadCodeEditor } from "./PayloadCodeEditor";
-import { loadValuesParam, setDelayMs, setNumThreads, setSelectedParameter, selectFuzzerState } from "@/store/slices/fuzzerSlice";
+import { loadValuesParam, setDelayMs, setNumThreads, setSelectedParameter, selectFuzzerState, persistFuzzerSession } from "@/store/slices/fuzzerSlice";
 import { FuzzingAttackType } from "@/types/fuzzer.type";
 import { IconUpload } from "@tabler/icons-react";
 import { EmptyState } from "../ui/empty-state";
@@ -53,6 +53,7 @@ export default function PayloadConfigurator() {
     const handleValuesChange = (val: string) => {
         if (paramIndex === -1 || !projectId) return;
         dispatch(loadValuesParam({ paramIndex, values: val, projectId }));
+        dispatch(persistFuzzerSession(projectId, activeSessionIndex));
     };
 
     const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -68,6 +69,7 @@ export default function PayloadConfigurator() {
             const updatedValues = existingValues ? `${existingValues}\n${fileContent}` : fileContent;
 
             dispatch(loadValuesParam({ paramIndex, values: updatedValues, projectId }));
+            dispatch(persistFuzzerSession(projectId, activeSessionIndex));
         };
 
         reader.onerror = () => {
@@ -194,7 +196,11 @@ export default function PayloadConfigurator() {
                     max={100}
                     value={session.fuzzConfig.numThreads}
                     onChange={(event) => {
-                        if (projectId) dispatch(setNumThreads({ numThreads: parseInt(event.target.value), projectId }));
+                        const val = parseInt(event.target.value);
+                        if (projectId && !isNaN(val)) {
+                            dispatch(setNumThreads({ numThreads: val, projectId }));
+                            dispatch(persistFuzzerSession(projectId, activeSessionIndex));
+                        }
                     }}
                 />
                 <br />
@@ -209,7 +215,11 @@ export default function PayloadConfigurator() {
                     min={0}
                     value={session.fuzzConfig.delayMs}
                     onChange={(event) => {
-                        if (projectId) dispatch(setDelayMs({ delayMs: parseInt(event.target.value), projectId }));
+                        const val = parseInt(event.target.value);
+                        if (projectId && !isNaN(val)) {
+                            dispatch(setDelayMs({ delayMs: val, projectId }));
+                            dispatch(persistFuzzerSession(projectId, activeSessionIndex));
+                        }
                     }}
                 />
             </TabsContent>

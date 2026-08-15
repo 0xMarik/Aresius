@@ -2,7 +2,7 @@ import { useAppDispatch, useAppSelector } from '@/hooks/redux';
 import { useProjectId } from '@/hooks/useProjectId';
 import { selectFuzzerState } from '@/store/slices/fuzzerSlice';
 import { CodeMirrorEditor } from '../result-table.components';
-import { createColumnHelper, ColumnDef } from '@tanstack/react-table';
+import { createColumnHelper, ColumnDef, SortingState } from '@tanstack/react-table';
 import Table, { isRowSelected, BaseRow } from '@/components/Table';
 import { FuzzerRequest, FuzzerParameter, FuzzConfig, initialFuzzRunState } from '@/types/fuzzer.type';
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -108,9 +108,9 @@ export function enrichFuzzerRow(
     const parsedResponse = normalizedResponse && rawRespStr ? parseResponse(rawRespStr) : null;
 
     const payloadValues = extractPayloadValues(
-        fuzzConfigSnapshot.rawRequest,
+        fuzzConfigSnapshot?.rawRequest ?? '',
         rawReqStr,
-        fuzzConfigSnapshot.parameters,
+        fuzzConfigSnapshot?.parameters ?? [],
     );
 
     return {
@@ -120,7 +120,7 @@ export function enrichFuzzerRow(
         parsedResponse,
         contentLength: rawRespStr.length,
         statusCode: parsedResponse?.statusCode,
-        targetUrl: fuzzConfigSnapshot.metadata.targetUrl,
+        targetUrl: fuzzConfigSnapshot?.metadata?.targetUrl ?? '',
         payloadValues,
         payloadPreview:
             payloadValues.length <= 1
@@ -330,7 +330,13 @@ function FuzzerHistoryBody({
         totalFromBackend: number;
     }>({ offset: 0, limit: 250, items: [], totalFromBackend: 0 });
 
+    const [sorting, setSorting] = useState<SortingState>([]);
     const [fetchedFocusedResult, setFetchedFocusedResult] = useState<EnrichedFuzzerRow | null>(null);
+
+    const handleSortingChange = useCallback((updater: any) => {
+        setSorting(updater);
+        setWindowState((prev) => ({ ...prev, offset: 0 }));
+    }, []);
 
     const handleScrollWindowChange = useCallback((startIdx: number, count: number) => {
         setWindowState((prev) => {
@@ -360,11 +366,16 @@ function FuzzerHistoryBody({
 
     useEffect(() => {
         let canceled = false;
+        const sortBy = sorting[0]?.id ?? null;
+        const sortOrder = sorting[0]?.desc ? 'desc' : 'asc';
+
         invoke<{ total: number; items: FuzzerRequest[] }>('get_fuzzer_history_window', {
             selectedSession: sessionIndex,
             fuzzHistory: historyIndex,
             offset: windowState.offset,
             limit: windowState.limit,
+            sortBy,
+            sortOrder,
         })
             .then((res) => {
                 if (canceled) return;
@@ -383,7 +394,7 @@ function FuzzerHistoryBody({
         return () => {
             canceled = true;
         };
-    }, [sessionIndex, historyIndex, windowState.offset, windowState.limit, runState.completed, runState.status]);
+    }, [sessionIndex, historyIndex, windowState.offset, windowState.limit, runState.completed, runState.status, sorting]);
 
     const effectiveRequests = useMemo(() => {
         return windowState.items;
@@ -460,9 +471,9 @@ function FuzzerHistoryBody({
                 sessionIndex={sessionIndex}
                 historyIndex={historyIndex}
                 runState={runState}
-                targetUrl={fuzzConfigSnapshot.metadata.targetUrl}
-                numThreads={fuzzConfigSnapshot.numThreads}
-                delayMs={fuzzConfigSnapshot.delayMs}
+                targetUrl={fuzzConfigSnapshot?.metadata?.targetUrl ?? ''}
+                numThreads={fuzzConfigSnapshot?.numThreads ?? 4}
+                delayMs={fuzzConfigSnapshot?.delayMs ?? 0}
                 failedCount={failedCount}
             />
             <ResizablePanelGroup direction='vertical' autoSaveId="fuzzing-history-table" >
@@ -473,6 +484,9 @@ function FuzzerHistoryBody({
                         totalCount={effectiveTotal}
                         windowOffset={windowState.offset}
                         onScrollWindowChange={handleScrollWindowChange}
+                        sorting={sorting}
+                        onSortingChange={handleSortingChange}
+                        manualSorting={true}
                         emptyLabel={isLoading ? 'Running fuzzer…' : 'No fuzzing results yet'}
                         emptyHint={isLoading ? undefined : 'Run the fuzzer to see results here'}
                         setSelectedRequest={setFocusedId}
@@ -554,7 +568,7 @@ function FuzzerHistoryBody({
                                                             historyIndex,
                                                             focusedResult!.fuzzRequestId,
                                                             focusedResult!.rawRequest,
-                                                            fuzzConfigSnapshot.metadata.targetUrl,
+                                                            fuzzConfigSnapshot?.metadata?.targetUrl ?? '',
                                                             projectId,
                                                         )}
                                                     >
@@ -597,7 +611,7 @@ function FuzzerHistoryBody({
                                                                 historyIndex,
                                                                 focusedResult.fuzzRequestId,
                                                                 focusedResult.rawRequest,
-                                                                fuzzConfigSnapshot.metadata.targetUrl,
+                                                                fuzzConfigSnapshot?.metadata?.targetUrl ?? '',
                                                                 projectId,
                                                             )}
                                                         >

@@ -10,7 +10,8 @@ const SendToFuzzer = ({ rawRequest, host }: { rawRequest: string, host: string }
 
     const sendToFuzzer = () => {
         if (!projectId) return;
-        dispatch(addFuzzSession({ name: "From history", rawRequest: rawRequest, targetUrl: host, isItFuzzerPage: false, projectId }))
+        const targetUrl = host ? (host.includes('://') ? host : `https://${host}`) : 'https://';
+        dispatch(addFuzzSession({ name: "From history", rawRequest: rawRequest, targetUrl, isItFuzzerPage: false, projectId }));
     };
     return (
         <ContextMenuItem onSelect={sendToFuzzer}>

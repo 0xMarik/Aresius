@@ -19,20 +19,41 @@ pub struct UrlComponents {
 }
 
 pub fn url_parsing(url_str: &str) -> Option<UrlComponents> {
-    let parsed_url = Url::parse(url_str).ok()?;
+    let trimmed = url_str.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
 
-    // Get all required components
-    // let protocol = parsed_url.scheme();
-    let domain = parsed_url.domain()?;
-    let port = parsed_url.port_or_known_default()?; // This will fail if no port and no known default
+    let url_to_parse = if !trimmed.contains("://") {
+        format!("https://{}", trimmed)
+    } else {
+        trimmed.to_string()
+    };
+    let parsed_url = Url::parse(&url_to_parse).ok()?;
 
-    // If we got here, all components are present
+    // Get all required components (supports domain names, IPv4, IPv6, localhost)
+    let domain = parsed_url.host_str()?.to_string();
+    let port = parsed_url.port_or_known_default()?; // Will resolve 443 for https, 80 for http, or custom port
+
     let components = UrlComponents {
-        // protocol: protocol.to_string(),
-        domain: domain.to_string(),
+        domain,
         port,
     };
     Some(components)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_url_parsing() {
+        assert_eq!(url_parsing("example.com").unwrap().port, 443);
+        assert_eq!(url_parsing("example.com:8080").unwrap().port, 8080);
+        assert_eq!(url_parsing("http://example.com").unwrap().port, 80);
+        assert_eq!(url_parsing("https://example.com").unwrap().port, 443);
+        assert_eq!(url_parsing("127.0.0.1").unwrap().domain, "127.0.0.1");
+    }
 }
 
 /// Cleanly checkpoints and closes every open SQLite connection (project + catalog)

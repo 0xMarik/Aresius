@@ -11,7 +11,7 @@ import { Badge } from "../../ui/badge";
 import { RangeSetBuilder } from "@codemirror/state";
 import { useAppDispatch, useAppSelector } from "@/hooks/redux";
 import { useProjectId } from "@/hooks/useProjectId";
-import { addParameter, removeParameter, setParameters, setSelectedParameter, setContent, selectFuzzerState } from '@/store/slices/fuzzerSlice'
+import { addParameter, removeParameter, setParameters, setSelectedParameter, setContent, selectFuzzerState, persistFuzzerSession } from '@/store/slices/fuzzerSlice'
 import { FuzzerParameter, HighlightRange } from "@/types/fuzzer.type";
 import { oneDark } from '@codemirror/theme-one-dark';
 import { codeMirrorScrollTheme } from "@/components/codemirror-scroll.theme";
@@ -284,7 +284,7 @@ const RequestEditor: React.FC = () => {
 
     // Function to add a new highlight range
     const addHighlightRange = (from: number, to: number, lineNumber: number) => {
-        if (!viewRef.current || !projectId) return;
+        if (!viewRef.current || !projectId || activeSessionIndex === null) return;
         const state = viewRef.current.state;
         if (from >= 0 && to <= state.doc.length && from < to) {
             const originalText = state.sliceDoc(from, to); // sliceDoc, not doc.sliceString — respects "\r\n"
@@ -298,24 +298,27 @@ const RequestEditor: React.FC = () => {
                 isActive: true
             };
             dispatch(addParameter({ highlightRange: newRange, projectId }));
+            dispatch(persistFuzzerSession(projectId, activeSessionIndex));
         }
     };
 
     // Function to remove a highlight range by id
     const removeHighlightRange = (id: string) => {
-        if (!projectId) return;
+        if (!projectId || activeSessionIndex === null) return;
         dispatch(removeParameter({ paramId: id, projectId }));
         // Clear selection if the removed range was selected
         if (currentFuzzerSession.selectedHighlightId === id) {
             dispatch(setSelectedParameter({ parameterId: null, projectId }))
         }
+        dispatch(persistFuzzerSession(projectId, activeSessionIndex));
     };
 
     // Function to clear all highlight ranges
     const clearAllHighlights = () => {
-        if (!projectId) return;
+        if (!projectId || activeSessionIndex === null) return;
         dispatch(setParameters({ parameters: [], projectId }));
         dispatch(setSelectedParameter({ parameterId: null, projectId }))
+        dispatch(persistFuzzerSession(projectId, activeSessionIndex));
     };
 
     // Function to add highlight for current selection
