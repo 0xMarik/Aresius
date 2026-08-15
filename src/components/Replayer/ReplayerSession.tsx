@@ -22,7 +22,6 @@ import {
     DropdownMenu,
     DropdownMenuContent,
     DropdownMenuItem,
-    DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import {
@@ -146,17 +145,7 @@ const ReplayerSession: React.FC = () => {
         setRemovingItem(null);
     };
 
-    const handleNewSession = async () => {
-        const targetColId = selectedCollectionId || collections[0]?.id;
-        if (targetColId) {
-            await createSession(targetColId);
-        } else {
-            const newColId = await createCollection();
-            if (newColId) {
-                await createSession(newColId);
-            }
-        }
-    };
+
 
     const renderNode = (node: TreeNode<unknown>, props: TreeNodeRenderProps<unknown>) => {
         const { isSession, isCreateAction, colId, sessId } = parseTreeNodeId(node.id);
@@ -335,14 +324,7 @@ const ReplayerSession: React.FC = () => {
                                 </button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end" className="w-36 text-xs">
-                                {isCollection && (
-                                    <>
-                                        <DropdownMenuItem onClick={handleQuickAddSession}>
-                                            <Plus className="w-3.5 h-3.5 mr-2" /> New Session
-                                        </DropdownMenuItem>
-                                        <DropdownMenuSeparator />
-                                    </>
-                                )}
+
                                 <DropdownMenuItem onClick={handleEditClick}>
                                     <Pencil className="w-3.5 h-3.5 mr-2" /> Rename
                                 </DropdownMenuItem>
@@ -397,23 +379,6 @@ const ReplayerSession: React.FC = () => {
                         </Tooltip>
                     </TooltipProvider>
 
-                    <TooltipProvider delayDuration={200}>
-                        <Tooltip>
-                            <TooltipTrigger asChild>
-                                <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    onClick={handleNewSession}
-                                    className="h-6 w-6 text-muted-foreground hover:text-foreground"
-                                >
-                                    <Plus className="w-3.5 h-3.5" />
-                                </Button>
-                            </TooltipTrigger>
-                            <TooltipContent side="bottom" className="text-[11px] py-0.5 px-2">
-                                New Session
-                            </TooltipContent>
-                        </Tooltip>
-                    </TooltipProvider>
                 </div>
             </div>
 
