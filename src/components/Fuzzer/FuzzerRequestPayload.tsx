@@ -81,6 +81,19 @@ const FuzzRequestPayload: React.FC = () => {
     const rawTargetUrl = fuzzSession.fuzzConfig.metadata.targetUrl;
     const stripedUrl = stripPath(rawTargetUrl);
 
+    if (!fuzzSession.fuzzConfig.parameters || fuzzSession.fuzzConfig.parameters.length === 0) {
+      toast.error("Please add at least one parameter first", { position: 'top-center' });
+      return;
+    }
+
+    const hasValues = fuzzSession.fuzzConfig.parameters.some(
+      (p) => p.values && p.values.length > 0 && p.values.some((v) => v.trim() !== '')
+    );
+    if (!hasValues) {
+      toast.error("Please add payload values to the parameter first", { position: 'top-center' });
+      return;
+    }
+
     const updatedSession = {
       ...fuzzSession,
       fuzzConfig: {

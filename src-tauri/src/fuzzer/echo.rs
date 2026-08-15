@@ -40,13 +40,21 @@ pub async fn execute_echo_fuzzing(
     selected_session: u32,
     fuzz_history: u32,
 ) -> Result<Vec<FuzzTarget>, String> {
+    if session.fuzz_config.parameters.is_empty() {
+        return Err("Please add at least one parameter first".to_string());
+    }
+
+    let targets = build_echo_fuzz_requests(&session);
+    if targets.is_empty() {
+        return Err("Please add payload values to the parameter first".to_string());
+    }
+
     let url = session.fuzz_config.metadata.target_url.clone();
     let mut test_conn = HttpConnection::new(&url)
         .await
         .map_err(|e| format!("Connection failed: {e}"))?;
     let _ = test_conn.close().await;
 
-    let targets = build_echo_fuzz_requests(&session);
     let returned = targets.clone();
 
     let config = FuzzRunConfig {

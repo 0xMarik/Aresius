@@ -81,10 +81,13 @@ export default function PayloadConfigurator() {
     };
 
     if (selectedParam === null) {
+        const noParams = parameters.length === 0;
         return <EmptyState
             icon={MousePointerClick}
-            title="No parameter selected"
-            description="Highlight a value in the request, then mark it for fuzzing to configure its payload here."
+            title={noParams ? "No parameters defined" : "No parameter selected"}
+            description={noParams
+                ? "Please add a parameter first by selecting text in the request editor and clicking '+' to mark it for fuzzing."
+                : "Select a parameter to configure its payload values here."}
             action={
                 <div className="flex items-center gap-1.5 rounded-full px-3 py-1.5 bg-muted/60 border border-border text-muted-foreground text-[10px] font-mono shadow-xs">
                     <span>Select text</span>

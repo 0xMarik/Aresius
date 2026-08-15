@@ -17,6 +17,7 @@ import { oneDark } from '@codemirror/theme-one-dark';
 import { codeMirrorScrollTheme } from "@/components/codemirror-scroll.theme";
 import CoreContextMenu from "@/components/ContextMenu/CoreContextMenu";
 import RequestEditorContextMenu from "./RequestEditorContextMenu";
+import { toast } from "sonner";
 
 export const fullHeightTheme = EditorView.theme({
     '&': {
@@ -330,6 +331,8 @@ const RequestEditor: React.FC = () => {
 
         if (!selection.empty) {
             addHighlightRange(selection.from, selection.to, line.number);
+        } else {
+            toast.info("Select text in the request first, then click '+' to add as a parameter", { position: 'top-center' });
         }
     };
 
