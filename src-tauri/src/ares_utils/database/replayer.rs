@@ -1,45 +1,6 @@
+use crate::ares_utils::database::DbState;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
-use crate::ares_utils::database::DbState;
-
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
-#[serde(rename_all = "camelCase")]
-pub struct ReplayerCollectionRow {
-    pub id: String,
-    pub project_id: String,
-    pub name: String,
-    pub sort_order: i64,
-    pub is_expanded: i64,
-    pub is_selected: i64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
-#[serde(rename_all = "camelCase")]
-pub struct ReplayerSessionRow {
-    pub id: String,
-    pub collection_id: String,
-    pub name: String,
-    pub base_url: String,
-    pub request_tmp: String,
-    pub sort_order: i64,
-    pub is_selected: i64,
-    pub selected_history_index: Option<i64>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
-#[serde(rename_all = "camelCase")]
-pub struct ReplayerHistoryRow {
-    pub id: String,
-    pub session_id: String,
-    pub request_raw: String,
-    pub response_raw: String,
-    pub response_time: i64,
-    pub created_at: String,
-    pub sort_order: i64,
-    pub status: String,
-    pub error_message: Option<String>,
-    pub base_url: Option<String>,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -203,8 +164,10 @@ pub async fn get_replayer_data(
     let mut selected_collection_idx = 0;
     let mut expanded_ids = Vec::new();
 
-    let mut col_index_map: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-    let mut sess_index_map: std::collections::HashMap<String, (usize, usize)> = std::collections::HashMap::new();
+    let mut col_index_map: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+    let mut sess_index_map: std::collections::HashMap<String, (usize, usize)> =
+        std::collections::HashMap::new();
 
     for row in rows {
         let col_idx = match col_index_map.get(&row.col_id) {
@@ -234,21 +197,25 @@ pub async fn get_replayer_data(
                 Some(&(c_i, s_i)) => (c_i, s_i),
                 None => {
                     let s_i = full_collections[col_idx].sessions.len();
-                    if row.sess_is_selected == Some(1) && full_collections[col_idx].selected_session_index.is_none() {
+                    if row.sess_is_selected == Some(1)
+                        && full_collections[col_idx].selected_session_index.is_none()
+                    {
                         full_collections[col_idx].selected_session_index = Some(s_i);
                     }
                     let base_url = row.sess_base_url.unwrap_or_default();
                     let url_is_valid = !base_url.is_empty() && base_url != "https://";
 
-                    full_collections[col_idx].sessions.push(ReplayerSessionFull {
-                        id: sess_id.clone(),
-                        name: row.sess_name.unwrap_or_else(|| "Session".to_string()),
-                        url: base_url,
-                        request_tmp: row.sess_request_tmp.unwrap_or_default(),
-                        history: Vec::new(),
-                        selected_history_index: None,
-                        url_is_valid,
-                    });
+                    full_collections[col_idx]
+                        .sessions
+                        .push(ReplayerSessionFull {
+                            id: sess_id.clone(),
+                            name: row.sess_name.unwrap_or_else(|| "Session".to_string()),
+                            url: base_url,
+                            request_tmp: row.sess_request_tmp.unwrap_or_default(),
+                            history: Vec::new(),
+                            selected_history_index: None,
+                            url_is_valid,
+                        });
                     sess_index_map.insert(sess_id.clone(), (col_idx, s_i));
                     (col_idx, s_i)
                 }
@@ -280,22 +247,25 @@ pub async fn get_replayer_data(
                     }
                 });
 
-                full_collections[c_idx].sessions[s_idx].history.push(ReplayerHistoryItemFull {
-                    id: hist_id,
-                    request_raw: row.hist_request_raw.unwrap_or_default(),
-                    response_raw: resp_raw,
-                    response_time: row.hist_response_time.unwrap_or(0),
-                    created_at: row.hist_created_at.unwrap_or_default(),
-                    status,
-                    error_message: err_msg,
-                    base_url,
-                });
+                full_collections[c_idx].sessions[s_idx]
+                    .history
+                    .push(ReplayerHistoryItemFull {
+                        id: hist_id,
+                        request_raw: row.hist_request_raw.unwrap_or_default(),
+                        response_raw: resp_raw,
+                        response_time: row.hist_response_time.unwrap_or(0),
+                        created_at: row.hist_created_at.unwrap_or_default(),
+                        status,
+                        error_message: err_msg,
+                        base_url,
+                    });
             }
 
             if let Some(hist_idx) = row.sess_selected_history_index {
                 let hist_len = full_collections[c_idx].sessions[s_idx].history.len();
                 if (hist_idx as usize) < hist_len {
-                    full_collections[c_idx].sessions[s_idx].selected_history_index = Some(hist_idx as usize);
+                    full_collections[c_idx].sessions[s_idx].selected_history_index =
+                        Some(hist_idx as usize);
                 }
             }
         }
@@ -414,12 +384,14 @@ pub async fn set_replayer_expanded_ids(
 
     // Expand the specified collections
     for col_id in expanded_ids {
-        sqlx::query("UPDATE replayer_collections SET is_expanded = 1 WHERE id = ? AND project_id = ?")
-            .bind(&col_id)
-            .bind(&project_id)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| e.to_string())?;
+        sqlx::query(
+            "UPDATE replayer_collections SET is_expanded = 1 WHERE id = ? AND project_id = ?",
+        )
+        .bind(&col_id)
+        .bind(&project_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
     }
 
     tx.commit().await.map_err(|e| e.to_string())?;

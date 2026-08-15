@@ -100,7 +100,7 @@ function ReplayerContent() {
                     />
                 ) : (
                     <div className="h-full flex flex-col">
-                        <div className="flex items-center h-12 bg-card/40 gap-3 shrink-0 p-2">
+                        <div className="flex items-center h-12 bg-card/40 gap-3 shrink-0 p-2 border-b border-border/40">
                             <ValidateUrlInput
                                 url={activeDraft?.url || ""}
                                 onChange={(url, urlIsValid) => {

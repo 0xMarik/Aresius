@@ -4,15 +4,12 @@ import { useProjectId } from '@/hooks/useProjectId';
 import { useAppDispatch, useAppSelector } from '@/hooks/redux';
 import { parseResponse } from '@/components/utils';
 import { stripPath } from '@/components/ValidateUrlInput';
-import { ReplayerHistoryItem, ReplayerFullData } from '@/types/replayer.type';
+import { ReplayerHistoryItem } from '@/types/replayer.type';
 import {
     ReplayerCollectionMeta,
     ReplayerSessionMeta,
-    ReplayerSessionCacheItem,
     ActiveSessionDraft,
     selectReplayerProjectState,
-    setReplayerLoading,
-    setReplayerLoadedData,
     setSelection,
     setSelectedSessionId,
     setExpandedIds,
