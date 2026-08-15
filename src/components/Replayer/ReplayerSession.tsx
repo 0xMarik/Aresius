@@ -182,6 +182,7 @@ const ReplayerSession: React.FC = () => {
         const isDefaultCollection = isCollection && (colIndex === 0 || collections.length <= 1);
         const canDelete = isSession || !isDefaultCollection;
 
+        const isCurrentActiveCollection = isCollection && colId === selectedCollectionId && selectedSessionId !== null;
         const isSelectedSession = isSession && sessId === selectedSessionId;
         const isEditing = editingNodeId === node.id;
         const isExpanded = isCollection && expandedIds.includes(colId);
@@ -242,6 +243,7 @@ const ReplayerSession: React.FC = () => {
             <div
                 className={cn(
                     "flex items-center justify-between w-full group/node py-0.5 min-w-0 transition-colors rounded-sm",
+                    isCurrentActiveCollection && "text-primary font-medium",
                     isSelectedSession && "text-accent-foreground font-medium"
                 )}
             >
@@ -251,7 +253,7 @@ const ReplayerSession: React.FC = () => {
                             isExpanded ? (
                                 <FolderOpen className="w-3.5 h-3.5 text-primary shrink-0" />
                             ) : (
-                                <Folder className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                                <Folder className="w-3.5 h-3.5 text-primary shrink-0" />
                             )
                         ) : (
                             <FileCode2 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
@@ -271,25 +273,31 @@ const ReplayerSession: React.FC = () => {
                     <div className="flex items-center gap-1.5 min-w-0 overflow-hidden flex-1">
                         {isCollection ? (
                             isExpanded ? (
-                                <FolderOpen className="w-3.5 h-3.5 text-foreground/70 shrink-0" />
+                                <FolderOpen className={cn("w-3.5 h-3.5 shrink-0 transition-colors", isCurrentActiveCollection ? "text-primary" : "text-foreground/70")} />
                             ) : (
-                                <Folder className="w-3.5 h-3.5 text-muted-foreground/70 shrink-0" />
+                                <Folder className={cn("w-3.5 h-3.5 shrink-0 transition-colors", isCurrentActiveCollection ? "text-primary" : "text-muted-foreground/70")} />
                             )
                         ) : (
-                            <FileCode2 className={cn("w-3.5 h-3.5 shrink-0", isSelectedSession ? "text-primary" : "text-muted-foreground/60")} />
+                            <FileCode2 className={cn("w-3.5 h-3.5 shrink-0 transition-colors", isSelectedSession ? "text-primary" : "text-muted-foreground/60")} />
                         )}
                         <span
                             className={cn(
-                                "truncate text-xs font-mono select-none",
-                                isCollection ? "font-medium text-foreground/90" : "text-foreground/80",
-                                isSelectedSession && "text-foreground font-semibold"
+                                "truncate text-xs font-mono select-none transition-colors",
+                                isCollection
+                                    ? (isCurrentActiveCollection ? "font-semibold text-foreground" : "font-medium text-foreground/80")
+                                    : (isSelectedSession ? "text-foreground font-semibold" : "text-muted-foreground hover:text-foreground")
                             )}
                         >
                             <HighlightedText text={node.label} matches={props.node.searchMatches || []} />
                         </span>
 
                         {isCollection && col && col.sessions.length > 0 && (
-                            <span className="text-[10px] font-mono text-muted-foreground/50 ml-1">
+                            <span className={cn(
+                                "text-[9px] font-mono ml-auto mr-1 px-1.5 py-0.2 rounded-full transition-colors",
+                                isCurrentActiveCollection
+                                    ? "bg-primary/15 text-primary font-semibold"
+                                    : "text-muted-foreground/50 bg-muted/30"
+                            )}>
                                 {col.sessions.length}
                             </span>
                         )}
