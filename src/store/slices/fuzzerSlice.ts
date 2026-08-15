@@ -26,6 +26,7 @@ export const defaultFuzzerState = (): FuzzerState => ({
   }],
   activeSessionIndex: 0,
   receivedSession: 0,
+  expandedIds: ['0'],
 });
 
 export type FuzzerByProject = Record<string, FuzzerState>;
@@ -43,19 +44,38 @@ export const fuzzerSlice = createSlice({
   name: 'fuzzer',
   initialState,
   reducers: {
-    setSessions: (state, action: PayloadAction<{ sessions: FuzzerSession[]; projectId: string }>) => {
-      const { sessions, projectId } = action.payload;
-      getBucket(state, projectId).fuzzerSessions = sessions;
+    setSessions: (state, action: PayloadAction<{ sessions: FuzzerSession[]; projectId: string; expandedIds?: string[] }>) => {
+      const { sessions, projectId, expandedIds } = action.payload;
+      const bucket = getBucket(state, projectId);
+      bucket.fuzzerSessions = sessions;
+      if (expandedIds !== undefined) {
+        bucket.expandedIds = expandedIds;
+      }
+    },
+    setFuzzerExpandedIds: (state, action: PayloadAction<{ projectId: string; expandedIds: string[] }>) => {
+      const { projectId, expandedIds } = action.payload;
+      getBucket(state, projectId).expandedIds = expandedIds;
+    },
+    toggleFuzzerSessionExpand: (state, action: PayloadAction<{ projectId: string; sessionIndex: number }>) => {
+      const { projectId, sessionIndex } = action.payload;
+      const bucket = getBucket(state, projectId);
+      const key = String(sessionIndex);
+      if (bucket.expandedIds.includes(key)) {
+        bucket.expandedIds = bucket.expandedIds.filter(id => id !== key);
+      } else {
+        bucket.expandedIds.push(key);
+      }
     },
     addFuzzSession: (state, action: PayloadAction<{ name: string; rawRequest?: string; targetUrl: string; isItFuzzerPage: boolean; projectId: string }>) => {
       const { name, rawRequest, targetUrl, isItFuzzerPage, projectId } = action.payload;
       const bucket = getBucket(state, projectId);
+      const newIndex = bucket.fuzzerSessions.length;
       const rawUrl = targetUrl || 'https://';
       const url = rawUrl !== 'https://' && rawUrl.trim() && !rawUrl.includes('://') ? `https://${rawUrl}` : rawUrl;
       const urlIsValid = !validateUrl(url) && url !== 'https://' && url.trim() !== '';
 
       bucket.fuzzerSessions.push({
-        name: name + ` ${bucket.fuzzerSessions.length + 1}`,
+        name: name + ` ${newIndex + 1}`,
         fuzzingHistory: [],
         selectedHistoryIndex: null,
         fuzzConfig: {
@@ -71,6 +91,9 @@ export const fuzzerSlice = createSlice({
         },
         selectedHighlightId: null,
       });
+      if (!bucket.expandedIds.includes(String(newIndex))) {
+        bucket.expandedIds.push(String(newIndex));
+      }
       bucket.receivedSession = !isItFuzzerPage ? bucket.receivedSession + 1 : bucket.receivedSession;
     },
     resetFuzzReceivedSession: (state, action: PayloadAction<string>) => {
@@ -432,6 +455,8 @@ export const {
   addFuzzingHistory,
   activeFuzzSession,
   setSessions,
+  setFuzzerExpandedIds,
+  toggleFuzzerSessionExpand,
   updatePayloadRawRequest,
   addParameter,
   loadValuesParam,
@@ -465,6 +490,7 @@ export const selectFuzzerState = (projectId: string | null) => {
 export interface FuzzerSessionTreeState {
   activeSessionIndex: number | null;
   activeHistoryIndex: number | null | undefined;
+  expandedIds: string[];
   sessions: {
     id: number;
     name: string;
@@ -479,6 +505,7 @@ export interface FuzzerSessionTreeState {
 const DEFAULT_SESSION_TREE: FuzzerSessionTreeState = {
   activeSessionIndex: null,
   activeHistoryIndex: null,
+  expandedIds: [],
   sessions: [],
 };
 
@@ -496,6 +523,7 @@ export const selectFuzzerSessionTree = (projectId: string | null) => (state: Roo
   return {
     activeSessionIndex,
     activeHistoryIndex,
+    expandedIds: fstate.expandedIds || [],
     sessions: fstate.fuzzerSessions.map((s, sIdx) => ({
       id: sIdx,
       name: s.name,
@@ -513,6 +541,10 @@ export const equalFuzzerSessionTree = (a: FuzzerSessionTreeState, b: FuzzerSessi
   if (!a || !b) return a === b;
   if (a.activeSessionIndex !== b.activeSessionIndex) return false;
   if (a.activeHistoryIndex !== b.activeHistoryIndex) return false;
+  if (a.expandedIds.length !== b.expandedIds.length) return false;
+  for (let i = 0; i < a.expandedIds.length; i++) {
+    if (a.expandedIds[i] !== b.expandedIds[i]) return false;
+  }
   if (a.sessions.length !== b.sessions.length) return false;
 
   for (let i = 0; i < a.sessions.length; i++) {
@@ -622,7 +654,7 @@ export const fetchFuzzerDataForProject = (projectId: string) => async (dispatch:
         };
       });
 
-      dispatch(setSessions({ sessions: mappedSessions, projectId }));
+      dispatch(setSessions({ sessions: mappedSessions, projectId, expandedIds: data.expandedIds || [] }));
       const selectedSessionIdx = data.selectedSessionIndex !== undefined ? data.selectedSessionIndex : 0;
       dispatch(setActiveSession({ sessionIndex: selectedSessionIdx, projectId }));
 

@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState, useEffect, useRef } from 'react';
+import React, { useCallback, useMemo, useState, useRef } from 'react';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Layers, Plus, SlidersVertical, History, Search, X } from 'lucide-react';
@@ -7,6 +7,7 @@ import { useProjectId } from '@/hooks/useProjectId';
 import {
     addFuzzSession,
     setSelectedFuzz,
+    setFuzzerExpandedIds,
     selectFuzzerSessionTree,
     equalFuzzerSessionTree,
 } from '@/store/slices/fuzzerSlice';
@@ -22,7 +23,7 @@ const FuzzSession: React.FC = () => {
 
     // High-performance selector: only re-renders when sessions/histories are created/selected
     // or run status toggles, completely ignoring high-frequency progress/worker ticks.
-    const { activeSessionIndex, activeHistoryIndex, sessions } = useAppSelector(
+    const { activeSessionIndex, activeHistoryIndex, expandedIds, sessions } = useAppSelector(
         selectFuzzerSessionTree(projectId),
         equalFuzzerSessionTree
     );
@@ -30,15 +31,7 @@ const FuzzSession: React.FC = () => {
     const totalSessions = sessions.length;
 
     const [searchTerm, setSearchTerm] = useState('');
-    const [expandedIds, setExpandedIds] = useState<string[]>([]);
     const searchInputRef = useRef<HTMLInputElement>(null);
-
-    useEffect(() => {
-        if (activeSessionIndex !== null && activeSessionIndex !== undefined) {
-            const id = String(activeSessionIndex);
-            setExpandedIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
-        }
-    }, [activeSessionIndex]);
 
     const data: TreeNode<unknown>[] = useMemo(() =>
         sessions.map((s, colIndex) => ({
@@ -74,11 +67,10 @@ const FuzzSession: React.FC = () => {
     }, [dispatch, projectId]);
 
     const handleExpand = useCallback((ids: string[]) => {
-        setExpandedIds(ids);
-        if (projectId) {
-            invoke('set_fuzzer_expanded_ids', { projectId, expandedIds: ids }).catch(console.error);
-        }
-    }, [projectId]);
+        if (!projectId) return;
+        dispatch(setFuzzerExpandedIds({ projectId, expandedIds: ids }));
+        invoke('set_fuzzer_expanded_ids', { projectId, expandedIds: ids }).catch(console.error);
+    }, [dispatch, projectId]);
 
     const handleSelection = useCallback((value: string[]) => {
         if (!projectId) return;
@@ -141,11 +133,6 @@ const FuzzSession: React.FC = () => {
                     sessionIndex: sessIdx,
                     selectedHistoryIndex: null,
                 }).catch(console.error);
-                setExpandedIds((prev) => {
-                    const next = prev.includes(String(sessIdx)) ? prev : [...prev, String(sessIdx)];
-                    invoke('set_fuzzer_expanded_ids', { projectId, expandedIds: next }).catch(console.error);
-                    return next;
-                });
             }
         };
 

@@ -99,6 +99,7 @@ export interface FuzzerState {
     fuzzerSessions: FuzzerSession[];
     receivedSession: number;
     activeSessionIndex: number | null;
+    expandedIds: string[];
 }
 
 export const initialFuzzRunState = (): FuzzRunState => ({

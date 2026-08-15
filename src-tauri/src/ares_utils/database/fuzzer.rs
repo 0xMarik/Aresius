@@ -306,10 +306,18 @@ pub async fn set_fuzzer_expanded_ids(
     expanded_ids: Vec<String>,
 ) -> Result<(), String> {
     let pool = db.pool().await?;
+    let real_project_id: String = match sqlx::query_scalar::<_, String>("SELECT id FROM projects LIMIT 1")
+        .fetch_optional(&pool)
+        .await
+    {
+        Ok(Some(pid)) => pid,
+        _ => project_id.clone(),
+    };
+
     let sessions = sqlx::query_as::<_, FuzzerSessionDb>(
         "SELECT * FROM fuzzer_sessions WHERE project_id = ? ORDER BY sort_order ASC, created_at ASC"
     )
-    .bind(&project_id)
+    .bind(&real_project_id)
     .fetch_all(&pool)
     .await
     .map_err(|e| e.to_string())?;
