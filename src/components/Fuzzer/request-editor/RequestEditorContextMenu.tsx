@@ -1,4 +1,4 @@
-import { Copy } from "lucide-react";
+import { Copy, Plus } from "lucide-react";
 import { EditorView } from "codemirror";
 import { useAppSelector } from "@/hooks/redux";
 import { useProjectId } from "@/hooks/useProjectId";
@@ -21,7 +21,13 @@ const handleCopy = ({ viewRef }: { viewRef: React.MutableRefObject<EditorView | 
     navigator.clipboard.writeText(text);
 };
 
-const RequestEditorContextMenu = ({ viewRef }: { viewRef: React.MutableRefObject<EditorView | null> }) => {
+const RequestEditorContextMenu = ({
+    viewRef,
+    onAddParameter,
+}: {
+    viewRef: React.MutableRefObject<EditorView | null>;
+    onAddParameter?: () => void;
+}) => {
     const projectId = useProjectId();
     const { fuzzerSessions, activeSessionIndex } = useAppSelector(selectFuzzerState(projectId));
     if (activeSessionIndex === null || !fuzzerSessions[activeSessionIndex]) return null;
@@ -40,6 +46,12 @@ const RequestEditorContextMenu = ({ viewRef }: { viewRef: React.MutableRefObject
                     </KbdGroup>
                 </ContextMenuShortcut>
             </ContextMenuItem>
+            {onAddParameter && (
+                <ContextMenuItem onSelect={onAddParameter}>
+                    <Plus className="mr-2 h-3.5 w-3.5" />
+                    Add Fuzz Parameter
+                </ContextMenuItem>
+            )}
             <SendToReplayer isMultiple={false} rawRequest={fuzzConfig.rawRequest} />
         </>
     );

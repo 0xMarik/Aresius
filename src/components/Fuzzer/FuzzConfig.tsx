@@ -86,13 +86,13 @@ export default function PayloadConfigurator() {
             icon={MousePointerClick}
             title={noParams ? "No parameters defined" : "No parameter selected"}
             description={noParams
-                ? "Please add a parameter first by selecting text in the request editor and clicking '+' to mark it for fuzzing."
+                ? "Please add a parameter first by selecting text in the request editor (or clicking '+' to insert a space parameter) to mark it for fuzzing."
                 : "Select a parameter to configure its payload values here."}
             action={
                 <div className="flex items-center gap-1.5 rounded-full px-3 py-1.5 bg-muted/60 border border-border text-muted-foreground text-[10px] font-mono shadow-xs">
-                    <span>Select text</span>
+                    <span>Select text or place cursor</span>
                     <ArrowRight className="w-3 h-3 text-primary shrink-0" />
-                    <span>Add to fuzzer</span>
+                    <span>Add to fuzzer (+)</span>
                 </div>
             }
         />;
@@ -122,11 +122,15 @@ export default function PayloadConfigurator() {
                                 <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
-                                {(isOnePayload ? [parameters[0]] : parameters).map((param, index) => (
-                                    <SelectItem key={index} value={param.highlightRange.id}>
-                                        {param.highlightRange.originalText}
-                                    </SelectItem>
-                                ))}
+                                {(isOnePayload ? [parameters[0]] : parameters).map((param, index) => {
+                                    const text = param.highlightRange.originalText;
+                                    const displayName = text.trim() === '' ? '§ [space]' : `§ ${text}`;
+                                    return (
+                                        <SelectItem key={index} value={param.highlightRange.id}>
+                                            {`${displayName} (§${index + 1})`}
+                                        </SelectItem>
+                                    );
+                                })}
                             </SelectContent>
                         </Select>
                     </div>

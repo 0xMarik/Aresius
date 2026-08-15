@@ -38,8 +38,8 @@ const createHighlightDecoration = (id: string, isSelected: boolean = false) => D
     class: `fuzzer-highlight ${isSelected ? 'fuzzer-highlight-selected' : ''}`,
     attributes: {
         style: isSelected
-            ? 'padding: 0 2px; background-color: rgba(255, 5, 0, 0.3); color: black; border-radius: 2px; cursor: pointer; border: 2px solid #fbbf24;'
-            : 'padding: 0 2px; background-color: rgba(255, 5, 0, 0.3); color: black; border-radius: 2px; cursor: pointer;',
+            ? 'padding: 0 3px; background-color: rgba(255, 5, 0, 0.35); color: black; border-radius: 2px; cursor: pointer; border: 2px solid #fbbf24;'
+            : 'padding: 0 3px; background-color: rgba(255, 5, 0, 0.3); color: black; border-radius: 2px; cursor: pointer; border: 2px solid transparent;',
         'data-range-id': id
     },
     atomic: true
@@ -141,12 +141,15 @@ const fuzzerHighlighter = ViewPlugin.fromClass(class {
                 // Map the range position
                 const newFrom = update.changes.mapPos(range.highlightRange.from, 1);
                 const newTo = newFrom + range.highlightRange.originalText.length;
+                const delta = newFrom - oldFrom;
 
                 // Create new highlight range object
                 let newHighlightRange = {
                     ...range.highlightRange,
                     from: newFrom,
-                    to: newTo
+                    to: newTo,
+                    byteFrom: range.highlightRange.byteFrom + delta,
+                    byteTo: range.highlightRange.byteTo + delta
                 };
 
 
@@ -299,6 +302,7 @@ const RequestEditor: React.FC = () => {
                 isActive: true
             };
             dispatch(addParameter({ highlightRange: newRange, projectId }));
+            dispatch(setSelectedParameter({ parameterId: newRange.id, projectId }));
             dispatch(persistFuzzerSession(projectId, activeSessionIndex));
         }
     };
@@ -322,17 +326,36 @@ const RequestEditor: React.FC = () => {
         dispatch(persistFuzzerSession(projectId, activeSessionIndex));
     };
 
-    // Function to add highlight for current selection
+    // Function to add highlight for current selection or insert a space parameter if no selection
     const handleAddParameter = () => {
-        if (!viewRef.current) return;
-
-        const selection = viewRef.current.state.selection.main;
-        const line = viewRef.current.state.doc.lineAt(selection.from);
+        if (!viewRef.current || !projectId || activeSessionIndex === null) return;
+        const view = viewRef.current;
+        const selection = view.state.selection.main;
 
         if (!selection.empty) {
+            const line = view.state.doc.lineAt(selection.from);
             addHighlightRange(selection.from, selection.to, line.number);
         } else {
-            toast.info("Select text in the request first, then click '+' to add as a parameter", { position: 'top-center' });
+            const pos = selection.from;
+
+            // Check if cursor is strictly inside an existing active highlight range
+            const isInsideActiveRange = globalRanges.some(
+                r => r.highlightRange.isActive && pos > r.highlightRange.from && pos < r.highlightRange.to
+            );
+            if (isInsideActiveRange) {
+                toast.error("Cannot add payload inside an existing parameter", { position: 'top-center' });
+                return;
+            }
+
+            // Insert a space at current cursor position
+            view.dispatch({
+                changes: { from: pos, insert: " " },
+                selection: { anchor: pos + 1 }
+            });
+
+            // After dispatch, view.state has the updated doc with the inserted space at pos
+            const line = view.state.doc.lineAt(pos);
+            addHighlightRange(pos, pos + 1, line.number);
         }
     };
 
@@ -469,14 +492,14 @@ const RequestEditor: React.FC = () => {
                     <Button
                         size="icon"
                         className="size-8"
-                        title="Select text to add as fuzz parameter"
+                        title="Add fuzz parameter (or insert space parameter at cursor)"
                         onClick={handleAddParameter}
                     >
                         <Plus />
                     </Button>
                 </div>
                 <CoreContextMenu triggerClassName="bg-background w-full h-full"
-                    renderContextMenu={() => (<RequestEditorContextMenu viewRef={viewRef} />)}>
+                    renderContextMenu={() => (<RequestEditorContextMenu viewRef={viewRef} onAddParameter={handleAddParameter} />)}>
                     <div
                         ref={editorRef}
                         className="h-full  overflow-auto" />
