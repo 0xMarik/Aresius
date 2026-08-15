@@ -233,11 +233,11 @@ const FuzzRequestPayload: React.FC = () => {
       </div>
       <ResizablePanelGroup direction='horizontal' autoSaveId="fuzzing-payload-layout" className="flex-1 min-h-0">
         <ResizablePanel defaultSize={50} minSize={15}>
-          <RequestEditor />
+          <RequestEditor key={`editor-${activeSessionIndex}`} />
         </ResizablePanel>
         <ResizableHandle withHandle />
         <ResizablePanel defaultSize={50} minSize={15}>
-          <FuzzConfig key={fuzzerSessions[activeSessionIndex].name} />
+          <FuzzConfig key={`config-${activeSessionIndex}`} />
         </ResizablePanel>
       </ResizablePanelGroup>
     </div>
