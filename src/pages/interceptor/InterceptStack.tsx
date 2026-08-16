@@ -7,6 +7,7 @@ import { http } from '@/components/http-parser.component';
 import DataTable, { BaseRow } from '@/components/Table';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import MethodBadge, { METHOD_COLORS } from '@/components/MethodBadge';
 import { ColumnDef } from '@tanstack/react-table';
 import { Play, Trash2, ArrowRight, Shield } from 'lucide-react';
 import type { InterceptItem, InterceptItemType } from '@/store/slices/interceptorSlice';
@@ -38,9 +39,14 @@ const buildColumns = (): ColumnDef<TableItem, any>[] => [
     {
         accessorKey: 'methodOrStatus',
         header: 'Method',
-        cell: ({ row }) => (
-            <span className="font-mono text-xs">{row.original.methodOrStatus}</span>
-        ),
+        cell: ({ row }) => {
+            const val = row.original.methodOrStatus;
+            const normalized = (val || '').trim().toUpperCase();
+            if (METHOD_COLORS[normalized]) {
+                return <MethodBadge method={normalized} />;
+            }
+            return <span className="font-mono text-xs">{val}</span>;
+        },
     },
     {
         accessorKey: 'isHttps',
@@ -210,8 +216,11 @@ export const InterceptStack: React.FC<InterceptStackProps> = ({
                             >
                                 {itemType === 'request' ? 'REQ' : 'RES'}
                             </Badge>
+                            {itemType === 'request' && (
+                                <MethodBadge method={selectedItem.methodOrStatus} />
+                            )}
                             <span className="text-xs font-mono text-muted-foreground truncate">
-                                {selectedItem.host} — {selectedItem.methodOrStatus}
+                                {selectedItem.host} {itemType === 'response' ? `— ${selectedItem.methodOrStatus}` : ''}
                             </span>
                         </div>
 

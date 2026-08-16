@@ -5,6 +5,7 @@ import { ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/table';
 import { Badge } from '../ui/badge';
+import MethodBadge from '@/components/MethodBadge';
 import { parseRequest, parseResponse } from '../utils';
 import { useReplayerEditor } from '@/context/ReplayerContext';
 import { ReplayerHistoryItem } from '@/types/replayer.type';
@@ -131,7 +132,9 @@ const HistoryRequests = () => {
                                                     <span className="text-muted-foreground text-xs">—</span>
                                                 )}
                                             </TableCell>
-                                            <TableCell className="font-mono text-xs font-semibold">{req.method}</TableCell>
+                                            <TableCell className="font-mono text-xs">
+                                                <MethodBadge method={req.method} />
+                                            </TableCell>
                                             <TableCell className="text-xs truncate max-w-[160px] font-mono" title={baseUrlDisplay}>
                                                 {baseUrlDisplay}
                                             </TableCell>

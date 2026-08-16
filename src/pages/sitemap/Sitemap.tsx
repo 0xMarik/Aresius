@@ -78,23 +78,11 @@ import {
 import SendToReplayer from '@/components/ContextMenu/SendToReplayer';
 import SendToFuzzer from '@/components/ContextMenu/SendToFuzzer';
 import RequestCopyActions from '@/components/ContextMenu/RequestCopyActions';
+import MethodBadge from '@/components/MethodBadge';
 
 // ---------------------------------------------------------------------------
-// Method Colors & Badges
+// Status Badge Styles
 // ---------------------------------------------------------------------------
-const METHOD_COLORS: Record<string, string> = {
-    GET: 'bg-cyan-500/15 text-cyan-600 dark:text-cyan-400 border-cyan-500/30',
-    POST: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30',
-    PUT: 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30',
-    DELETE: 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30',
-    PATCH: 'bg-violet-500/15 text-violet-600 dark:text-violet-400 border-violet-500/30',
-    HEAD: 'bg-sky-500/15 text-sky-600 dark:text-sky-400 border-sky-500/30',
-    OPTIONS: 'bg-slate-500/15 text-slate-600 dark:text-slate-400 border-slate-500/30',
-};
-
-function getMethodBadgeClass(method: string): string {
-    return METHOD_COLORS[method.toUpperCase()] ?? 'bg-muted text-muted-foreground border-border';
-}
 
 function getStatusBadgeStyle(status: number): string {
     if (!status) return 'bg-muted text-muted-foreground border-border';
@@ -290,6 +278,12 @@ function renderSitemapNode(
     const repId = requestIds?.[0];
     const representativeItem = repId ? entities[resolveEntityId(repId)] : undefined;
 
+    // Check if variant node (label format is e.g. "GET ?id" or "POST")
+    const isVariant = d.kind === 'variant';
+    const variantParts = isVariant ? node.label.trim().split(/\s+(.+)/) : [];
+    const variantMethod = isVariant ? variantParts[0] : null;
+    const variantParams = isVariant && variantParts[1] ? ` ${variantParts[1]}` : '';
+
     return (
         <TreeNodeContextMenu
             node={node}
@@ -305,29 +299,39 @@ function renderSitemapNode(
             >
                 <span className="shrink-0 flex items-center">{kindIcon[d.kind]}</span>
 
-                <span
-                    className={cn(
-                        'truncate text-xs font-mono leading-none',
-                        d.kind === 'domain' || d.kind === 'host'
-                            ? 'font-semibold text-foreground'
-                            : d.kind === 'folder'
-                                ? 'font-medium text-foreground/90'
-                                : 'text-foreground/80'
-                    )}
-                >
-                    <HighlightedText text={node.label} matches={searchMatches || []} />
-                </span>
-
-                {d.methods?.map((m) => (
+                {isVariant && variantMethod ? (
+                    <div className="flex items-center gap-1.5 min-w-0 truncate">
+                        <MethodBadge
+                            method={variantMethod}
+                            className="shrink-0 text-[9px] font-semibold leading-none px-1 py-[2px] rounded-xs"
+                        />
+                        {variantParams ? (
+                            <span className="truncate text-xs font-mono text-muted-foreground leading-none">
+                                <HighlightedText text={variantParams} matches={searchMatches || []} />
+                            </span>
+                        ) : null}
+                    </div>
+                ) : (
                     <span
-                        key={m}
                         className={cn(
-                            'shrink-0 font-mono text-[9px] font-semibold leading-none px-1 py-[2px] rounded-xs border',
-                            getMethodBadgeClass(m)
+                            'truncate text-xs font-mono leading-none',
+                            d.kind === 'domain' || d.kind === 'host'
+                                ? 'font-semibold text-foreground'
+                                : d.kind === 'folder'
+                                    ? 'font-medium text-foreground/90'
+                                    : 'text-foreground/80'
                         )}
                     >
-                        {m}
+                        <HighlightedText text={node.label} matches={searchMatches || []} />
                     </span>
+                )}
+
+                {d.methods?.map((m) => (
+                    <MethodBadge
+                        key={m}
+                        method={m}
+                        className="shrink-0 text-[9px] font-semibold leading-none px-1 py-[2px]"
+                    />
                 ))}
 
                 <span className="ml-auto shrink-0 text-[10px] tabular-nums leading-none font-medium px-1.5 py-[2px] rounded-full bg-muted/60 text-muted-foreground">
@@ -535,9 +539,7 @@ const SitemapRequestViewerPane = React.memo<SitemapRequestViewerPaneProps>(funct
                 {/* Request Header Bar */}
                 <div className="flex items-center justify-between px-3 py-1.5 bg-card/60 border-b border-border/50 text-xs shrink-0 select-none">
                     <div className="flex items-center gap-2 min-w-0">
-                        <span className={cn('px-1.5 py-0.5 rounded-xs font-mono text-[10px] font-bold border', getMethodBadgeClass(selectedEntity.method))}>
-                            {selectedEntity.method}
-                        </span>
+                        <MethodBadge method={selectedEntity.method} className="px-1.5 py-0.5 font-bold" />
                         <span className="font-mono text-xs text-foreground/90 truncate max-w-[240px]" title={selectedEntity.path}>
                             {selectedEntity.path || '/'}
                         </span>

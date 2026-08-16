@@ -11,7 +11,7 @@ import { HttpHistory, RequestState } from '@/types/http.type';
 import { getHistorySelectors } from '@/store/slices/http-historySlice';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Clipboard } from 'lucide-react'
-import { Badge } from '@/components/ui/badge';
+import MethodBadge from '@/components/MethodBadge';
 import { selectActiveScope } from '@/store/slices/scopeSlice';
 import { isInScope } from '@/lib/scopeMatcher';
 import { cn } from '@/lib/utils';
@@ -67,22 +67,6 @@ export function adaptFromReqRes(items: HttpHistory[]): HttpTransaction[] {
     }));
 }
 
-function methodColor(method: string, selected: boolean) {
-    if (selected) return 'bg-primary-foreground/15 text-primary-foreground';
-    const colors: Record<string, string> = {
-        GET: 'bg-cyan-500/15 text-cyan-700 dark:text-cyan-400 border-cyan-500/30',
-        POST: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/30',
-        PUT: 'bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30',
-        DELETE: 'bg-rose-500/15 text-rose-700 dark:text-rose-400 border-rose-500/30',
-        PATCH: 'bg-violet-500/15 text-violet-700 dark:text-violet-400 border-violet-500/30',
-        HEAD: 'bg-sky-500/15 text-sky-700 dark:text-sky-400 border-sky-500/30 border-sky-500/30',
-        OPTIONS: 'bg-slate-500/15 text-slate-700 dark:text-slate-400 border-slate-500/30',
-        CONNECT: 'bg-fuchsia-500/15 text-fuchsia-700 dark:text-fuchsia-400 border-fuchsia-500/30',
-        TRACE: 'bg-orange-500/15 text-orange-700 dark:text-orange-400 border-orange-500/30',
-    };
-    return colors[method] ?? 'bg-muted text-muted-foreground';
-}
-
 function codeColor(code: number, selected: boolean) {
     if (selected) return 'text-primary-foreground';
     if (!code) return 'text-muted-foreground';
@@ -112,14 +96,7 @@ export const httpColumns: ColumnDef<HttpTransaction, any>[] = [
         minSize: 120,
         cell: (info) => {
             const selected = isRowSelected(info);
-            return (
-                <Badge
-                    variant="outline"
-                    className={`text-[10px] font-mono px-1.5 py-0 ${methodColor(info.getValue(), selected)}`}
-                >
-                    {info.getValue()}
-                </Badge>
-            );
+            return <MethodBadge method={info.getValue()} selected={selected} />;
         },
     }),
     columnHelper.accessor('host', {

@@ -8,6 +8,7 @@ import { http } from '@/components/http-parser.component';
 import { BaseRow } from '@/components/Table';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import MethodBadge from '@/components/MethodBadge';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import {
@@ -458,27 +459,7 @@ const InterceptorPage: React.FC = () => {
                 accessorKey: 'method',
                 id: 'method',
                 header: 'Method',
-                cell: ({ row }) => {
-                    const method = row.original.method;
-                    const methodColor =
-                        method === 'GET'
-                            ? 'text-cyan-400 bg-cyan-950/40 border-cyan-500/30'
-                            : method === 'POST'
-                                ? 'text-emerald-400 bg-emerald-950/40 border-emerald-500/30'
-                                : method === 'PUT'
-                                    ? 'text-amber-400 bg-amber-950/40 border-amber-500/30'
-                                    : method === 'DELETE'
-                                        ? 'text-rose-400 bg-rose-950/40 border-rose-500/30'
-                                        : 'text-muted-foreground bg-muted/40 border-border';
-                    return (
-                        <Badge
-                            variant="outline"
-                            className={`text-[10px] font-mono px-1.5 py-0 ${methodColor}`}
-                        >
-                            {method}
-                        </Badge>
-                    );
-                },
+                cell: ({ row }) => <MethodBadge method={row.original.method} />,
                 size: 80,
             },
             {

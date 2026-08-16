@@ -12,6 +12,7 @@ import { renderFuzzerHistoryTableContextMenu } from './FuzzerHistoryTableContext
 import { FuzzerRunToolbar, resendSingleFuzzRequest } from './FuzzerRunToolbar';
 import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
+import MethodBadge from '@/components/MethodBadge';
 import { EmptyState } from '../ui/empty-state';
 import { AlertTriangle, Clipboard, RotateCcw } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
@@ -530,9 +531,7 @@ function FuzzerHistoryBody({
                                         <div className="flex items-center justify-between px-3 py-1.5 border-b border-border/40 bg-muted/30 shrink-0 select-none">
                                             <span className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">Request</span>
                                             <div className="flex items-center gap-2">
-                                                <Badge variant="outline" className="font-mono text-[10px] px-1.5 py-0 font-medium">
-                                                    {focusedResult.parsedRequest.method || 'GET'}
-                                                </Badge>
+                                                <MethodBadge method={focusedResult.parsedRequest.method || 'GET'} />
                                                 {focusedResult.payloadValues.length > 0 && (
                                                     <span className="rounded bg-muted/60 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground truncate max-w-[200px]" title={focusedResult.payloadPreview}>
                                                         {focusedResult.payloadPreview}
