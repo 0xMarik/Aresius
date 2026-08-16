@@ -46,11 +46,53 @@ impl Default for InterceptSettings {
     }
 }
 
+pub fn is_regex_pattern(pattern: &str) -> bool {
+    let trimmed = pattern.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    if trimmed.starts_with('^')
+        || trimmed.ends_with('$')
+        || trimmed.starts_with("regex:")
+        || trimmed.starts_with("(?i)")
+    {
+        return true;
+    }
+    // Check if pattern contains typical regex constructs
+    if trimmed.contains("\\.")
+        || trimmed.contains("\\d")
+        || trimmed.contains("\\w")
+        || trimmed.contains(".*")
+        || trimmed.contains(".+")
+        || trimmed.contains('|')
+        || (trimmed.contains('(') && trimmed.contains(')'))
+        || (trimmed.contains('[') && trimmed.contains(']'))
+    {
+        return true;
+    }
+    false
+}
+
 pub fn pattern_to_regex_str(pattern: &str) -> String {
+    let p = pattern.trim();
+    if p == "*" || p == "*:*" {
+        return "(?i)^.*$".to_string();
+    }
+
+    if let Some(base) = p.strip_prefix("*.") {
+        let escaped = regex::escape(base);
+        return format!("(?i)^(?:[a-zA-Z0-9_.-]+\\.)+{}$", escaped);
+    }
+
+    if let Some(base) = p.strip_prefix('.') {
+        let escaped = regex::escape(base);
+        return format!("(?i)^(?:[a-zA-Z0-9_.-]+\\.)+{}$", escaped);
+    }
+
     let mut regex = String::from("(?i)^");
-    for c in pattern.chars() {
+    for c in p.chars() {
         match c {
-            '*' => regex.push_str("[^/]*"),
+            '*' => regex.push_str(".*"),
             '.' | '+' | '^' | '$' | '(' | ')' | '[' | ']' | '{' | '}' | '|' | '\\' | '?' => {
                 regex.push('\\');
                 regex.push(c);
@@ -68,6 +110,52 @@ pub fn url_matches_pattern(pattern: &str, host: &str, path: &str) -> bool {
         return false;
     }
 
+    let path_to_test = if path.is_empty() { "/" } else { path };
+    let bare_host = match host.rfind(':') {
+        Some(idx) => &host[..idx],
+        None => host,
+    };
+    let host_with_path = format!("{}{}", host, path_to_test);
+    let bare_host_with_path = format!("{}{}", bare_host, path_to_test);
+    let https_url = format!("https://{}{}", host, path_to_test);
+    let http_url = format!("http://{}{}", host, path_to_test);
+
+    // 1. If it's a regex pattern
+    if is_regex_pattern(trimmed) {
+        let regex_src = if let Some(stripped) = trimmed.strip_prefix("regex:") {
+            stripped.trim()
+        } else {
+            trimmed
+        };
+        let regex_pattern = if regex_src.starts_with("(?i)") {
+            regex_src.to_string()
+        } else {
+            format!("(?i){}", regex_src)
+        };
+
+        if let Ok(re) = regex::Regex::new(&regex_pattern) {
+            return re.is_match(host)
+                || re.is_match(bare_host)
+                || re.is_match(&host_with_path)
+                || re.is_match(&bare_host_with_path)
+                || re.is_match(path_to_test)
+                || re.is_match(&https_url)
+                || re.is_match(&http_url);
+        }
+    }
+
+    // 2. Prefix URL matching (e.g. "https://example.com/api")
+    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        if https_url.starts_with(trimmed)
+            || http_url.starts_with(trimmed)
+            || format!("https://{}{}", bare_host, path_to_test).starts_with(trimmed)
+            || format!("http://{}{}", bare_host, path_to_test).starts_with(trimmed)
+        {
+            return true;
+        }
+    }
+
+    // 3. Glob matching
     let (pattern_host, pattern_path) = match trimmed.find('/') {
         Some(idx) => (&trimmed[..idx], Some(&trimmed[idx..])),
         None => (trimmed, None),
@@ -75,7 +163,7 @@ pub fn url_matches_pattern(pattern: &str, host: &str, path: &str) -> bool {
 
     let host_regex_str = pattern_to_regex_str(pattern_host);
     if let Ok(re) = regex::Regex::new(&host_regex_str) {
-        if !re.is_match(host) {
+        if !re.is_match(host) && !re.is_match(bare_host) {
             return false;
         }
     } else {
@@ -87,7 +175,6 @@ pub fn url_matches_pattern(pattern: &str, host: &str, path: &str) -> bool {
         None => return true,
     };
 
-    let path_to_test = if path.is_empty() { "/" } else { path };
     let path_regex_str = pattern_to_regex_str(pattern_path);
     if let Ok(re) = regex::Regex::new(&path_regex_str) {
         re.is_match(path_to_test)
@@ -199,6 +286,11 @@ impl InterceptState {
     }
 }
 
+impl Default for InterceptState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -350,6 +442,17 @@ mod tests {
         // Host + Path matching
         assert!(url_matches_pattern("example.com/api/*", "example.com", "/api/v1"));
         assert!(!url_matches_pattern("example.com/api/*", "example.com", "/admin"));
+
+        // Regex matching
+        assert!(url_matches_pattern("^.*\\.example\\.com$", "sub.example.com", "/"));
+        assert!(url_matches_pattern("^.*\\.example\\.com/api/.*$", "sub.example.com", "/api/v1/users"));
+        assert!(!url_matches_pattern("^.*\\.example\\.com/api/.*$", "sub.example.com", "/auth/login"));
+        assert!(url_matches_pattern("^api-(v1|v2)\\.target\\.com$", "api-v1.target.com", "/"));
+        assert!(!url_matches_pattern("^api-(v1|v2)\\.target\\.com$", "api-v3.target.com", "/"));
+
+        // Prefix URL matching
+        assert!(url_matches_pattern("https://example.com/api", "example.com", "/api/users"));
+        assert!(!url_matches_pattern("https://example.com/api", "example.com", "/other"));
     }
 
     #[test]
@@ -367,11 +470,21 @@ mod tests {
                     id: "r2".to_string(),
                     pattern: "target.com/api/*".to_string(),
                 },
+                ScopeRule {
+                    id: "r3".to_string(),
+                    pattern: "^.*\\.regex-target\\.com/v[0-9]+/.*$".to_string(),
+                },
             ],
-            deny: vec![ScopeRule {
-                id: "r3".to_string(),
-                pattern: "secret.example.com".to_string(),
-            }],
+            deny: vec![
+                ScopeRule {
+                    id: "d1".to_string(),
+                    pattern: "secret.example.com".to_string(),
+                },
+                ScopeRule {
+                    id: "d2".to_string(),
+                    pattern: "^.*\\.regex-target\\.com/v[0-9]+/admin.*$".to_string(),
+                },
+            ],
         };
 
         // No scope active -> everything in scope
@@ -388,6 +501,12 @@ mod tests {
 
         // Out of scope (not matching allow rule 2 path)
         assert!(!is_in_scope(Some(&scope), "target.com", "/dashboard"));
+
+        // In scope via regex allow rule 3
+        assert!(is_in_scope(Some(&scope), "api.regex-target.com", "/v1/items"));
+
+        // Out of scope via regex deny rule d2
+        assert!(!is_in_scope(Some(&scope), "api.regex-target.com", "/v1/admin/delete"));
 
         // Out of scope (host not in allow list)
         assert!(!is_in_scope(Some(&scope), "google.com", "/"));

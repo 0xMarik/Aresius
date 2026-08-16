@@ -1,9 +1,12 @@
 import type { Scope } from '@/store/slices/scopeSlice';
+import { isRegexPattern } from '@/utils/burpScopeParser';
+
+export { isRegexPattern };
 
 /**
  * Strips protocol schemes (http://, https://, ws://, wss://, *://, ://) from pattern.
  */
-function stripProtocol(pattern: string): string {
+export function stripProtocol(pattern: string): string {
     return pattern.replace(/^([a-zA-Z0-9*]+:\/\/|:\/\/)/, '');
 }
 
@@ -37,13 +40,13 @@ function hostPatternToRegex(patternHost: string): RegExp {
     if (p.startsWith('*.')) {
         const baseDomain = p.slice(2);
         const escapedBase = baseDomain.replace(/[.+^${}()|[\]\\]/g, '\\$&');
-        return new RegExp(`^(?:[a-zA-Z0-9_.-]+\\.)?${escapedBase}$`, 'i');
+        return new RegExp(`^(?:[a-zA-Z0-9_.-]+\\.)+${escapedBase}$`, 'i');
     }
 
     if (p.startsWith('.')) {
         const baseDomain = p.slice(1);
         const escapedBase = baseDomain.replace(/[.+^${}()|[\]\\]/g, '\\$&');
-        return new RegExp(`^(?:[a-zA-Z0-9_.-]+\\.)?${escapedBase}$`, 'i');
+        return new RegExp(`^(?:[a-zA-Z0-9_.-]+\\.)+${escapedBase}$`, 'i');
     }
 
     const escaped = p
@@ -88,38 +91,103 @@ export function parseTarget(url: string): { host: string; path: string } {
 }
 
 /**
+ * Evaluates whether a target matches a regular expression pattern.
+ */
+function matchRegexPattern(rawPattern: string, host: string, path: string): boolean {
+    let pattern = rawPattern.trim();
+    if (pattern.startsWith('regex:')) {
+        pattern = pattern.slice(6).trim();
+    }
+
+    // If enclosed in slashes /pattern/i
+    let flags = 'i';
+    if (pattern.startsWith('/') && pattern.lastIndexOf('/') > 0) {
+        const lastSlash = pattern.lastIndexOf('/');
+        flags = pattern.slice(lastSlash + 1) || 'i';
+        pattern = pattern.slice(1, lastSlash);
+    }
+
+    try {
+        const re = new RegExp(pattern, flags);
+        const bareHost = parseHostname(host);
+        const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+        const hostWithPath = `${host}${normalizedPath}`;
+        const bareHostWithPath = `${bareHost}${normalizedPath}`;
+        const httpsUrl = `https://${host}${normalizedPath}`;
+        const httpUrl = `http://${host}${normalizedPath}`;
+
+        return (
+            re.test(host) ||
+            re.test(bareHost) ||
+            re.test(hostWithPath) ||
+            re.test(bareHostWithPath) ||
+            re.test(normalizedPath) ||
+            re.test(httpsUrl) ||
+            re.test(httpUrl)
+        );
+    } catch {
+        return false;
+    }
+}
+
+/**
  * Check whether a single pattern matches a given host + path.
- * The pattern may be:
- *   - host only:        example.com, *.example.com, example.com:8080
- *   - protocol + host:  https://example.com
- *   - host + path:      *.example.com/api/*
+ * Supports:
+ *   - Regular expressions:  ^.*\.example\.com$, ^/api/.*$, ^https?://.*\.example\.com/api/.*$
+ *   - host only globs:      example.com, *.example.com, example.com:8080
+ *   - protocol + host:      https://example.com/api
+ *   - host + path globs:    *.example.com/api/*
  */
 export function urlMatchesPattern(pattern: string, host: string, path = '/'): boolean {
     const trimmed = pattern.trim();
     if (!trimmed) return false;
 
-    // 1. Strip protocol scheme if present (e.g. https://example.com -> example.com)
+    // 1. If pattern is a regex, evaluate with regex matcher
+    if (isRegexPattern(trimmed)) {
+        return matchRegexPattern(trimmed, host, path);
+    }
+
+    // 2. Check for simple prefix URL match (e.g. "https://example.com/api")
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+        const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+        const bareHost = parseHostname(host);
+        const httpsUrl = `https://${bareHost}${normalizedPath}`;
+        const httpUrl = `http://${bareHost}${normalizedPath}`;
+        const httpsPortUrl = `https://${host}${normalizedPath}`;
+        const httpPortUrl = `http://${host}${normalizedPath}`;
+
+        if (
+            httpsUrl.startsWith(trimmed) ||
+            httpUrl.startsWith(trimmed) ||
+            httpsPortUrl.startsWith(trimmed) ||
+            httpPortUrl.startsWith(trimmed)
+        ) {
+            return true;
+        }
+    }
+
+    // 3. Strip protocol scheme if present (e.g. https://example.com -> example.com)
     const cleanedPattern = stripProtocol(trimmed);
 
-    // 2. Separate pattern into host and path
+    // 4. Separate pattern into host and path
     const slashIdx = cleanedPattern.indexOf('/');
     const patternHost = slashIdx === -1 ? cleanedPattern : cleanedPattern.slice(0, slashIdx);
     const patternPath = slashIdx === -1 ? null : cleanedPattern.slice(slashIdx);
 
     if (!patternHost) return false;
 
-    // 3. Determine if patternHost specifies a port
+    // 5. Determine if patternHost specifies a port
     const hasPort = patternHost.startsWith('[')
         ? patternHost.indexOf(']:') !== -1
         : patternHost.includes(':');
 
-    // 4. Compare host: if pattern has no port, test against host without port
+    // 6. Compare host: if pattern has no port, test against host without port
     const targetHostToTest = hasPort ? host : parseHostname(host);
     if (!hostPatternToRegex(patternHost).test(targetHostToTest)) {
         return false;
     }
 
-    // 5. Compare path (if pattern has no path component, any path is allowed)
+    // 7. Compare path (if pattern has no path component, any path is allowed)
     if (patternPath === null) return true;
 
     const targetPathToTest = path || '/';

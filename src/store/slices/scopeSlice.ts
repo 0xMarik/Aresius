@@ -117,6 +117,73 @@ const scopeSlice = createSlice({
             const rule = scope[action.payload.list].find((r) => r.id === action.payload.ruleId);
             if (rule) rule.pattern = action.payload.pattern.trim();
         },
+
+        importScopeRules: (
+            state,
+            action: PayloadAction<{
+                projectId: string;
+                scopeId?: string | null;
+                scopeName?: string;
+                include: { id?: string; pattern: string }[];
+                exclude: { id?: string; pattern: string }[];
+                mode: 'merge' | 'replace' | 'create';
+            }>
+        ) => {
+            const bucket = getBucket(state, action.payload.projectId);
+            const { scopeId, scopeName, include, exclude, mode } = action.payload;
+
+            const mapRules = (rules: { id?: string; pattern: string }[]): ScopeRule[] =>
+                rules
+                    .map((r) => ({
+                        id: r.id || generateId(),
+                        pattern: r.pattern.trim(),
+                    }))
+                    .filter((r) => r.pattern.length > 0);
+
+            if (mode === 'create' || !scopeId || !bucket.scopes.some((s) => s.id === scopeId)) {
+                const colorIndex = bucket.scopes.length % SCOPE_COLORS.length;
+                const newScopeId = generateId();
+                const newScope: Scope = {
+                    id: newScopeId,
+                    name: scopeName || `Imported Scope ${bucket.scopes.length + 1}`,
+                    color: SCOPE_COLORS[colorIndex],
+                    allow: mapRules(include),
+                    deny: mapRules(exclude),
+                };
+                bucket.scopes.push(newScope);
+                if (bucket.activeScopeId === null) {
+                    bucket.activeScopeId = newScopeId;
+                }
+                return;
+            }
+
+            const targetScope = bucket.scopes.find((s) => s.id === scopeId);
+            if (!targetScope) return;
+
+            const newAllow = mapRules(include);
+            const newDeny = mapRules(exclude);
+
+            if (mode === 'replace') {
+                targetScope.allow = newAllow;
+                targetScope.deny = newDeny;
+            } else if (mode === 'merge') {
+                const existingAllowPatterns = new Set(targetScope.allow.map((r) => r.pattern));
+                for (const rule of newAllow) {
+                    if (!existingAllowPatterns.has(rule.pattern)) {
+                        targetScope.allow.push(rule);
+                        existingAllowPatterns.add(rule.pattern);
+                    }
+                }
+
+                const existingDenyPatterns = new Set(targetScope.deny.map((r) => r.pattern));
+                for (const rule of newDeny) {
+                    if (!existingDenyPatterns.has(rule.pattern)) {
+                        targetScope.deny.push(rule);
+                        existingDenyPatterns.add(rule.pattern);
+                    }
+                }
+            }
+        },
     },
     extraReducers: (builder) => {
         builder.addCase(deleteProject, (state, action) => {
@@ -136,6 +203,7 @@ export const {
     addRule,
     removeRule,
     updateRule,
+    importScopeRules,
 } = scopeSlice.actions;
 
 // ─── Selectors ─────────────────────────────────────────────────────────────────

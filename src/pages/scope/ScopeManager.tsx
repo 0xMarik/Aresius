@@ -12,7 +12,9 @@ import {
     selectActiveScopeId,
     type Scope,
 } from '@/store/slices/scopeSlice';
-import { isUrlInScope } from '@/lib/scopeMatcher';
+import { isUrlInScope, isRegexPattern } from '@/lib/scopeMatcher';
+import { BurpScopeModal } from './BurpScopeModal';
+import { BurpExportModal } from './BurpExportModal';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -26,6 +28,9 @@ import {
     CircleDot,
     Zap,
     Trash2,
+    Upload,
+    Download,
+    HelpCircle,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -80,12 +85,16 @@ function RuleList({ scopeId, list, rules }: RuleListProps) {
                     {isAllow ? 'Allow' : 'Deny'}
                 </Badge>
                 <span className="text-[10px] text-muted-foreground">{rules.length} {rules.length === 1 ? 'rule' : 'rules'}</span>
+                <span className="ml-auto text-[10px] text-muted-foreground/60 flex items-center gap-1" title="Supports Glob (*.example.com), Regex (^.*\.example\.com$), or Prefix URL">
+                    <HelpCircle className="w-2.5 h-2.5" />
+                    Glob / Regex
+                </span>
             </div>
 
             {/* Add input */}
             <div className="flex gap-1.5">
                 <Input
-                    placeholder={isAllow ? '*.target.com' : 'internal.example.com'}
+                    placeholder={isAllow ? '*.target.com or ^.*\\.target\\.com$' : 'internal.example.com or ^.*\\.secret\\.com$'}
                     value={draft}
                     onChange={(e) => setDraft(e.target.value)}
                     onKeyDown={(e) => { if (e.key === 'Enter') handleAdd(); }}
@@ -108,23 +117,31 @@ function RuleList({ scopeId, list, rules }: RuleListProps) {
                         No patterns — {isAllow ? 'nothing is in scope' : 'no denials'}
                     </div>
                 ) : (
-                    rules.map((rule) => (
-                        <div
-                            key={rule.id}
-                            className="group flex items-center gap-2 px-2.5 py-1.5 rounded-md bg-muted/30 border border-border/40 hover:border-border/70 transition-colors"
-                        >
-                            <span className="flex-1 font-mono text-[11px] text-foreground/80 truncate">{rule.pattern}</span>
-                            <button
-                                onClick={() => {
-                                    if (projectId) dispatch(removeRule({ scopeId, list, ruleId: rule.id, projectId }));
-                                }}
-                                className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-rose-400 transition-all"
-                                title="Remove rule"
+                    rules.map((rule) => {
+                        const isRegex = isRegexPattern(rule.pattern);
+                        return (
+                            <div
+                                key={rule.id}
+                                className="group flex items-center gap-2 px-2.5 py-1.5 rounded-md bg-muted/30 border border-border/40 hover:border-border/70 transition-colors"
                             >
-                                <X className="w-3 h-3" />
-                            </button>
-                        </div>
-                    ))
+                                <span className="flex-1 font-mono text-[11px] text-foreground/80 truncate">{rule.pattern}</span>
+                                {isRegex && (
+                                    <Badge variant="outline" className="text-[9px] px-1 py-0 h-4 bg-purple-500/10 text-purple-400 border-purple-500/30">
+                                        regex
+                                    </Badge>
+                                )}
+                                <button
+                                    onClick={() => {
+                                        if (projectId) dispatch(removeRule({ scopeId, list, ruleId: rule.id, projectId }));
+                                    }}
+                                    className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-rose-400 transition-all"
+                                    title="Remove rule"
+                                >
+                                    <X className="w-3 h-3" />
+                                </button>
+                            </div>
+                        );
+                    })
                 )}
             </div>
         </div>
@@ -226,6 +243,9 @@ export default function ScopeManager() {
 
     const [selectedId, setSelectedId] = useState<string | null>(null);
     const [newName, setNewName] = useState('');
+    const [importModalOpen, setImportModalOpen] = useState(false);
+    const [exportModalOpen, setExportModalOpen] = useState(false);
+    const [exportTargetScope, setExportTargetScope] = useState<Scope | null>(null);
 
     const selectedScope = scopes.find((s) => s.id === selectedId) ?? null;
     const effectiveSelectedScope =
@@ -238,15 +258,36 @@ export default function ScopeManager() {
         setNewName('');
     };
 
+    const handleOpenImport = () => {
+        setImportModalOpen(true);
+    };
+
+    const handleOpenExportForScope = (scope: Scope) => {
+        setExportTargetScope(scope);
+        setExportModalOpen(true);
+    };
+
     return (
         <div className="flex h-full min-h-0 overflow-hidden bg-background">
             {/* ── LEFT PANEL: Scope list ── */}
-            <div className="flex flex-col w-56 shrink-0 border-r border-border/50 bg-card/40">
+            <div className="flex flex-col w-60 shrink-0 border-r border-border/50 bg-card/40">
                 {/* Header */}
-                <div className="flex items-center gap-2 px-3 py-2.5 border-b border-border/50">
-                    <Crosshair className="w-3.5 h-3.5 text-primary shrink-0" />
-                    <span className="text-[12px] font-semibold text-foreground">Scopes</span>
-                    <span className="ml-auto text-[10px] text-muted-foreground">{scopes.length}</span>
+                <div className="flex items-center justify-between px-3 py-2.5 border-b border-border/50">
+                    <div className="flex items-center gap-2">
+                        <Crosshair className="w-3.5 h-3.5 text-primary shrink-0" />
+                        <span className="text-[12px] font-semibold text-foreground">Scopes</span>
+                        <span className="text-[10px] text-muted-foreground">({scopes.length})</span>
+                    </div>
+                    <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={handleOpenImport}
+                        title="Import Burp Suite Scope JSON"
+                        className="h-6 px-2 text-[10px] gap-1 text-muted-foreground hover:text-foreground"
+                    >
+                        <Upload className="w-3 h-3" />
+                        Import Burp
+                    </Button>
                 </div>
 
                 {/* New scope input */}
@@ -290,11 +331,9 @@ export default function ScopeManager() {
                 {/* Scope list */}
                 <div className="flex-1 overflow-y-auto p-2 flex flex-col gap-1">
                     {scopes.length === 0 ? (
-                        <div className="flex flex-col items-center justify-center h-full gap-2 text-center px-4">
-                            <Crosshair className="w-6 h-6 text-muted-foreground/30" />
-                            <p className="text-[11px] text-muted-foreground/60 leading-relaxed">
-                                No scopes yet.<br />Create one above.
-                            </p>
+                        <div className="flex flex-col items-center justify-center h-full gap-2.5 text-center px-4">
+
+
                         </div>
                     ) : (
                         scopes.map((scope) => (
@@ -340,8 +379,21 @@ export default function ScopeManager() {
                                 ))}
                             </div>
 
-                            {/* Set active / deactivate / delete */}
+                            {/* Scope Action Buttons: Export | Set Active / Deactivate | Delete */}
                             <div className="ml-auto flex items-center gap-2">
+                                <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => handleOpenExportForScope(effectiveSelectedScope)}
+                                    className="h-6 text-[11px] gap-1 border-border/60 hover:bg-muted/40 text-foreground"
+                                    title="Export this scope to Burp Suite JSON"
+                                >
+                                    <Download className="w-3 h-3" />
+                                    Export
+                                </Button>
+
+                                <div className="h-4 w-px bg-border/50 mx-0.5" />
+
                                 {activeScopeId === effectiveSelectedScope.id ? (
                                     <Button
                                         size="sm"
@@ -413,12 +465,33 @@ export default function ScopeManager() {
                         <div>
                             <p className="text-[13px] font-medium text-muted-foreground">No scope selected</p>
                             <p className="text-[11px] text-muted-foreground/60 mt-1 leading-relaxed">
-                                Create a scope on the left to define<br />allow and deny patterns.
+                                Create a scope on the left or import<br />a Burp Suite JSON configuration.
                             </p>
+                            <Button
+                                size="sm"
+                                onClick={handleOpenImport}
+                                className="mt-3 h-7 text-xs gap-1.5"
+                            >
+                                <Upload className="w-3.5 h-3.5" />
+                                Import Burp Scope
+                            </Button>
                         </div>
                     </div>
                 )}
             </div>
+
+            {/* ── Burp Suite Import Modal Dialog ── */}
+            <BurpScopeModal
+                open={importModalOpen}
+                onOpenChange={setImportModalOpen}
+            />
+
+            {/* ── Burp Suite Export Modal Dialog for specific scope ── */}
+            <BurpExportModal
+                open={exportModalOpen}
+                onOpenChange={setExportModalOpen}
+                scope={exportTargetScope}
+            />
         </div>
     );
 }

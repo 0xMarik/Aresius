@@ -8,22 +8,23 @@ import {
 } from "@/components/ui/sidebar"
 
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import Fuzzer from "./pages/fuzzer/fuzzer";
-import Replayer from "./pages/replayer/replayer";
-import Projects from "./pages/projects.page";
-import HTTPHisotry from "./pages/HttpHistory";
+import { lazy, Suspense, useEffect } from "react";
 import { useDispatch } from "react-redux";
-import { useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { addToHttpHistory } from "./store/slices/http-historySlice";
-import Interceptor from "./pages/interceptor/Interceptor.page";
 import { useInterceptPoller } from "./hooks/useInterceptPoller";
 import MenubarDemo from "./components/MenuBar";
 import { updateFuzzProgress, updateFuzzWorkerProgress } from "./store/slices/fuzzerSlice";
-import SitemapTree from "./pages/sitemap/Sitemap";
 import { updateSiteMap } from "./store/slices/sitemapSlice";
 import { HttpHistory } from "./types/http.type";
-import ScopeManager from "./pages/scope/ScopeManager";
+
+const Projects = lazy(() => import("./pages/projects.page"));
+const SitemapTree = lazy(() => import("./pages/sitemap/Sitemap"));
+const ScopeManager = lazy(() => import("./pages/scope/ScopeManager"));
+const Interceptor = lazy(() => import("./pages/interceptor/Interceptor.page"));
+const Replayer = lazy(() => import("./pages/replayer/replayer"));
+const HTTPHisotry = lazy(() => import("./pages/HttpHistory"));
+const Fuzzer = lazy(() => import("./pages/fuzzer/fuzzer"));
 
 import store from "./store";
 import { invoke } from "@tauri-apps/api/core";
@@ -151,16 +152,18 @@ export default function App() {
                     } as React.CSSProperties} >
                         <AppSidebar />
                         <SidebarInset className="min-h-0 overflow-auto flex flex-col">
-                            <Routes>
-                                <Route path="/" element={<Navigate to="/projects" replace />} />
-                                <Route path="/projects" element={<Projects />} />
-                                <Route path="/site-map" element={<SitemapTree />} />
-                                <Route path="/scope" element={<ScopeManager />} />
-                                <Route path="/interceptor" element={<Interceptor />} />
-                                <Route path="/replayer" element={<Replayer />} />
-                                <Route path="/http-history" element={<HTTPHisotry />} />
-                                <Route path="/fuzzer" element={<Fuzzer />} />
-                            </Routes>
+                            <Suspense fallback={null}>
+                                <Routes>
+                                    <Route path="/" element={<Navigate to="/projects" replace />} />
+                                    <Route path="/projects" element={<Projects />} />
+                                    <Route path="/site-map" element={<SitemapTree />} />
+                                    <Route path="/scope" element={<ScopeManager />} />
+                                    <Route path="/interceptor" element={<Interceptor />} />
+                                    <Route path="/replayer" element={<Replayer />} />
+                                    <Route path="/http-history" element={<HTTPHisotry />} />
+                                    <Route path="/fuzzer" element={<Fuzzer />} />
+                                </Routes>
+                            </Suspense>
                         </SidebarInset>
                     </SidebarProvider>
                 </div>
