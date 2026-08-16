@@ -32,7 +32,7 @@ import { Project } from "@/types/project.type"
 import { HttpHistory } from "@/types/http.type"
 import { setcurrentProjectId, setProjects, deleteProject, updateProject } from "@/store/slices/projectSlice"
 import { setHistoryBulk } from "@/store/slices/http-historySlice"
-import { setSiteMapBulk } from "@/store/slices/sitemapSlice"
+import { setSiteMapBulk, fetchSitemapStateForProject } from "@/store/slices/sitemapSlice"
 import { fetchScopeDataForProject } from "@/store/slices/scopeSlice"
 import AddProjectDialog from "@/components/add-project-dialog.component"
 import { invoke } from "@tauri-apps/api/core"
@@ -142,6 +142,12 @@ export default function Projects() {
         dispatch(fetchScopeDataForProject(id) as any)
       } catch (err) {
         console.warn("Could not load persisted Scope data:", err)
+      }
+
+      try {
+        dispatch(fetchSitemapStateForProject(id) as any)
+      } catch (err) {
+        console.warn("Could not load persisted Sitemap state:", err)
       }
     } catch (err) {
       console.error("Failed to select/mount project:", err)

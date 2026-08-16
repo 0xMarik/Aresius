@@ -678,6 +678,7 @@ interface DataTableProps<TData extends BaseRow> {
     data: TData[];
     columns: ColumnDef<TData, any>[];
     setSelectedRequest?: (id: number | null) => void;
+    selectedRequestId?: number | null;
     emptyLabel?: string;
     emptyHint?: string;
     /** Max height of the scrollable row viewport. Rows outside this
@@ -719,6 +720,7 @@ export default function DataTable<TData extends BaseRow>({
     data,
     columns,
     setSelectedRequest,
+    selectedRequestId,
     emptyLabel = 'No rows',
     emptyHint,
     maxHeight = 600,
@@ -855,7 +857,9 @@ export default function DataTable<TData extends BaseRow>({
     // Everything that doesn't need it — the toolbar and header below — is
     // isolated in its own memoized component so this state changing does
     // not force them to reconcile.
-    const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+    const [selectedIds, setSelectedIds] = useState<Set<number>>(() =>
+        selectedRequestId != null ? new Set([selectedRequestId]) : new Set()
+    );
 
     const [groups, setGroups] = useState<RequestGroup[]>([]);
     const groupCounter = useRef(0);
@@ -1039,14 +1043,40 @@ export default function DataTable<TData extends BaseRow>({
         });
     }, []);
 
+    const setSelectedRequestRef = useRef(setSelectedRequest);
     useEffect(() => {
-        if (!setSelectedRequest) return;
-        if (selectedIds.size === 1) {
-            setSelectedRequest(Array.from(selectedIds)[0]);
-        } else {
-            setSelectedRequest(null);
+        setSelectedRequestRef.current = setSelectedRequest;
+    }, [setSelectedRequest]);
+
+    const prevSelectedIdRef = useRef<number | null | undefined>(selectedRequestId);
+
+    // Sync external selectedRequestId prop into internal selectedIds
+    useEffect(() => {
+        if (selectedRequestId !== undefined && selectedRequestId !== prevSelectedIdRef.current) {
+            prevSelectedIdRef.current = selectedRequestId;
+            setSelectedIds((prev) => {
+                if (selectedRequestId === null) {
+                    return prev.size === 0 ? prev : new Set();
+                }
+                if (prev.size === 1 && prev.has(selectedRequestId)) {
+                    return prev;
+                }
+                return new Set([selectedRequestId]);
+            });
         }
-    }, [selectedIds, setSelectedRequest]);
+    }, [selectedRequestId]);
+
+    // Notify parent when internal selection changes
+    useEffect(() => {
+        const cb = setSelectedRequestRef.current;
+        if (!cb) return;
+
+        const currentSelectedId = selectedIds.size === 1 ? Array.from(selectedIds)[0] : null;
+        if (currentSelectedId !== prevSelectedIdRef.current) {
+            prevSelectedIdRef.current = currentSelectedId;
+            cb(currentSelectedId);
+        }
+    }, [selectedIds]);
 
     // Safety net for `data` shrinking via the external prop (e.g. a
     // parent-driven reset/clear-session), as opposed to a local removal
@@ -1057,7 +1087,7 @@ export default function DataTable<TData extends BaseRow>({
     useEffect(() => {
         const prevLength = prevRowsLengthRef.current;
         prevRowsLengthRef.current = rows.length;
-        if (rows.length >= prevLength) return; // append/no-op: nothing to prune
+        if (rows.length >= prevLength || rows.length === 0) return; // don't prune during empty/loading transitions
 
         setSelectedIds((prev) => {
             const validIds = new Set(rows.map((r) => r.id));

@@ -47,6 +47,8 @@ use crate::ares_utils::database::scope::{
     save_interceptor_settings_db, set_active_scope_db, set_scope_color_db,
 };
 
+use crate::ares_utils::database::sitemap::{get_sitemap_state_db, save_sitemap_state_db};
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tracing_subscriber::fmt()
@@ -132,6 +134,9 @@ pub fn run() {
             add_scope_rule_db,
             remove_scope_rule_db,
             batch_import_scope_rules_db,
+            // Sitemap
+            get_sitemap_state_db,
+            save_sitemap_state_db,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

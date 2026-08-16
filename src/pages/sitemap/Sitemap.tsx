@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import React, { useEffect, useMemo, useCallback, useRef } from 'react';
 import { RsTree, HighlightedText } from 'rstree-ui';
 import type { ReactNode } from 'react';
 import {
@@ -16,13 +16,10 @@ import {
     Trash2,
     ShieldAlert,
     ShieldCheck,
-    Send,
-    Repeat,
     FileText,
     Terminal,
     Clock,
     HardDrive,
-    Download,
 } from 'lucide-react';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { SitemapKind, TreeNode } from '@/types/sitemap.type';
@@ -33,7 +30,21 @@ import { CodeMirrorEditor } from '@/components/result-table.components';
 import { renderHttpHistoryTableContextMenu } from '@/components/HttpHistoryTableContextMenu';
 import { adaptFromReqRes, httpColumns } from '@/pages/HttpHistory';
 import { getHistorySelectors } from '@/store/slices/http-historySlice';
-import { deleteSitemapNode, selectSitemap, setSiteMapBulk } from '@/store/slices/sitemapSlice';
+import {
+    deleteSitemapNode,
+    selectSitemap,
+    selectSitemapState,
+    setSiteMapBulk,
+    fetchSitemapStateForProject,
+    persistSitemapStateToDb,
+    setSitemapExpandedIds,
+    setSitemapSelectedNode,
+    setSitemapSelectedRequest,
+    setSitemapSearchTerm,
+    setSitemapScopeFilter,
+    setSitemapReqViewMode,
+    setSitemapResViewMode,
+} from '@/store/slices/sitemapSlice';
 import { addRule, selectActiveScope, Scope } from '@/store/slices/scopeSlice';
 import {
     buildSitemapNodeIndex,
@@ -44,7 +55,6 @@ import {
     rawRequestToCurl,
     splitHttpMessage,
     formatHttpMessagePretty,
-    saveStringToFile,
 } from './utils';
 import type { EntityId } from '@reduxjs/toolkit';
 import type { HttpHistory } from '@/types/http.type';
@@ -393,12 +403,14 @@ const SitemapTreePane = React.memo<SitemapTreePaneProps>(function SitemapTreePan
 interface SitemapRequestTablePaneProps {
     selectedNode: TreeNode | null;
     requestIds: string[];
+    selectedRequestId: number | null;
     onSelectRequest: (id: number | null) => void;
 }
 
 const SitemapRequestTablePane = React.memo<SitemapRequestTablePaneProps>(function SitemapRequestTablePane({
     selectedNode,
     requestIds,
+    selectedRequestId,
     onSelectRequest,
 }) {
     const projectId = useProjectId();
@@ -452,6 +464,7 @@ const SitemapRequestTablePane = React.memo<SitemapRequestTablePaneProps>(functio
                             ? 'Captured traffic matching this endpoint will appear here'
                             : 'Click any domain, host, folder or endpoint to inspect requests'
                     }
+                    selectedRequestId={selectedRequestId}
                     setSelectedRequest={onSelectRequest}
                     renderRowContextMenu={renderHttpHistoryTableContextMenu}
                 />
@@ -465,15 +478,20 @@ const SitemapRequestTablePane = React.memo<SitemapRequestTablePaneProps>(functio
 // ---------------------------------------------------------------------------
 interface SitemapRequestViewerPaneProps {
     selectedRequestId: number | null;
+    reqViewMode: 'raw' | 'pretty';
+    resViewMode: 'raw' | 'pretty';
+    onReqViewModeChange: (mode: 'raw' | 'pretty') => void;
+    onResViewModeChange: (mode: 'raw' | 'pretty') => void;
 }
 
 const SitemapRequestViewerPane = React.memo<SitemapRequestViewerPaneProps>(function SitemapRequestViewerPane({
     selectedRequestId,
+    reqViewMode,
+    resViewMode,
+    onReqViewModeChange,
+    onResViewModeChange,
 }) {
     const projectId = useProjectId();
-
-    const [reqViewMode, setReqViewMode] = useState<'raw' | 'pretty'>('raw');
-    const [resViewMode, setResViewMode] = useState<'raw' | 'pretty'>('raw');
 
     const selectedEntity = useAppSelector((state) =>
         selectedRequestId !== null ? getHistorySelectors(projectId).selectById(state, selectedRequestId) : undefined
@@ -532,7 +550,7 @@ const SitemapRequestViewerPane = React.memo<SitemapRequestViewerPaneProps>(funct
                                 <button
                                     key={mode}
                                     type="button"
-                                    onClick={() => setReqViewMode(mode)}
+                                    onClick={() => onReqViewModeChange(mode)}
                                     className={cn(
                                         'px-2.5 py-0.5 rounded-xs text-[10px] font-medium uppercase tracking-wider transition-colors',
                                         reqViewMode === mode
@@ -601,7 +619,7 @@ const SitemapRequestViewerPane = React.memo<SitemapRequestViewerPaneProps>(funct
                                 <button
                                     key={mode}
                                     type="button"
-                                    onClick={() => setResViewMode(mode)}
+                                    onClick={() => onResViewModeChange(mode)}
                                     className={cn(
                                         'px-2.5 py-0.5 rounded-xs text-[10px] font-medium uppercase tracking-wider transition-colors',
                                         resViewMode === mode
@@ -637,15 +655,29 @@ export default function SitemapTree() {
     const historyEntities = useAppSelector((state) => historySelectors.selectEntities(state) as Record<string | number, HttpHistory>);
 
     const sitemap = useAppSelector(selectSitemap(projectId));
+    const sitemapState = useAppSelector(selectSitemapState(projectId));
     const activeScope = useAppSelector(selectActiveScope(projectId));
 
-    const [selectedIds, setSelectedIds] = useState<string[]>([]);
-    const [expandedIds, setExpandedIds] = useState<string[]>([]);
-    const [selectedRequest, setSelectedRequest] = useState<number | null>(null);
+    const sitemapStateRef = useRef(sitemapState);
+    useEffect(() => {
+        sitemapStateRef.current = sitemapState;
+    }, [sitemapState]);
 
-    // Search & Scope filters (Caido-style)
-    const [searchTerm, setSearchTerm] = useState('');
-    const [scopeFilter, setScopeFilter] = useState<'all' | 'in' | 'out'>('all');
+    const selectedNodeId = sitemapState.selectedNodeId;
+    const selectedIds = useMemo(() => (selectedNodeId ? [selectedNodeId] : []), [selectedNodeId]);
+    const expandedIds = sitemapState.expandedIds;
+    const selectedRequest = sitemapState.selectedRequestId;
+    const searchTerm = sitemapState.searchTerm;
+    const scopeFilter = sitemapState.scopeFilter;
+    const reqViewMode = sitemapState.reqViewMode;
+    const resViewMode = sitemapState.resViewMode;
+
+    // Load persisted sitemap state from SQLite DB on mount if not loaded
+    useEffect(() => {
+        if (projectId && !sitemapState.isLoaded) {
+            dispatch(fetchSitemapStateForProject(projectId) as any);
+        }
+    }, [projectId, sitemapState.isLoaded, dispatch]);
 
     // Auto populate sitemap from history if empty on mount
     useEffect(() => {
@@ -655,7 +687,6 @@ export default function SitemapTree() {
     }, [projectId, sitemap.length, history, dispatch]);
 
     const nodeIndex = useMemo(() => buildSitemapNodeIndex(sitemap), [sitemap]);
-    const selectedNodeId = selectedIds[0] ?? null;
     const selectedNode = selectedNodeId ? nodeIndex.get(selectedNodeId) ?? null : null;
 
     // Filter tree by search term and scope filter
@@ -665,33 +696,97 @@ export default function SitemapTree() {
 
     // Auto-expand branches when searching
     useEffect(() => {
-        if (searchTerm.trim().length > 0 && matchingIds.size > 0) {
-            setExpandedIds((prev) => Array.from(new Set([...prev, ...Array.from(matchingIds)])));
+        if (searchTerm.trim().length > 0 && matchingIds.size > 0 && projectId) {
+            const currentSet = new Set(expandedIds);
+            let hasNew = false;
+            for (const id of matchingIds) {
+                if (!currentSet.has(id)) {
+                    hasNew = true;
+                    break;
+                }
+            }
+            if (hasNew) {
+                const nextExpanded = Array.from(new Set([...expandedIds, ...Array.from(matchingIds)]));
+                dispatch(setSitemapExpandedIds({ projectId, expandedIds: nextExpanded }));
+                persistSitemapStateToDb(projectId, {
+                    ...sitemapStateRef.current,
+                    expandedIds: nextExpanded,
+                });
+            }
         }
-    }, [searchTerm, matchingIds]);
+    }, [searchTerm, matchingIds, expandedIds, projectId, dispatch]);
 
     const requestIds = useMemo(
         () => (selectedNode ? collectRequestIdsDeduped(selectedNode) : []),
         [selectedNode]
     );
 
-    useEffect(() => {
-        setSelectedRequest(null);
-    }, [selectedNodeId]);
-
     const handleSelectTree = useCallback((ids: string[]) => {
-        setSelectedIds(ids);
-    }, []);
+        if (!projectId) return;
+        const newSelectedNodeId = ids[0] ?? null;
+        dispatch(setSitemapSelectedNode({ projectId, selectedNodeId: newSelectedNodeId }));
+        persistSitemapStateToDb(projectId, {
+            ...sitemapStateRef.current,
+            selectedNodeId: newSelectedNodeId,
+        });
+    }, [projectId, dispatch]);
 
     const handleExpandTree = useCallback((ids: string[]) => {
-        setExpandedIds(ids);
-    }, []);
+        if (!projectId) return;
+        dispatch(setSitemapExpandedIds({ projectId, expandedIds: ids }));
+        persistSitemapStateToDb(projectId, {
+            ...sitemapStateRef.current,
+            expandedIds: ids,
+        });
+    }, [projectId, dispatch]);
 
     const handleSelectRequest = useCallback((id: number | null) => {
-        setSelectedRequest(id);
-    }, []);
+        if (!projectId) return;
+        dispatch(setSitemapSelectedRequest({ projectId, selectedRequestId: id }));
+        persistSitemapStateToDb(projectId, {
+            ...sitemapStateRef.current,
+            selectedRequestId: id,
+        });
+    }, [projectId, dispatch]);
+
+    const handleSearchChange = useCallback((term: string) => {
+        if (!projectId) return;
+        dispatch(setSitemapSearchTerm({ projectId, searchTerm: term }));
+        persistSitemapStateToDb(projectId, {
+            ...sitemapStateRef.current,
+            searchTerm: term,
+        });
+    }, [projectId, dispatch]);
+
+    const handleScopeFilterChange = useCallback((filter: 'all' | 'in' | 'out') => {
+        if (!projectId) return;
+        dispatch(setSitemapScopeFilter({ projectId, scopeFilter: filter }));
+        persistSitemapStateToDb(projectId, {
+            ...sitemapStateRef.current,
+            scopeFilter: filter,
+        });
+    }, [projectId, dispatch]);
+
+    const handleReqViewModeChange = useCallback((mode: 'raw' | 'pretty') => {
+        if (!projectId) return;
+        dispatch(setSitemapReqViewMode({ projectId, mode }));
+        persistSitemapStateToDb(projectId, {
+            ...sitemapStateRef.current,
+            reqViewMode: mode,
+        });
+    }, [projectId, dispatch]);
+
+    const handleResViewModeChange = useCallback((mode: 'raw' | 'pretty') => {
+        if (!projectId) return;
+        dispatch(setSitemapResViewMode({ projectId, mode }));
+        persistSitemapStateToDb(projectId, {
+            ...sitemapStateRef.current,
+            resViewMode: mode,
+        });
+    }, [projectId, dispatch]);
 
     const handleExpandAll = () => {
+        if (!projectId) return;
         const allIds: string[] = [];
         const walk = (nodes: TreeNode[]) => {
             for (const n of nodes) {
@@ -700,11 +795,20 @@ export default function SitemapTree() {
             }
         };
         walk(filteredTree);
-        setExpandedIds(allIds);
+        dispatch(setSitemapExpandedIds({ projectId, expandedIds: allIds }));
+        persistSitemapStateToDb(projectId, {
+            ...sitemapStateRef.current,
+            expandedIds: allIds,
+        });
     };
 
     const handleCollapseAll = () => {
-        setExpandedIds([]);
+        if (!projectId) return;
+        dispatch(setSitemapExpandedIds({ projectId, expandedIds: [] }));
+        persistSitemapStateToDb(projectId, {
+            ...sitemapStateRef.current,
+            expandedIds: [],
+        });
     };
 
     if (sitemap.length === 0 && history.length === 0) {
@@ -732,7 +836,7 @@ export default function SitemapTree() {
                         <button
                             key={f}
                             type="button"
-                            onClick={() => setScopeFilter(f)}
+                            onClick={() => handleScopeFilterChange(f)}
                             className={cn(
                                 'px-2 py-0.5 rounded-md text-[11px] font-medium transition-colors border',
                                 scopeFilter === f
@@ -770,14 +874,14 @@ export default function SitemapTree() {
                             <Search className="absolute left-2.5 w-3.5 h-3.5 text-muted-foreground/70 pointer-events-none" />
                             <Input
                                 value={searchTerm}
-                                onChange={(e) => setSearchTerm(e.target.value)}
+                                onChange={(e) => handleSearchChange(e.target.value)}
                                 placeholder="Filter tree (e.g. /api, GET, host)..."
                                 className="h-7 text-xs pl-8 pr-7 bg-background shadow-none border-border/60"
                             />
                             {searchTerm && (
                                 <button
                                     type="button"
-                                    onClick={() => setSearchTerm('')}
+                                    onClick={() => handleSearchChange('')}
                                     className="absolute right-2 text-muted-foreground hover:text-foreground"
                                 >
                                     <X className="w-3.5 h-3.5" />
@@ -844,6 +948,7 @@ export default function SitemapTree() {
                             <SitemapRequestTablePane
                                 selectedNode={selectedNode}
                                 requestIds={requestIds}
+                                selectedRequestId={selectedRequest}
                                 onSelectRequest={handleSelectRequest}
                             />
                         </ResizablePanel>
@@ -852,7 +957,13 @@ export default function SitemapTree() {
 
                         {/* Lower: Request/Response Split View */}
                         <ResizablePanel defaultSize={50} minSize={15} className="min-h-0 overflow-hidden">
-                            <SitemapRequestViewerPane selectedRequestId={selectedRequest} />
+                            <SitemapRequestViewerPane
+                                selectedRequestId={selectedRequest}
+                                reqViewMode={reqViewMode}
+                                resViewMode={resViewMode}
+                                onReqViewModeChange={handleReqViewModeChange}
+                                onResViewModeChange={handleResViewModeChange}
+                            />
                         </ResizablePanel>
                     </ResizablePanelGroup>
                 </ResizablePanel>
@@ -860,3 +971,4 @@ export default function SitemapTree() {
         </div>
     );
 }
+

@@ -24,7 +24,7 @@ const RequestEditorContextMenu = ({
         <>
             <RequestCopyActions
                 rawRequest={fuzzConfig.rawRequest}
-                targetUrl={fuzzConfig.targetUrl}
+                targetUrl={fuzzConfig.metadata?.targetUrl}
                 viewRef={viewRef}
             />
             {onAddParameter && (
