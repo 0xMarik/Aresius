@@ -20,6 +20,8 @@ import {
     ShieldX,
 } from 'lucide-react';
 
+import { toast } from 'sonner';
+
 interface BurpExportModalProps {
     open: boolean;
     onOpenChange: (open: boolean) => void;
@@ -44,24 +46,71 @@ export function BurpExportModal({
         try {
             await navigator.clipboard.writeText(exportedJsonString);
             setCopied(true);
+            toast.success('Scope JSON copied to clipboard');
             setTimeout(() => setCopied(false), 2000);
         } catch {
             // clipboard fallback
         }
     };
 
-    const handleDownloadExport = () => {
+    const handleDownloadExport = async () => {
         if (!exportedJsonString || !scope) return;
+        const safeName = scope.name.toLowerCase().replace(/[^a-z0-9_-]/g, '_');
+        const defaultFilename = `${safeName}-burp-scope.json`;
+
+        // 1. Try native File System Access API (opens the native Windows/OS Save As file picker popup)
+        if (typeof window !== 'undefined' && 'showSaveFilePicker' in window) {
+            try {
+                const handle = await (window as unknown as {
+                    showSaveFilePicker: (options: {
+                        suggestedName: string;
+                        types: {
+                            description: string;
+                            accept: Record<string, string[]>;
+                        }[];
+                    }) => Promise<{
+                        createWritable: () => Promise<{
+                            write: (data: string) => Promise<void>;
+                            close: () => Promise<void>;
+                        }>;
+                    }>;
+                }).showSaveFilePicker({
+                    suggestedName: defaultFilename,
+                    types: [
+                        {
+                            description: 'JSON Files (*.json)',
+                            accept: {
+                                'application/json': ['.json'],
+                            },
+                        },
+                    ],
+                });
+
+                const writable = await handle.createWritable();
+                await writable.write(exportedJsonString);
+                await writable.close();
+                toast.success(`Scope saved successfully`);
+                return;
+            } catch (err: unknown) {
+                // If user cancelled the picker dialog, do nothing
+                if (err instanceof Error && err.name === 'AbortError') {
+                    return;
+                }
+                // Otherwise fall through to standard download
+            }
+        }
+
+        // 2. Fallback to standard browser download
         const blob = new Blob([exportedJsonString], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
-        const safeName = scope.name.toLowerCase().replace(/[^a-z0-9_-]/g, '_');
         a.href = url;
-        a.download = `${safeName}-burp-scope.json`;
+        a.download = defaultFilename;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
+        toast.success(`Scope downloaded as ${defaultFilename}`);
     };
 
     if (!scope) return null;
