@@ -303,7 +303,7 @@ function renderSitemapNode(
                     <div className="flex items-center gap-1.5 min-w-0 truncate">
                         <MethodBadge
                             method={variantMethod}
-                            className="shrink-0 text-[9px] font-semibold leading-none px-1 py-[2px] rounded-xs"
+                            className="shrink-0 text-[9px] font-semibold leading-none px-1 py-[2px]"
                         />
                         {variantParams ? (
                             <span className="truncate text-xs font-mono text-muted-foreground leading-none">
@@ -554,7 +554,7 @@ const SitemapRequestViewerPane = React.memo<SitemapRequestViewerPaneProps>(funct
                                     type="button"
                                     onClick={() => onReqViewModeChange(mode)}
                                     className={cn(
-                                        'px-2.5 py-0.5 rounded-xs text-[10px] font-medium uppercase tracking-wider transition-colors',
+                                        'px-2.5 py-0.5 text-[10px] font-medium uppercase tracking-wider transition-colors',
                                         reqViewMode === mode
                                             ? 'bg-background text-foreground shadow-xs font-semibold'
                                             : 'text-muted-foreground hover:text-foreground'
@@ -593,7 +593,7 @@ const SitemapRequestViewerPane = React.memo<SitemapRequestViewerPaneProps>(funct
                 {/* Response Header Bar */}
                 <div className="flex items-center justify-between px-3 py-1.5 bg-card/60 border-b border-border/50 text-xs shrink-0 select-none">
                     <div className="flex items-center gap-2 min-w-0">
-                        <span className={cn('px-1.5 py-0.5 rounded-xs font-mono text-[10px] font-bold border', getStatusBadgeStyle(selectedEntity.statusCode))}>
+                        <span className={cn('px-1.5 py-0.5 font-mono text-[10px] font-bold border', getStatusBadgeStyle(selectedEntity.statusCode))}>
                             {selectedEntity.statusCode || '0'} {parsedRes.statusText}
                         </span>
 
@@ -623,7 +623,7 @@ const SitemapRequestViewerPane = React.memo<SitemapRequestViewerPaneProps>(funct
                                     type="button"
                                     onClick={() => onResViewModeChange(mode)}
                                     className={cn(
-                                        'px-2.5 py-0.5 rounded-xs text-[10px] font-medium uppercase tracking-wider transition-colors',
+                                        'px-2.5 py-0.5 text-[10px] font-medium uppercase tracking-wider transition-colors',
                                         resViewMode === mode
                                             ? 'bg-background text-foreground shadow-xs font-semibold'
                                             : 'text-muted-foreground hover:text-foreground'

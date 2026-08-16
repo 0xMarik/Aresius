@@ -30,6 +30,27 @@ export function generateId(): string {
     return Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 }
 
+/**
+ * If a pattern is a wildcard domain pattern (e.g. "*.example.com", "*.example.com/*", "https://*.example.com"),
+ * returns the corresponding apex domain pattern ("example.com", "example.com/*", "https://example.com").
+ */
+export function getWildcardCompanionDomain(pattern: string): string | null {
+    const trimmed = pattern.trim();
+    // 1. Direct "*.example.com..." -> "example.com..."
+    if (trimmed.startsWith('*.')) {
+        const base = trimmed.slice(2);
+        return base.length > 0 ? base : null;
+    }
+    // 2. Protocol prefixed e.g. "https://*.example.com..." or "http://*.example.com..." -> "https://example.com..."
+    const protoMatch = trimmed.match(/^([a-zA-Z*]+:\/\/)\*\.(.+)$/);
+    if (protoMatch) {
+        const proto = protoMatch[1];
+        const base = protoMatch[2];
+        return base.length > 0 ? `${proto}${base}` : null;
+    }
+    return null;
+}
+
 const SCOPE_COLORS = [
     '#6366f1', '#10b981', '#f59e0b', '#ef4444',
     '#8b5cf6', '#06b6d4', '#ec4899', '#84cc16',
@@ -140,13 +161,31 @@ const scopeSlice = createSlice({
             if (!scope) return;
             const ruleId = action.payload.id || generateId();
             const pattern = action.payload.pattern.trim();
-            scope[action.payload.list].push({ id: ruleId, pattern });
-            safeInvoke('add_scope_rule_db', {
-                ruleId,
-                scopeId: action.payload.scopeId,
-                ruleType: action.payload.list,
-                pattern,
-            });
+            if (!pattern) return;
+
+            // 1. Add primary rule if not already present
+            if (!scope[action.payload.list].some((r) => r.pattern === pattern)) {
+                scope[action.payload.list].push({ id: ruleId, pattern });
+                safeInvoke('add_scope_rule_db', {
+                    ruleId,
+                    scopeId: action.payload.scopeId,
+                    ruleType: action.payload.list,
+                    pattern,
+                });
+            }
+
+            // 2. If pattern is a wildcard domain like "*.example.com", automatically add the companion apex domain "example.com"
+            const companionPattern = getWildcardCompanionDomain(pattern);
+            if (companionPattern && !scope[action.payload.list].some((r) => r.pattern === companionPattern)) {
+                const companionRuleId = generateId();
+                scope[action.payload.list].push({ id: companionRuleId, pattern: companionPattern });
+                safeInvoke('add_scope_rule_db', {
+                    ruleId: companionRuleId,
+                    scopeId: action.payload.scopeId,
+                    ruleType: action.payload.list,
+                    pattern: companionPattern,
+                });
+            }
         },
 
         removeRule: (
