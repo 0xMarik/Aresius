@@ -1,24 +1,11 @@
-import { ArrowLeftRight, Copy } from "lucide-react";
-import { ContextMenuItem, ContextMenuSeparator, ContextMenuShortcut } from "../ui/context-menu";
+import { ArrowLeftRight } from "lucide-react";
+import { ContextMenuItem, ContextMenuSeparator } from "../ui/context-menu";
 import { EditorView } from "codemirror";
 import SendToFuzzer from "../ContextMenu/SendToFuzzer";
+import ConvertSelection from "../ContextMenu/ConvertSelection";
+import RequestCopyActions from "../ContextMenu/RequestCopyActions";
 import { useReplayerEditor } from "@/context/ReplayerContext";
 import { toggleRequestMethod } from "../utils";
-import { Kbd, KbdGroup } from "../ui/kbd";
-
-const handleCopy = ({ viewRef }: { viewRef: React.MutableRefObject<EditorView | null> }) => {
-    const view = viewRef.current;
-    if (!view) return;
-
-    const { state } = view;
-    const { from, to, empty } = state.selection.main;
-
-    const text = empty
-        ? state.sliceDoc(0, state.doc.length)
-        : state.sliceDoc(from, to);
-
-    navigator.clipboard.writeText(text);
-};
 
 const RequestContextMenu = ({ viewRef }: { viewRef: React.MutableRefObject<EditorView | null> }) => {
     const { activeDraft } = useReplayerEditor();
@@ -37,23 +24,20 @@ const RequestContextMenu = ({ viewRef }: { viewRef: React.MutableRefObject<Edito
 
     return (
         <>
-            <ContextMenuItem onSelect={() => handleCopy({ viewRef })}>
-                <Copy className="mr-2 h-3.5 w-3.5" />
-                Copy
-                <ContextMenuShortcut>
-                    <KbdGroup>
-                        <Kbd>Ctrl</Kbd>
-                        <span>+</span>
-                        <Kbd>C</Kbd>
-                    </KbdGroup>
-                </ContextMenuShortcut>
-            </ContextMenuItem>
+            <RequestCopyActions
+                rawRequest={activeDraft?.requestTmp}
+                targetUrl={activeDraft?.url}
+                viewRef={viewRef}
+            />
+            <ContextMenuSeparator />
             <ContextMenuItem onSelect={handleChangeMethod}>
                 <ArrowLeftRight className="mr-2 h-3.5 w-3.5" />
                 Change request method ({targetMethod})
             </ContextMenuItem>
             <ContextMenuSeparator />
             <SendToFuzzer rawRequest={activeDraft?.requestTmp ?? ""} host={activeDraft?.url ?? ""} />
+            <ContextMenuSeparator />
+            <ConvertSelection viewRef={viewRef} />
         </>
     );
 };

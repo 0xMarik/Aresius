@@ -430,3 +430,393 @@ export function buildSitemapNodeIndex(tree: TreeNode[]): Map<string, TreeNode> {
     walk(tree);
     return index;
 }
+
+/** Recursively removes a node by id from a sitemap tree, returning a new tree. */
+export function removeNodeFromTree(tree: TreeNode[], nodeId: string): TreeNode[] {
+    return tree
+        .filter((node) => node.id !== nodeId)
+        .map((node) => {
+            if (!node.children || node.children.length === 0) return node;
+            return {
+                ...node,
+                children: removeNodeFromTree(node.children, nodeId),
+            };
+        });
+}
+
+export interface NodeTargetInfo {
+    host: string;
+    path: string;
+    url: string;
+    scopeAllowPattern: string;
+    scopeDenyPattern: string;
+}
+
+/** Extracts target host, path, URL, and scope patterns from a tree node. */
+export function getNodeTargetInfo(node: TreeNode): NodeTargetInfo {
+    const id = node.id;
+    let host = '';
+    let path = '/';
+
+    if (id.startsWith('domain:')) {
+        const domain = id.slice('domain:'.length);
+        return {
+            host: domain,
+            path: '/',
+            url: `https://${domain}`,
+            scopeAllowPattern: `*.${domain}/*`,
+            scopeDenyPattern: `*.${domain}/*`,
+        };
+    }
+
+    if (id.startsWith('host:')) {
+        host = id.slice('host:'.length);
+        return {
+            host,
+            path: '/',
+            url: `https://${host}`,
+            scopeAllowPattern: `${host}/*`,
+            scopeDenyPattern: `${host}/*`,
+        };
+    }
+
+    // folder:h:hostname/seg1/seg2 or endpoint:h:hostname/seg1 or variant:h:hostname/path:variantKey
+    let cleanId = id;
+    if (cleanId.startsWith('folder:')) cleanId = cleanId.slice('folder:'.length);
+    else if (cleanId.startsWith('endpoint:')) cleanId = cleanId.slice('endpoint:'.length);
+    else if (cleanId.startsWith('variant:')) cleanId = cleanId.slice('variant:'.length);
+
+    if (cleanId.startsWith('h:')) {
+        cleanId = cleanId.slice(2);
+        const firstSlash = cleanId.indexOf('/');
+        if (firstSlash !== -1) {
+            host = cleanId.slice(0, firstSlash);
+            const remainder = cleanId.slice(firstSlash);
+            const colonIdx = remainder.indexOf(':');
+            path = colonIdx !== -1 ? remainder.slice(0, colonIdx) : remainder;
+        } else {
+            const colonIdx = cleanId.indexOf(':');
+            host = colonIdx !== -1 ? cleanId.slice(0, colonIdx) : cleanId;
+            path = '/';
+        }
+    } else {
+        host = node.label;
+    }
+
+    const cleanPath = path || '/';
+    const scopePattern = cleanPath.endsWith('/') ? `${host}${cleanPath}*` : `${host}${cleanPath}/*`;
+
+    return {
+        host,
+        path: cleanPath,
+        url: `https://${host}${cleanPath}`,
+        scopeAllowPattern: scopePattern,
+        scopeDenyPattern: scopePattern,
+    };
+}
+
+/** Converts a raw HTTP request and host string into a runnable cURL command. */
+export function rawRequestToCurl(rawRequest: string, host: string): string {
+    if (!rawRequest) return '';
+    const firstBlank = rawRequest.indexOf('\r\n\r\n');
+    const headerBlock = firstBlank === -1 ? rawRequest : rawRequest.slice(0, firstBlank);
+    const body = firstBlank === -1 ? '' : rawRequest.slice(firstBlank + 4);
+
+    const lines = headerBlock.split('\r\n');
+    const requestLine = lines[0] || '';
+    const reqParts = requestLine.split(' ');
+    const method = (reqParts[0] || 'GET').toUpperCase();
+    const target = reqParts[1] || '/';
+
+    const fullUrl = target.startsWith('http://') || target.startsWith('https://')
+        ? target
+        : `https://${host}${target.startsWith('/') ? target : `/${target}`}`;
+
+    const headers: string[] = [];
+    for (let i = 1; i < lines.length; i++) {
+        const line = lines[i];
+        if (!line) continue;
+        const colonIdx = line.indexOf(':');
+        if (colonIdx === -1) continue;
+        const key = line.slice(0, colonIdx).trim();
+        const value = line.slice(colonIdx + 1).trim();
+        if (key.toLowerCase() === 'host' || key.toLowerCase() === 'content-length') continue;
+        headers.push(`-H '${key}: ${value.replace(/'/g, "'\\''")}'`);
+    }
+
+    const parts = [`curl -i -s -k -X '${method}'`];
+    parts.push(`'${fullUrl.replace(/'/g, "'\\''")}'`);
+    for (const h of headers) {
+        parts.push(h);
+    }
+    if (body && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
+        parts.push(`--data-raw '${body.replace(/'/g, "'\\''")}'`);
+    }
+
+    return parts.join(' \\\n  ');
+}
+
+export interface FilterTreeResult {
+    filteredTree: TreeNode[];
+    matchingIds: Set<string>;
+}
+
+/** Filters a sitemap tree based on search query and active scope. */
+export function filterSitemapTree(
+    tree: TreeNode[],
+    query: string,
+    activeScope: import('@/store/slices/scopeSlice').Scope | null,
+    scopeFilter: 'all' | 'in' | 'out',
+    isInScopeFn?: (scope: import('@/store/slices/scopeSlice').Scope, host: string, path?: string) => boolean
+): FilterTreeResult {
+    const q = query.trim().toLowerCase();
+    const matchingIds = new Set<string>();
+
+    function evaluateNode(node: TreeNode): { keep: boolean; filteredNode: TreeNode | null; isMatch: boolean } {
+        const targetInfo = getNodeTargetInfo(node);
+        let passesScope = true;
+
+        if (activeScope && scopeFilter !== 'all' && isInScopeFn) {
+            const inScope = isInScopeFn(activeScope, targetInfo.host, targetInfo.path);
+            passesScope = scopeFilter === 'in' ? inScope : !inScope;
+        }
+
+        const labelMatch = !q || node.label.toLowerCase().includes(q);
+        const methodMatch = !q || (node.data?.methods && node.data.methods.some((m) => m.toLowerCase().includes(q)));
+        const pathMatch = !q || targetInfo.path.toLowerCase().includes(q);
+        const isSelfMatch = passesScope && (labelMatch || !!methodMatch || pathMatch);
+
+        let filteredChildren: TreeNode[] = [];
+        let hasMatchingChild = false;
+
+        if (node.children && node.children.length > 0) {
+            for (const child of node.children) {
+                const childResult = evaluateNode(child);
+                if (childResult.keep && childResult.filteredNode) {
+                    filteredChildren.push(childResult.filteredNode);
+                    hasMatchingChild = true;
+                }
+            }
+        }
+
+        const keep = isSelfMatch || hasMatchingChild;
+        if (isSelfMatch) {
+            matchingIds.add(node.id);
+        }
+
+        if (!keep) {
+            return { keep: false, filteredNode: null, isMatch: false };
+        }
+
+        const filteredNode: TreeNode = {
+            ...node,
+            children: filteredChildren.length > 0 ? filteredChildren : (isSelfMatch ? node.children : undefined),
+        };
+
+        return { keep: true, filteredNode, isMatch: isSelfMatch || hasMatchingChild };
+    }
+
+    const filteredTree: TreeNode[] = [];
+    for (const rootNode of tree) {
+        const res = evaluateNode(rootNode);
+        if (res.keep && res.filteredNode) {
+            filteredTree.push(res.filteredNode);
+        }
+    }
+
+    return { filteredTree, matchingIds };
+}
+
+/** Parses a raw HTTP request or response string into header list, body, and status line. */
+export function splitHttpMessage(raw: string) {
+    if (!raw) return { statusLine: '', headersText: '', headersList: [], body: '', statusCode: 0, statusText: '' };
+    const firstBlank = raw.indexOf('\r\n\r\n');
+    const headerBlock = firstBlank === -1 ? raw : raw.slice(0, firstBlank);
+    const body = firstBlank === -1 ? '' : raw.slice(firstBlank + 4);
+
+    const lines = headerBlock.split('\r\n');
+    const statusLine = lines[0] || '';
+    const headersText = lines.slice(1).join('\r\n');
+
+    const headersList: Array<{ name: string; value: string }> = [];
+    for (let i = 1; i < lines.length; i++) {
+        const line = lines[i];
+        if (!line) continue;
+        const colonIdx = line.indexOf(':');
+        if (colonIdx === -1) continue;
+        headersList.push({
+            name: line.slice(0, colonIdx).trim(),
+            value: line.slice(colonIdx + 1).trim(),
+        });
+    }
+
+    let statusCode = 0;
+    let statusText = '';
+    if (statusLine.startsWith('HTTP/')) {
+        const parts = statusLine.split(' ');
+        statusCode = parseInt(parts[1] || '0', 10) || 0;
+        statusText = parts.slice(2).join(' ');
+    }
+
+    return {
+        statusLine,
+        headersText,
+        headersList,
+        body,
+        statusCode,
+        statusText,
+    };
+}
+
+/** Attempts to pretty-print a JSON string, returns formatted JSON or null if invalid. */
+export function tryFormatJson(raw: string): string | null {
+    if (!raw) return null;
+    const trimmed = raw.trim();
+    if (!((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']')))) {
+        return null;
+    }
+    try {
+        const parsed = JSON.parse(trimmed);
+        return JSON.stringify(parsed, null, 2);
+    } catch {
+        return null;
+    }
+}
+
+/** Formats XML / HTML text with 2-space indentation. */
+export function formatXmlHtml(xml: string): string {
+    let formatted = '';
+    let indent = 0;
+    const tab = '  ';
+    const tagRegex = /(<\/?[^>]+>)|([^<]+)/g;
+    const tokens = xml.match(tagRegex) || [];
+
+    for (const token of tokens) {
+        const trimmed = token.trim();
+        if (!trimmed) continue;
+
+        if (trimmed.startsWith('</')) {
+            indent = Math.max(0, indent - 1);
+            formatted += tab.repeat(indent) + trimmed + '\n';
+        } else if (trimmed.startsWith('<') && (trimmed.endsWith('/>') || trimmed.startsWith('<!') || trimmed.startsWith('<?'))) {
+            formatted += tab.repeat(indent) + trimmed + '\n';
+        } else if (trimmed.startsWith('<')) {
+            formatted += tab.repeat(indent) + trimmed + '\n';
+            indent++;
+        } else {
+            formatted += tab.repeat(indent) + trimmed + '\n';
+        }
+    }
+
+    return formatted.trimEnd() || xml;
+}
+
+/** Formats URL-encoded form data into multi-line decoded key-value lines. */
+export function formatUrlEncoded(body: string): string {
+    try {
+        const parts = body.split('&');
+        if (parts.length <= 1) return body;
+        return parts
+            .map((part) => {
+                const eqIdx = part.indexOf('=');
+                if (eqIdx === -1) return decodeURIComponent(part);
+                const key = decodeURIComponent(part.slice(0, eqIdx));
+                const val = decodeURIComponent(part.slice(eqIdx + 1));
+                return `${key} = ${val}`;
+            })
+            .join('\n');
+    } catch {
+        return body;
+    }
+}
+
+/** Pretty-formats the body of an HTTP request or response based on Content-Type header. */
+export function formatHttpMessagePretty(raw: string): string {
+    if (!raw) return '';
+    const blankIdx = raw.indexOf('\r\n\r\n');
+    if (blankIdx === -1) return raw;
+
+    const headersBlock = raw.slice(0, blankIdx);
+    const body = raw.slice(blankIdx + 4);
+    if (!body.trim()) return raw;
+
+    const ctMatch = headersBlock.match(/^Content-Type:\s*([^\r\n;]+)/im);
+    const contentType = ctMatch ? ctMatch[1].trim().toLowerCase() : '';
+
+    let formattedBody = body;
+
+    if (contentType.includes('json') || (!contentType && (body.trim().startsWith('{') || body.trim().startsWith('[')))) {
+        try {
+            const parsed = JSON.parse(body.trim());
+            formattedBody = JSON.stringify(parsed, null, 2);
+        } catch {
+            // fallback
+        }
+    } else if (contentType.includes('xml') || contentType.includes('html')) {
+        try {
+            formattedBody = formatXmlHtml(body);
+        } catch {
+            // fallback
+        }
+    } else if (contentType.includes('x-www-form-urlencoded')) {
+        formattedBody = formatUrlEncoded(body);
+    }
+
+    return `${headersBlock}\r\n\r\n${formattedBody}`;
+}
+
+/** Standard URL encode for key characters (e.g. spaces, symbols, query chars). */
+export function urlEncodeKeyChars(text: string): string {
+    return encodeURIComponent(text);
+}
+
+/** Complete URL encode converting every character to %XX hex format (Burp Suite style). */
+export function urlEncodeAllChars(text: string): string {
+    if (!text) return '';
+    const encoder = new TextEncoder();
+    const bytes = encoder.encode(text);
+    return Array.from(bytes)
+        .map((b) => '%' + b.toString(16).padStart(2, '0').toUpperCase())
+        .join('');
+}
+
+/** Saves a string content to a local file via Save File Picker or browser download. */
+export async function saveStringToFile(defaultFilename: string, content: string, mimeType = 'text/plain'): Promise<boolean> {
+    if (typeof window !== 'undefined' && 'showSaveFilePicker' in window) {
+        try {
+            const handle = await (window as any).showSaveFilePicker({
+                suggestedName: defaultFilename,
+                types: [
+                    {
+                        description: 'HTTP Request (*.http, *.txt)',
+                        accept: {
+                            'text/plain': ['.http', '.txt'],
+                        },
+                    },
+                ],
+            });
+            const writable = await handle.createWritable();
+            await writable.write(content);
+            await writable.close();
+            return true;
+        } catch (err: unknown) {
+            if (err instanceof Error && err.name === 'AbortError') {
+                return false;
+            }
+        }
+    }
+
+    // Fallback to blob download
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = defaultFilename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    return true;
+}
+
+

@@ -1,68 +1,106 @@
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
-import { RsTree } from 'rstree-ui';
+import { RsTree, HighlightedText } from 'rstree-ui';
 import type { ReactNode } from 'react';
-import { Globe, Server, Folder, Route, Braces, ListTree, Eye, EyeOff } from 'lucide-react';
+import {
+    Globe,
+    Server,
+    Folder,
+    Route,
+    Braces,
+    ListTree,
+    Search,
+    X,
+    ChevronsUpDown,
+    ChevronsDownUp,
+    Copy,
+    Trash2,
+    ShieldAlert,
+    ShieldCheck,
+    Send,
+    Repeat,
+    FileText,
+    Terminal,
+    Clock,
+    HardDrive,
+    Download,
+} from 'lucide-react';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { SitemapKind, TreeNode } from '@/types/sitemap.type';
-import { useAppSelector } from '@/hooks/redux';
+import { useAppDispatch, useAppSelector } from '@/hooks/redux';
 import { useProjectId } from '@/hooks/useProjectId';
 import Table from '@/components/Table';
 import { CodeMirrorEditor } from '@/components/result-table.components';
 import { renderHttpHistoryTableContextMenu } from '@/components/HttpHistoryTableContextMenu';
 import { adaptFromReqRes, httpColumns } from '@/pages/HttpHistory';
 import { getHistorySelectors } from '@/store/slices/http-historySlice';
-import { selectSitemap } from '@/store/slices/sitemapSlice';
-import { buildSitemapNodeIndex, collectRequestIdsDeduped, countUniqueRequests } from './utils';
+import { deleteSitemapNode, selectSitemap, setSiteMapBulk } from '@/store/slices/sitemapSlice';
+import { addRule, selectActiveScope, Scope } from '@/store/slices/scopeSlice';
+import {
+    buildSitemapNodeIndex,
+    collectRequestIdsDeduped,
+    countUniqueRequests,
+    filterSitemapTree,
+    getNodeTargetInfo,
+    rawRequestToCurl,
+    splitHttpMessage,
+    formatHttpMessagePretty,
+    saveStringToFile,
+} from './utils';
 import type { EntityId } from '@reduxjs/toolkit';
 import type { HttpHistory } from '@/types/http.type';
 import { EmptyState } from '@/components/ui/empty-state';
-import { selectActiveScope, Scope } from '@/store/slices/scopeSlice';
 import { isInScope } from '@/lib/scopeMatcher';
 import { cn } from '@/lib/utils';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import {
+    ContextMenu,
+    ContextMenuContent,
+    ContextMenuItem,
+    ContextMenuLabel,
+    ContextMenuSeparator,
+    ContextMenuSub,
+    ContextMenuSubContent,
+    ContextMenuSubTrigger,
+    ContextMenuTrigger,
+} from '@/components/ui/context-menu';
+import SendToReplayer from '@/components/ContextMenu/SendToReplayer';
+import SendToFuzzer from '@/components/ContextMenu/SendToFuzzer';
+import RequestCopyActions from '@/components/ContextMenu/RequestCopyActions';
 
-const kindIcon: Record<SitemapKind, ReactNode> = {
-    domain: <Globe className="w-2.5 h-2.5 text-[--color-terracotta]" />,
-    host: <Server className="w-2.5 h-2.5 text-[--color-terracotta]" />,
-    folder: <Folder className="w-2.5 h-2.5 text-[--color-charcoal]/70" />,
-    endpoint: <Route className="w-2.5 h-2.5 text-[--color-charcoal]" />,
-    variant: <Braces className="w-2.5 h-2.5 text-[--color-charcoal]/50" />,
+// ---------------------------------------------------------------------------
+// Method Colors & Badges
+// ---------------------------------------------------------------------------
+const METHOD_COLORS: Record<string, string> = {
+    GET: 'bg-cyan-500/15 text-cyan-600 dark:text-cyan-400 border-cyan-500/30',
+    POST: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30',
+    PUT: 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30',
+    DELETE: 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30',
+    PATCH: 'bg-violet-500/15 text-violet-600 dark:text-violet-400 border-violet-500/30',
+    HEAD: 'bg-sky-500/15 text-sky-600 dark:text-sky-400 border-sky-500/30',
+    OPTIONS: 'bg-slate-500/15 text-slate-600 dark:text-slate-400 border-slate-500/30',
 };
 
-function renderSitemapNode(
-    node: TreeNode,
-    _activeScope: Scope | null
-) {
-    const d = node.data;
-    if (!d) return <span className="text-sm">{node.label}</span>;
-
-    return (
-        <div className="flex items-center gap-1.5 w-full min-w-0 py-px">
-            <span className="shrink-0 flex items-center">{kindIcon[d.kind]}</span>
-
-            <span
-                className={`truncate text-[13px] leading-tight ${d.kind === 'domain' || d.kind === 'host'
-                    ? 'font-medium text-[--color-charcoal]'
-                    : 'text-[--color-charcoal]/90'
-                    }`}
-            >
-                {node.label}
-            </span>
-
-            {d.methods?.map(m => (
-                <span
-                    key={m}
-                    className="shrink-0 font-mono text-[9px] font-medium leading-none px-1 py-[3px] rounded-sm bg-[--color-charcoal]/[0.06] text-[--color-charcoal]/70 tracking-wide"
-                >
-                    {m}
-                </span>
-            ))}
-
-            <span className="ml-auto shrink-0 text-[9px] leading-none font-medium px-1.5 py-[3px] rounded-full bg-[--color-terracotta]/10 text-[--color-terracotta]">
-                {countUniqueRequests(node)}
-            </span>
-        </div>
-    );
+function getMethodBadgeClass(method: string): string {
+    return METHOD_COLORS[method.toUpperCase()] ?? 'bg-muted text-muted-foreground border-border';
 }
+
+function getStatusBadgeStyle(status: number): string {
+    if (!status) return 'bg-muted text-muted-foreground border-border';
+    if (status < 300) return 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30';
+    if (status < 400) return 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30';
+    if (status < 500) return 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30';
+    return 'bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/30';
+}
+
+const kindIcon: Record<SitemapKind, ReactNode> = {
+    domain: <Globe className="w-3.5 h-3.5 text-primary shrink-0" />,
+    host: <Server className="w-3.5 h-3.5 text-sky-500 shrink-0" />,
+    folder: <Folder className="w-3.5 h-3.5 text-amber-500/80 shrink-0" />,
+    endpoint: <Route className="w-3.5 h-3.5 text-foreground/80 shrink-0" />,
+    variant: <Braces className="w-3.5 h-3.5 text-muted-foreground/70 shrink-0" />,
+};
 
 function resolveEntityId(id: string): EntityId {
     const asNumber = Number(id);
@@ -70,7 +108,228 @@ function resolveEntityId(id: string): EntityId {
 }
 
 // ---------------------------------------------------------------------------
-// 1. Memoized Tree Pane Component
+// Tree Node Context Menu Component
+// ---------------------------------------------------------------------------
+interface TreeNodeContextMenuProps {
+    node: TreeNode;
+    activeScope: Scope | null;
+    projectId: string | null;
+    representativeItem?: HttpHistory;
+    children: React.ReactNode;
+}
+
+const TreeNodeContextMenu: React.FC<TreeNodeContextMenuProps> = ({
+    node,
+    activeScope,
+    projectId,
+    representativeItem,
+    children,
+}) => {
+    const dispatch = useAppDispatch();
+    const targetInfo = useMemo(() => getNodeTargetInfo(node), [node]);
+
+    const handleIncludeInScope = () => {
+        if (!projectId || !activeScope) return;
+        dispatch(
+            addRule({
+                projectId,
+                scopeId: activeScope.id,
+                list: 'allow',
+                pattern: targetInfo.scopeAllowPattern,
+            })
+        );
+    };
+
+    const handleExcludeFromScope = () => {
+        if (!projectId || !activeScope) return;
+        dispatch(
+            addRule({
+                projectId,
+                scopeId: activeScope.id,
+                list: 'deny',
+                pattern: targetInfo.scopeDenyPattern,
+            })
+        );
+    };
+
+    const handleCopyUrl = () => {
+        navigator.clipboard.writeText(targetInfo.url);
+    };
+
+    const handleCopyPath = () => {
+        navigator.clipboard.writeText(targetInfo.path);
+    };
+
+    const handleCopyCurl = () => {
+        if (!representativeItem?.rawRequest) return;
+        const curlCmd = rawRequestToCurl(representativeItem.rawRequest, targetInfo.host);
+        navigator.clipboard.writeText(curlCmd);
+    };
+
+    const handleDeleteFromSitemap = () => {
+        if (!projectId) return;
+        dispatch(deleteSitemapNode({ nodeId: node.id, projectId }));
+    };
+
+    return (
+        <ContextMenu>
+            <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
+            <ContextMenuContent className="w-56 text-xs">
+                <ContextMenuLabel className="text-[11px] text-muted-foreground font-mono truncate">
+                    {node.label}
+                </ContextMenuLabel>
+                <ContextMenuSeparator />
+
+                {/* Scope Management */}
+                {activeScope ? (
+                    <>
+                        <ContextMenuItem onSelect={handleIncludeInScope}>
+                            <ShieldCheck className="mr-2 h-3.5 w-3.5 text-emerald-500" />
+                            Include in Scope
+                        </ContextMenuItem>
+                        <ContextMenuItem onSelect={handleExcludeFromScope}>
+                            <ShieldAlert className="mr-2 h-3.5 w-3.5 text-rose-500" />
+                            Exclude from Scope
+                        </ContextMenuItem>
+                        <ContextMenuSeparator />
+                    </>
+                ) : null}
+
+                {/* Pentest Tools */}
+                {representativeItem?.rawRequest && (
+                    <>
+                        <SendToFuzzer rawRequest={representativeItem.rawRequest} host={targetInfo.host} />
+                        <SendToReplayer rawRequest={representativeItem.rawRequest} />
+                        <ContextMenuSeparator />
+                    </>
+                )}
+
+                {/* Copy Menu */}
+                <ContextMenuSub>
+                    <ContextMenuSubTrigger>
+                        <Copy className="mr-2 h-3.5 w-3.5" />
+                        Copy
+                    </ContextMenuSubTrigger>
+                    <ContextMenuSubContent className="w-44 text-xs">
+                        <ContextMenuItem onSelect={handleCopyUrl}>
+                            URL
+                        </ContextMenuItem>
+                        <ContextMenuItem onSelect={handleCopyPath}>
+                            Path
+                        </ContextMenuItem>
+                        {representativeItem?.rawRequest && (
+                            <>
+                                <ContextMenuItem onSelect={handleCopyCurl}>
+                                    <Terminal className="mr-2 h-3 w-3" />
+                                    cURL Command
+                                </ContextMenuItem>
+                                <ContextMenuItem
+                                    onSelect={() => {
+                                        navigator.clipboard.writeText(representativeItem.rawRequest);
+                                    }}
+                                >
+                                    Raw Request
+                                </ContextMenuItem>
+                                {representativeItem.rawResponse && (
+                                    <ContextMenuItem
+                                        onSelect={() => {
+                                            navigator.clipboard.writeText(representativeItem.rawResponse);
+                                        }}
+                                    >
+                                        Raw Response
+                                    </ContextMenuItem>
+                                )}
+                            </>
+                        )}
+                    </ContextMenuSubContent>
+                </ContextMenuSub>
+
+                <ContextMenuSeparator />
+
+                {/* Delete / Prune */}
+                <ContextMenuItem
+                    onSelect={handleDeleteFromSitemap}
+                    className="text-destructive focus:text-destructive focus:bg-destructive/10"
+                >
+                    <Trash2 className="mr-2 h-3.5 w-3.5" />
+                    Delete from Sitemap
+                </ContextMenuItem>
+            </ContextMenuContent>
+        </ContextMenu>
+    );
+};
+
+// ---------------------------------------------------------------------------
+// Render Individual Tree Node
+// ---------------------------------------------------------------------------
+function renderSitemapNode(
+    node: TreeNode,
+    activeScope: Scope | null,
+    projectId: string | null,
+    entities: Record<string | number, HttpHistory>,
+    searchMatches?: any[]
+) {
+    const d = node.data;
+    if (!d) return <span className="text-xs">{node.label}</span>;
+
+    const targetInfo = getNodeTargetInfo(node);
+    const inScope = activeScope ? isInScope(activeScope, targetInfo.host, targetInfo.path) : true;
+
+    // Find representative item for context menu
+    const requestIds = d.kind === 'variant' ? d.requestIds : collectRequestIdsDeduped(node);
+    const repId = requestIds?.[0];
+    const representativeItem = repId ? entities[resolveEntityId(repId)] : undefined;
+
+    return (
+        <TreeNodeContextMenu
+            node={node}
+            activeScope={activeScope}
+            projectId={projectId}
+            representativeItem={representativeItem}
+        >
+            <div
+                className={cn(
+                    'flex items-center gap-1.5 w-full min-w-0 py-0.5 px-1 rounded-sm select-none transition-opacity',
+                    !inScope && activeScope && 'opacity-60 text-muted-foreground'
+                )}
+            >
+                <span className="shrink-0 flex items-center">{kindIcon[d.kind]}</span>
+
+                <span
+                    className={cn(
+                        'truncate text-xs font-mono leading-none',
+                        d.kind === 'domain' || d.kind === 'host'
+                            ? 'font-semibold text-foreground'
+                            : d.kind === 'folder'
+                                ? 'font-medium text-foreground/90'
+                                : 'text-foreground/80'
+                    )}
+                >
+                    <HighlightedText text={node.label} matches={searchMatches || []} />
+                </span>
+
+                {d.methods?.map((m) => (
+                    <span
+                        key={m}
+                        className={cn(
+                            'shrink-0 font-mono text-[9px] font-semibold leading-none px-1 py-[2px] rounded-xs border',
+                            getMethodBadgeClass(m)
+                        )}
+                    >
+                        {m}
+                    </span>
+                ))}
+
+                <span className="ml-auto shrink-0 text-[10px] tabular-nums leading-none font-medium px-1.5 py-[2px] rounded-full bg-muted/60 text-muted-foreground">
+                    {countUniqueRequests(node)}
+                </span>
+            </div>
+        </TreeNodeContextMenu>
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 1. Sitemap Tree Pane Component
 // ---------------------------------------------------------------------------
 interface SitemapTreePaneProps {
     data: TreeNode[];
@@ -79,6 +338,9 @@ interface SitemapTreePaneProps {
     expandedIds: string[];
     onExpand: (ids: string[]) => void;
     activeScope: Scope | null;
+    projectId: string | null;
+    entities: Record<string | number, HttpHistory>;
+    searchTerm: string;
 }
 
 const SitemapTreePane = React.memo<SitemapTreePaneProps>(function SitemapTreePane({
@@ -88,6 +350,9 @@ const SitemapTreePane = React.memo<SitemapTreePaneProps>(function SitemapTreePan
     expandedIds,
     onExpand,
     activeScope,
+    projectId,
+    entities,
+    searchTerm,
 }) {
     return (
         <RsTree
@@ -98,23 +363,41 @@ const SitemapTreePane = React.memo<SitemapTreePaneProps>(function SitemapTreePan
             onExpand={onExpand}
             showIcons={false}
             showTreeLines
-            renderNode={(node) => renderSitemapNode(node as any, activeScope) as any}
+            searchTerm={searchTerm}
+            className="!h-full bg-transparent border-none"
+            treeLineClassName="!border-border/30"
+            treeNodeClassName="
+                !bg-transparent
+                !text-foreground
+                hover:!bg-accent/40 hover:!text-foreground
+                aria-selected:!bg-accent/70 aria-selected:!text-accent-foreground aria-selected:font-medium
+                rounded-md text-xs font-mono transition-colors py-0.5
+            "
+            renderNode={(node: any, props: any) =>
+                renderSitemapNode(
+                    node,
+                    activeScope,
+                    projectId,
+                    entities,
+                    props?.searchMatches
+                ) as any
+            }
             virtualizeEnabled
         />
     );
 });
 
 // ---------------------------------------------------------------------------
-// 2. Memoized Request Table Component
+// 2. Sitemap Request Table Pane Component
 // ---------------------------------------------------------------------------
 interface SitemapRequestTablePaneProps {
-    selectedNodeId: string | null;
+    selectedNode: TreeNode | null;
     requestIds: string[];
     onSelectRequest: (id: number | null) => void;
 }
 
 const SitemapRequestTablePane = React.memo<SitemapRequestTablePaneProps>(function SitemapRequestTablePane({
-    selectedNodeId,
+    selectedNode,
     requestIds,
     onSelectRequest,
 }) {
@@ -140,22 +423,45 @@ const SitemapRequestTablePane = React.memo<SitemapRequestTablePaneProps>(functio
 
     return (
         <div className="flex h-full min-h-0 flex-col overflow-hidden">
-            <Table
-                key={selectedNodeId}
-                fillHeight
-                data={rows}
-                columns={httpColumns}
-                emptyLabel="No requests for this node"
-                emptyHint="Captured traffic matching this path will appear here"
-                setSelectedRequest={onSelectRequest}
-                renderRowContextMenu={renderHttpHistoryTableContextMenu}
-            />
+            {/* Table Header Bar */}
+            <div className="flex items-center justify-between px-3 py-1.5 bg-card/40 border-b border-border/50 text-xs shrink-0 select-none">
+                <div className="flex items-center gap-2 truncate">
+                    <span className="text-muted-foreground font-medium">Selected:</span>
+                    <span className="font-mono font-medium text-foreground truncate">
+                        {selectedNode ? selectedNode.label : 'All / None'}
+                    </span>
+                    {selectedNode && (
+                        <Badge variant="outline" className="text-[10px] px-1.5 py-0">
+                            {selectedNode.data?.kind}
+                        </Badge>
+                    )}
+                </div>
+                <span className="text-[11px] text-muted-foreground tabular-nums shrink-0">
+                    {rows.length} {rows.length === 1 ? 'request' : 'requests'}
+                </span>
+            </div>
+
+            <div className="flex-1 min-h-0">
+                <Table
+                    fillHeight
+                    data={rows}
+                    columns={httpColumns}
+                    emptyLabel={selectedNode ? 'No requests for this node' : 'Select a node in the tree'}
+                    emptyHint={
+                        selectedNode
+                            ? 'Captured traffic matching this endpoint will appear here'
+                            : 'Click any domain, host, folder or endpoint to inspect requests'
+                    }
+                    setSelectedRequest={onSelectRequest}
+                    renderRowContextMenu={renderHttpHistoryTableContextMenu}
+                />
+            </div>
         </div>
     );
 });
 
 // ---------------------------------------------------------------------------
-// 3. Memoized Request/Response CodeMirror Viewer Component
+// 3. Upgraded Request / Response Code & Header Viewer Pane
 // ---------------------------------------------------------------------------
 interface SitemapRequestViewerPaneProps {
     selectedRequestId: number | null;
@@ -165,31 +471,154 @@ const SitemapRequestViewerPane = React.memo<SitemapRequestViewerPaneProps>(funct
     selectedRequestId,
 }) {
     const projectId = useProjectId();
+
+    const [reqViewMode, setReqViewMode] = useState<'raw' | 'pretty'>('raw');
+    const [resViewMode, setResViewMode] = useState<'raw' | 'pretty'>('raw');
+
     const selectedEntity = useAppSelector((state) =>
-        selectedRequestId !== null
-            ? getHistorySelectors(projectId).selectById(state, selectedRequestId)
-            : undefined
+        selectedRequestId !== null ? getHistorySelectors(projectId).selectById(state, selectedRequestId) : undefined
     );
+
+    const prettyReq = useMemo(
+        () => (selectedEntity?.rawRequest ? formatHttpMessagePretty(selectedEntity.rawRequest) : ''),
+        [selectedEntity?.rawRequest]
+    );
+
+    const prettyRes = useMemo(
+        () => (selectedEntity?.rawResponse ? formatHttpMessagePretty(selectedEntity.rawResponse) : ''),
+        [selectedEntity?.rawResponse]
+    );
+
+    const parsedRes = useMemo(() => splitHttpMessage(selectedEntity?.rawResponse ?? ''), [selectedEntity?.rawResponse]);
+
+    const resContentType = useMemo(() => {
+        const ctHeader = parsedRes.headersList.find((h) => h.name.toLowerCase() === 'content-type');
+        if (!ctHeader) return '';
+        const rawCt = ctHeader.value.split(';')[0].trim();
+        return rawCt.replace(/^application\//i, '').replace(/^text\//i, '');
+    }, [parsedRes.headersList]);
+
+    if (!selectedEntity) {
+        return (
+            <div className="h-full flex items-center justify-center bg-card/10">
+                <EmptyState
+                    icon={FileText}
+                    title="No Request Selected"
+                    description="Choose a request row above to inspect its raw HTTP request and response payload."
+                />
+            </div>
+        );
+    }
 
     return (
         <ResizablePanelGroup direction="horizontal" autoSaveId="aresius-sitemap-req-res" className="h-full min-h-0">
-            <ResizablePanel defaultSize={50} minSize={15} className="min-h-0 overflow-hidden">
-                <div className="h-full min-h-0 overflow-hidden">
-                    {!selectedEntity ? (
-                        <div className="flex h-full items-center justify-center text-xs text-muted-foreground">select a request</div>
-                    ) : (
-                        <CodeMirrorEditor value={selectedEntity.rawRequest} />
-                    )}
+            {/* Request Pane */}
+            <ResizablePanel defaultSize={50} minSize={20} className="min-h-0 flex flex-col overflow-hidden border-r border-border/50">
+                {/* Request Header Bar */}
+                <div className="flex items-center justify-between px-3 py-1.5 bg-card/60 border-b border-border/50 text-xs shrink-0 select-none">
+                    <div className="flex items-center gap-2 min-w-0">
+                        <span className={cn('px-1.5 py-0.5 rounded-xs font-mono text-[10px] font-bold border', getMethodBadgeClass(selectedEntity.method))}>
+                            {selectedEntity.method}
+                        </span>
+                        <span className="font-mono text-xs text-foreground/90 truncate max-w-[240px]" title={selectedEntity.path}>
+                            {selectedEntity.path || '/'}
+                        </span>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 shrink-0">
+                        {/* View Tabs */}
+                        <div className="flex items-center rounded-md bg-muted/40 p-0.5 border border-border/40">
+                            {(['raw', 'pretty'] as const).map((mode) => (
+                                <button
+                                    key={mode}
+                                    type="button"
+                                    onClick={() => setReqViewMode(mode)}
+                                    className={cn(
+                                        'px-2.5 py-0.5 rounded-xs text-[10px] font-medium uppercase tracking-wider transition-colors',
+                                        reqViewMode === mode
+                                            ? 'bg-background text-foreground shadow-xs font-semibold'
+                                            : 'text-muted-foreground hover:text-foreground'
+                                    )}
+                                >
+                                    {mode}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
                 </div>
+
+                {/* Request Content with Right-Click Context Menu */}
+                <ContextMenu>
+                    <ContextMenuTrigger asChild>
+                        <div className="flex-1 min-h-0 overflow-auto bg-background">
+                            <CodeMirrorEditor value={reqViewMode === 'pretty' ? prettyReq : selectedEntity.rawRequest} />
+                        </div>
+                    </ContextMenuTrigger>
+                    <ContextMenuContent className="w-56 text-xs">
+                        <RequestCopyActions rawRequest={selectedEntity.rawRequest} host={selectedEntity.host} />
+
+                        <ContextMenuSeparator />
+
+                        <SendToReplayer rawRequest={selectedEntity.rawRequest} />
+
+                        <SendToFuzzer rawRequest={selectedEntity.rawRequest} host={selectedEntity.host || ''} />
+                    </ContextMenuContent>
+                </ContextMenu>
             </ResizablePanel>
+
             <ResizableHandle withHandle />
-            <ResizablePanel defaultSize={50} minSize={15} className="min-h-0 overflow-hidden">
-                <div className="h-full min-h-0 overflow-hidden">
-                    {!selectedEntity ? (
-                        <div className="flex h-full items-center justify-center text-xs text-muted-foreground">select a request</div>
-                    ) : (
-                        <CodeMirrorEditor value={selectedEntity.rawResponse} />
-                    )}
+
+            {/* Response Pane */}
+            <ResizablePanel defaultSize={50} minSize={20} className="min-h-0 flex flex-col overflow-hidden">
+                {/* Response Header Bar */}
+                <div className="flex items-center justify-between px-3 py-1.5 bg-card/60 border-b border-border/50 text-xs shrink-0 select-none">
+                    <div className="flex items-center gap-2 min-w-0">
+                        <span className={cn('px-1.5 py-0.5 rounded-xs font-mono text-[10px] font-bold border', getStatusBadgeStyle(selectedEntity.statusCode))}>
+                            {selectedEntity.statusCode || '0'} {parsedRes.statusText}
+                        </span>
+
+                        <span className="flex items-center gap-1 text-[11px] text-muted-foreground font-mono tabular-nums">
+                            <Clock className="w-3 h-3 text-muted-foreground/70" />
+                            {selectedEntity.responseTimeMs} ms
+                        </span>
+
+                        <span className="flex items-center gap-1 text-[11px] text-muted-foreground font-mono tabular-nums">
+                            <HardDrive className="w-3 h-3 text-muted-foreground/70" />
+                            {selectedEntity.responseLength} B
+                        </span>
+
+                        {resContentType && (
+                            <Badge variant="outline" className="text-[9px] uppercase px-1.5 py-0 h-4 border-border/60 text-muted-foreground">
+                                {resContentType}
+                            </Badge>
+                        )}
+                    </div>
+
+                    <div className="flex items-center gap-1.5 shrink-0">
+                        {/* View Tabs */}
+                        <div className="flex items-center rounded-md bg-muted/40 p-0.5 border border-border/40">
+                            {(['raw', 'pretty'] as const).map((mode) => (
+                                <button
+                                    key={mode}
+                                    type="button"
+                                    onClick={() => setResViewMode(mode)}
+                                    className={cn(
+                                        'px-2.5 py-0.5 rounded-xs text-[10px] font-medium uppercase tracking-wider transition-colors',
+                                        resViewMode === mode
+                                            ? 'bg-background text-foreground shadow-xs font-semibold'
+                                            : 'text-muted-foreground hover:text-foreground'
+                                    )}
+                                >
+                                    {mode}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+
+                {/* Response Content */}
+                <div className="flex-1 min-h-0 overflow-auto bg-background">
+                    <CodeMirrorEditor value={resViewMode === 'pretty' ? prettyRes : selectedEntity.rawResponse} />
                 </div>
             </ResizablePanel>
         </ResizablePanelGroup>
@@ -197,26 +626,49 @@ const SitemapRequestViewerPane = React.memo<SitemapRequestViewerPaneProps>(funct
 });
 
 // ---------------------------------------------------------------------------
-// Main Sitemap Component
+// Main Sitemap Page Component
 // ---------------------------------------------------------------------------
 export default function SitemapTree() {
+    const dispatch = useAppDispatch();
+    const projectId = useProjectId();
+
+    const historySelectors = useMemo(() => getHistorySelectors(projectId), [projectId]);
+    const history = useAppSelector(historySelectors.selectAll);
+    const historyEntities = useAppSelector((state) => historySelectors.selectEntities(state) as Record<string | number, HttpHistory>);
+
+    const sitemap = useAppSelector(selectSitemap(projectId));
+    const activeScope = useAppSelector(selectActiveScope(projectId));
+
     const [selectedIds, setSelectedIds] = useState<string[]>([]);
     const [expandedIds, setExpandedIds] = useState<string[]>([]);
     const [selectedRequest, setSelectedRequest] = useState<number | null>(null);
-    const [showOutOfScope, setShowOutOfScope] = useState(false);
 
-    const projectId = useProjectId();
-    const sitemap = useAppSelector(selectSitemap(projectId));
-    const activeScope = useAppSelector(selectActiveScope(projectId));
-    const selectedNodeId = selectedIds[0] ?? null;
+    // Search & Scope filters (Caido-style)
+    const [searchTerm, setSearchTerm] = useState('');
+    const [scopeFilter, setScopeFilter] = useState<'all' | 'in' | 'out'>('all');
+
+    // Auto populate sitemap from history if empty on mount
+    useEffect(() => {
+        if (projectId && sitemap.length === 0 && history.length > 0) {
+            dispatch(setSiteMapBulk({ items: history, projectId }));
+        }
+    }, [projectId, sitemap.length, history, dispatch]);
 
     const nodeIndex = useMemo(() => buildSitemapNodeIndex(sitemap), [sitemap]);
+    const selectedNodeId = selectedIds[0] ?? null;
     const selectedNode = selectedNodeId ? nodeIndex.get(selectedNodeId) ?? null : null;
 
-    const visibleSitemap = useMemo(() => {
-        if (!activeScope || showOutOfScope) return sitemap;
-        return sitemap.filter((node) => isInScope(activeScope, node.label ?? ''));
-    }, [sitemap, activeScope, showOutOfScope]);
+    // Filter tree by search term and scope filter
+    const { filteredTree, matchingIds } = useMemo(() => {
+        return filterSitemapTree(sitemap, searchTerm, activeScope, scopeFilter, isInScope);
+    }, [sitemap, searchTerm, activeScope, scopeFilter]);
+
+    // Auto-expand branches when searching
+    useEffect(() => {
+        if (searchTerm.trim().length > 0 && matchingIds.size > 0) {
+            setExpandedIds((prev) => Array.from(new Set([...prev, ...Array.from(matchingIds)])));
+        }
+    }, [searchTerm, matchingIds]);
 
     const requestIds = useMemo(
         () => (selectedNode ? collectRequestIdsDeduped(selectedNode) : []),
@@ -239,7 +691,23 @@ export default function SitemapTree() {
         setSelectedRequest(id);
     }, []);
 
-    if (sitemap.length === 0) {
+    const handleExpandAll = () => {
+        const allIds: string[] = [];
+        const walk = (nodes: TreeNode[]) => {
+            for (const n of nodes) {
+                allIds.push(n.id);
+                if (n.children) walk(n.children);
+            }
+        };
+        walk(filteredTree);
+        setExpandedIds(allIds);
+    };
+
+    const handleCollapseAll = () => {
+        setExpandedIds([]);
+    };
+
+    if (sitemap.length === 0 && history.length === 0) {
         return (
             <div className="flex h-full min-h-0 flex-col items-center justify-center">
                 <EmptyState
@@ -252,68 +720,129 @@ export default function SitemapTree() {
     }
 
     return (
-        <div className="flex h-full min-h-0 flex-col bg-[--color-canvas] select-none font-sans">
-            {/* Scope Bar */}
-            {activeScope && (
-                <div className="flex items-center justify-between px-3 py-1 bg-muted/20 border-b border-border/40 text-[11px] shrink-0">
-                    <div className="flex items-center gap-1.5 text-muted-foreground">
-                        <span>Filtered by scope:</span>
-                        <span className="font-semibold text-foreground flex items-center gap-1">
-                            <span className="w-2 h-2 rounded-full inline-block" style={{ backgroundColor: activeScope.color }} />
-                            {activeScope.name}
-                        </span>
-                        {!showOutOfScope && (
-                            <span className="text-[10px] text-muted-foreground/70">
-                                ({sitemap.length - visibleSitemap.length} hidden)
-                            </span>
-                        )}
-                    </div>
-                    <button
-                        onClick={() => setShowOutOfScope((v) => !v)}
-                        className={cn(
-                            'flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium transition-colors',
-                            showOutOfScope
-                                ? 'bg-primary/10 text-primary hover:bg-primary/20'
-                                : 'bg-muted/40 text-muted-foreground hover:text-foreground'
-                        )}
-                    >
-                        {showOutOfScope ? (
-                            <>
-                                <EyeOff className="w-3 h-3" /> Hide Out-of-Scope
-                            </>
-                        ) : (
-                            <>
-                                <Eye className="w-3 h-3" /> Show Out-of-Scope
-                            </>
-                        )}
-                    </button>
+        <div className="flex h-full min-h-0 flex-col bg-background select-none font-sans">
+            {/* Top Scope & Filter Bar (Caido-style) */}
+            <div className="flex items-center justify-between gap-3 px-3 py-1.5 bg-card/30 border-b border-border/50 text-xs shrink-0">
+                {/* Left: Scope Selector Tabs */}
+                <div className="flex items-center gap-1.5">
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70 mr-1">
+                        Scope
+                    </span>
+                    {(['all', 'in', 'out'] as const).map((f) => (
+                        <button
+                            key={f}
+                            type="button"
+                            onClick={() => setScopeFilter(f)}
+                            className={cn(
+                                'px-2 py-0.5 rounded-md text-[11px] font-medium transition-colors border',
+                                scopeFilter === f
+                                    ? f === 'in'
+                                        ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-600 dark:text-emerald-400'
+                                        : f === 'out'
+                                            ? 'bg-rose-500/15 border-rose-500/40 text-rose-600 dark:text-rose-400'
+                                            : 'bg-primary/10 border-primary/30 text-primary'
+                                    : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/40'
+                            )}
+                        >
+                            {f === 'all' ? 'All' : f === 'in' ? 'In Scope' : 'Out of Scope'}
+                        </button>
+                    ))}
                 </div>
-            )}
 
+                {/* Right: Active Scope Info */}
+                {activeScope ? (
+                    <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                        <span className="w-2 h-2 rounded-full inline-block" style={{ backgroundColor: activeScope.color }} />
+                        <span className="font-semibold text-foreground">{activeScope.name}</span>
+                    </div>
+                ) : (
+                    <span className="text-[11px] text-muted-foreground/50">No active scope</span>
+                )}
+            </div>
+
+            {/* Main Resizable Panes */}
             <ResizablePanelGroup direction="horizontal" autoSaveId="aresius-sitemap-layout" className="flex-1 min-h-0">
-                {/* Tree Pane */}
-                <ResizablePanel defaultSize={30} minSize={15} className="min-h-0 overflow-hidden">
-                    <div className="h-full min-h-0 overflow-auto p-2 bg-[--color-canvas]">
-                        <SitemapTreePane
-                            data={visibleSitemap}
-                            selectedIds={selectedIds}
-                            onSelect={handleSelectTree}
-                            expandedIds={expandedIds}
-                            onExpand={handleExpandTree}
-                            activeScope={activeScope}
-                        />
+                {/* Left Side: Tree Pane & Caido-like Search Bar */}
+                <ResizablePanel defaultSize={30} minSize={18} className="min-h-0 flex flex-col border-r border-border/50 overflow-hidden">
+                    {/* Tree Search & Controls Header */}
+                    <div className="p-2 border-b border-border/50 bg-card/20 space-y-1.5 shrink-0">
+                        <div className="relative flex items-center">
+                            <Search className="absolute left-2.5 w-3.5 h-3.5 text-muted-foreground/70 pointer-events-none" />
+                            <Input
+                                value={searchTerm}
+                                onChange={(e) => setSearchTerm(e.target.value)}
+                                placeholder="Filter tree (e.g. /api, GET, host)..."
+                                className="h-7 text-xs pl-8 pr-7 bg-background shadow-none border-border/60"
+                            />
+                            {searchTerm && (
+                                <button
+                                    type="button"
+                                    onClick={() => setSearchTerm('')}
+                                    className="absolute right-2 text-muted-foreground hover:text-foreground"
+                                >
+                                    <X className="w-3.5 h-3.5" />
+                                </button>
+                            )}
+                        </div>
+
+                        <div className="flex items-center justify-between text-[11px] text-muted-foreground px-0.5">
+                            <span>
+                                {searchTerm ? `${matchingIds.size} matching` : `${sitemap.length} root domains`}
+                            </span>
+                            <div className="flex items-center gap-1">
+                                <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-5 w-5 text-muted-foreground hover:text-foreground"
+                                    onClick={handleExpandAll}
+                                    title="Expand All"
+                                >
+                                    <ChevronsUpDown className="w-3 h-3" />
+                                </Button>
+                                <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-5 w-5 text-muted-foreground hover:text-foreground"
+                                    onClick={handleCollapseAll}
+                                    title="Collapse All"
+                                >
+                                    <ChevronsDownUp className="w-3 h-3" />
+                                </Button>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Tree Node Content */}
+                    <div className="flex-1 min-h-0 overflow-auto p-1 bg-background">
+                        {filteredTree.length === 0 ? (
+                            <div className="flex h-full items-center justify-center p-4 text-center text-xs text-muted-foreground">
+                                No tree nodes match the filter
+                            </div>
+                        ) : (
+                            <SitemapTreePane
+                                data={filteredTree}
+                                selectedIds={selectedIds}
+                                onSelect={handleSelectTree}
+                                expandedIds={expandedIds}
+                                onExpand={handleExpandTree}
+                                activeScope={activeScope}
+                                projectId={projectId}
+                                entities={historyEntities}
+                                searchTerm={searchTerm}
+                            />
+                        )}
                     </div>
                 </ResizablePanel>
 
                 <ResizableHandle withHandle />
 
                 {/* Right Side: Requests Table + Request/Response Viewers */}
-                <ResizablePanel defaultSize={70} minSize={20} className="min-h-0 overflow-hidden">
+                <ResizablePanel defaultSize={70} minSize={30} className="min-h-0 overflow-hidden">
                     <ResizablePanelGroup direction="vertical" autoSaveId="aresius-sitemap-right-layout" className="h-full min-h-0">
                         {/* Upper: Requests Table */}
                         <ResizablePanel defaultSize={50} minSize={15} className="min-h-0 overflow-hidden">
                             <SitemapRequestTablePane
-                                selectedNodeId={selectedNodeId}
+                                selectedNode={selectedNode}
                                 requestIds={requestIds}
                                 onSelectRequest={handleSelectRequest}
                             />

@@ -145,7 +145,7 @@ export function SendToRepeaterSubmenu({ rawRequest }: { rawRequest: string }) {
     );
 }
 
-const SendToReplayer = ({ rawRequest, isMultiple }: { rawRequest: string; isMultiple: boolean }) => {
+const SendToReplayer = ({ rawRequest, isMultiple = false }: { rawRequest: string; isMultiple?: boolean }) => {
     return (
         <ContextMenuSub>
             <ContextMenuSubTrigger disabled={isMultiple}>
@@ -160,3 +160,4 @@ const SendToReplayer = ({ rawRequest, isMultiple }: { rawRequest: string; isMult
 };
 
 export default SendToReplayer;
+

@@ -32,6 +32,7 @@ import { Project } from "@/types/project.type"
 import { HttpHistory } from "@/types/http.type"
 import { setcurrentProjectId, setProjects, deleteProject, updateProject } from "@/store/slices/projectSlice"
 import { setHistoryBulk } from "@/store/slices/http-historySlice"
+import { setSiteMapBulk } from "@/store/slices/sitemapSlice"
 import { fetchScopeDataForProject } from "@/store/slices/scopeSlice"
 import AddProjectDialog from "@/components/add-project-dialog.component"
 import { invoke } from "@tauri-apps/api/core"
@@ -132,6 +133,7 @@ export default function Projects() {
       try {
         const rows = await invoke<HttpHistory[]>("get_http_history")
         dispatch(setHistoryBulk({ items: rows, projectId: id }))
+        dispatch(setSiteMapBulk({ items: rows, projectId: id }))
       } catch (err) {
         console.warn("Could not load persisted HTTP history:", err)
       }

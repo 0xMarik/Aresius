@@ -1,4 +1,4 @@
-import { insertHttpHistoryEntry } from "@/pages/sitemap/utils";
+import { buildSitemap, insertHttpHistoryEntry, removeNodeFromTree } from "@/pages/sitemap/utils";
 import { HttpHistory } from "@/types/http.type";
 import { TreeNode } from "@/types/sitemap.type";
 import { createSlice, PayloadAction } from "@reduxjs/toolkit"
@@ -17,6 +17,15 @@ const SiteMapSlice = createSlice({
       const { historyItem, projectId } = action.payload;
       if (!state[projectId]) state[projectId] = [];
       insertHttpHistoryEntry(state[projectId], historyItem);
+    },
+    setSiteMapBulk: (state, action: PayloadAction<{ items: HttpHistory[]; projectId: string }>) => {
+      const { items, projectId } = action.payload;
+      state[projectId] = buildSitemap(items);
+    },
+    deleteSitemapNode: (state, action: PayloadAction<{ nodeId: string; projectId: string }>) => {
+      const { nodeId, projectId } = action.payload;
+      if (!state[projectId]) return;
+      state[projectId] = removeNodeFromTree(state[projectId], nodeId);
     }
   },
   extraReducers: (builder) => {
@@ -26,7 +35,7 @@ const SiteMapSlice = createSlice({
   }
 });
 
-export const { updateSiteMap } = SiteMapSlice.actions;
+export const { updateSiteMap, setSiteMapBulk, deleteSitemapNode } = SiteMapSlice.actions;
 
 const EMPTY_SITEMAP: TreeNode[] = [];
 

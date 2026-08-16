@@ -1,7 +1,7 @@
-use sqlx::{SqlitePool, FromRow};
-use serde::{Deserialize, Serialize};
 use crate::ares_utils::database::DbState;
 use crate::types::ReqRes;
+use serde::{Deserialize, Serialize};
+use sqlx::{FromRow, SqlitePool};
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 #[serde(rename_all = "camelCase")]
@@ -126,14 +126,11 @@ pub fn parse_status_code(raw_response: &str) -> Option<i64> {
     if raw_response.is_empty() {
         return None;
     }
-    raw_response
-        .lines()
-        .next()
-        .and_then(|line| {
-            line.split_whitespace()
-                .nth(1)
-                .and_then(|code| code.parse::<i64>().ok())
-        })
+    raw_response.lines().next().and_then(|line| {
+        line.split_whitespace()
+            .nth(1)
+            .and_then(|code| code.parse::<i64>().ok())
+    })
 }
 
 /// Fetches all fuzzer sessions, parameters, and run summaries for a project
@@ -144,13 +141,14 @@ pub async fn get_fuzzer_project_data(
 ) -> Result<FuzzerProjectData, String> {
     let pool = db.pool().await?;
 
-    let real_project_id: String = match sqlx::query_scalar::<_, String>("SELECT id FROM projects LIMIT 1")
-        .fetch_optional(&pool)
-        .await
-    {
-        Ok(Some(pid)) => pid,
-        _ => project_id.clone(),
-    };
+    let real_project_id: String =
+        match sqlx::query_scalar::<_, String>("SELECT id FROM projects LIMIT 1")
+            .fetch_optional(&pool)
+            .await
+        {
+            Ok(Some(pid)) => pid,
+            _ => project_id.clone(),
+        };
 
     let sessions = sqlx::query_as::<_, FuzzerSessionDb>(
         "SELECT * FROM fuzzer_sessions WHERE project_id = ? ORDER BY sort_order ASC, created_at ASC",
@@ -217,10 +215,7 @@ pub async fn get_fuzzer_project_data(
             .await
             .map_err(|e| e.to_string())?;
 
-            run_items.push(FuzzerRunWithWorkers {
-                run,
-                workers,
-            });
+            run_items.push(FuzzerRunWithWorkers { run, workers });
         }
 
         full_sessions.push(FuzzerFullSession {
@@ -247,14 +242,15 @@ pub async fn set_fuzzer_session_selection(
     let pool = db.pool().await?;
     let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
 
-    let real_project_id: String = match sqlx::query_scalar::<_, String>("SELECT id FROM projects LIMIT 1")
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(|e| e.to_string())?
-    {
-        Some(pid) => pid,
-        None => project_id.clone(),
-    };
+    let real_project_id: String =
+        match sqlx::query_scalar::<_, String>("SELECT id FROM projects LIMIT 1")
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?
+        {
+            Some(pid) => pid,
+            None => project_id.clone(),
+        };
 
     sqlx::query("UPDATE fuzzer_sessions SET is_selected = 0 WHERE project_id = ?")
         .bind(&real_project_id)
@@ -295,13 +291,14 @@ pub async fn set_fuzzer_expanded_ids(
     expanded_ids: Vec<String>,
 ) -> Result<(), String> {
     let pool = db.pool().await?;
-    let real_project_id: String = match sqlx::query_scalar::<_, String>("SELECT id FROM projects LIMIT 1")
-        .fetch_optional(&pool)
-        .await
-    {
-        Ok(Some(pid)) => pid,
-        _ => project_id.clone(),
-    };
+    let real_project_id: String =
+        match sqlx::query_scalar::<_, String>("SELECT id FROM projects LIMIT 1")
+            .fetch_optional(&pool)
+            .await
+        {
+            Ok(Some(pid)) => pid,
+            _ => project_id.clone(),
+        };
 
     let sessions = sqlx::query_as::<_, FuzzerSessionDb>(
         "SELECT * FROM fuzzer_sessions WHERE project_id = ? ORDER BY sort_order ASC, created_at ASC"
@@ -312,7 +309,8 @@ pub async fn set_fuzzer_expanded_ids(
     .map_err(|e| e.to_string())?;
 
     for (idx, sess) in sessions.into_iter().enumerate() {
-        let is_expanded = expanded_ids.contains(&idx.to_string()) || expanded_ids.contains(&sess.id);
+        let is_expanded =
+            expanded_ids.contains(&idx.to_string()) || expanded_ids.contains(&sess.id);
         sqlx::query("UPDATE fuzzer_sessions SET is_expanded = ? WHERE id = ?")
             .bind(is_expanded)
             .bind(&sess.id)
@@ -335,23 +333,25 @@ pub async fn create_fuzzer_session_db(
     let pool = db.pool().await?;
     let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
 
-    let real_project_id: String = match sqlx::query_scalar::<_, String>("SELECT id FROM projects LIMIT 1")
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(|e| e.to_string())?
-    {
-        Some(pid) => pid,
-        None => project_id.clone(),
-    };
+    let real_project_id: String =
+        match sqlx::query_scalar::<_, String>("SELECT id FROM projects LIMIT 1")
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?
+        {
+            Some(pid) => pid,
+            None => project_id.clone(),
+        };
 
     let session_id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().timestamp_millis();
 
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM fuzzer_sessions WHERE project_id = ?")
-        .bind(&real_project_id)
-        .fetch_one(&mut *tx)
-        .await
-        .unwrap_or(0);
+    let count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM fuzzer_sessions WHERE project_id = ?")
+            .bind(&real_project_id)
+            .fetch_one(&mut *tx)
+            .await
+            .unwrap_or(0);
 
     sqlx::query("UPDATE fuzzer_sessions SET is_selected = 0 WHERE project_id = ?")
         .bind(&real_project_id)
@@ -386,13 +386,14 @@ pub async fn delete_fuzzer_session_db(
 ) -> Result<(), String> {
     let pool = db.pool().await?;
 
-    let real_project_id: String = match sqlx::query_scalar::<_, String>("SELECT id FROM projects LIMIT 1")
-        .fetch_optional(&pool)
-        .await
-    {
-        Ok(Some(pid)) => pid,
-        _ => project_id.clone(),
-    };
+    let real_project_id: String =
+        match sqlx::query_scalar::<_, String>("SELECT id FROM projects LIMIT 1")
+            .fetch_optional(&pool)
+            .await
+        {
+            Ok(Some(pid)) => pid,
+            _ => project_id.clone(),
+        };
 
     let session_id: Option<String> = sqlx::query_scalar(
         "SELECT id FROM fuzzer_sessions WHERE project_id = ? ORDER BY sort_order ASC, created_at ASC LIMIT 1 OFFSET ?"
@@ -422,13 +423,14 @@ pub async fn delete_fuzzer_history_db(
 ) -> Result<(), String> {
     let pool = db.pool().await?;
 
-    let real_project_id: String = match sqlx::query_scalar::<_, String>("SELECT id FROM projects LIMIT 1")
-        .fetch_optional(&pool)
-        .await
-    {
-        Ok(Some(pid)) => pid,
-        _ => project_id.clone(),
-    };
+    let real_project_id: String =
+        match sqlx::query_scalar::<_, String>("SELECT id FROM projects LIMIT 1")
+            .fetch_optional(&pool)
+            .await
+        {
+            Ok(Some(pid)) => pid,
+            _ => project_id.clone(),
+        };
 
     let session_id: Option<String> = sqlx::query_scalar(
         "SELECT id FROM fuzzer_sessions WHERE project_id = ? ORDER BY sort_order ASC, created_at ASC LIMIT 1 OFFSET ?"
@@ -475,14 +477,15 @@ pub async fn save_fuzzer_session_draft(
     let pool = db.pool().await?;
     let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
 
-    let real_project_id: String = match sqlx::query_scalar::<_, String>("SELECT id FROM projects LIMIT 1")
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(|e| e.to_string())?
-    {
-        Some(pid) => pid,
-        None => project_id.clone(),
-    };
+    let real_project_id: String =
+        match sqlx::query_scalar::<_, String>("SELECT id FROM projects LIMIT 1")
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?
+        {
+            Some(pid) => pid,
+            None => project_id.clone(),
+        };
 
     let session_id: Option<String> = sqlx::query_scalar(
         "SELECT id FROM fuzzer_sessions WHERE project_id = ? ORDER BY sort_order ASC, created_at ASC LIMIT 1 OFFSET ?"
@@ -497,27 +500,45 @@ pub async fn save_fuzzer_session_draft(
         Some(id) => {
             if let Some(n) = name {
                 let _ = sqlx::query("UPDATE fuzzer_sessions SET name = ? WHERE id = ?")
-                    .bind(n).bind(&id).execute(&mut *tx).await;
+                    .bind(n)
+                    .bind(&id)
+                    .execute(&mut *tx)
+                    .await;
             }
             if let Some(r) = raw_request {
                 let _ = sqlx::query("UPDATE fuzzer_sessions SET raw_request = ? WHERE id = ?")
-                    .bind(r).bind(&id).execute(&mut *tx).await;
+                    .bind(r)
+                    .bind(&id)
+                    .execute(&mut *tx)
+                    .await;
             }
             if let Some(u) = target_url {
                 let _ = sqlx::query("UPDATE fuzzer_sessions SET target_url = ? WHERE id = ?")
-                    .bind(u).bind(&id).execute(&mut *tx).await;
+                    .bind(u)
+                    .bind(&id)
+                    .execute(&mut *tx)
+                    .await;
             }
             if let Some(a) = attack_type {
                 let _ = sqlx::query("UPDATE fuzzer_sessions SET attack_type = ? WHERE id = ?")
-                    .bind(a).bind(&id).execute(&mut *tx).await;
+                    .bind(a)
+                    .bind(&id)
+                    .execute(&mut *tx)
+                    .await;
             }
             if let Some(t) = num_threads {
                 let _ = sqlx::query("UPDATE fuzzer_sessions SET num_threads = ? WHERE id = ?")
-                    .bind(t).bind(&id).execute(&mut *tx).await;
+                    .bind(t)
+                    .bind(&id)
+                    .execute(&mut *tx)
+                    .await;
             }
             if let Some(d) = delay_ms {
                 let _ = sqlx::query("UPDATE fuzzer_sessions SET delay_ms = ? WHERE id = ?")
-                    .bind(d).bind(&id).execute(&mut *tx).await;
+                    .bind(d)
+                    .bind(&id)
+                    .execute(&mut *tx)
+                    .await;
             }
             id
         }
@@ -579,14 +600,15 @@ pub async fn save_fuzzer_parameters_db(
     let pool = db.pool().await?;
     let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
 
-    let real_project_id: String = match sqlx::query_scalar::<_, String>("SELECT id FROM projects LIMIT 1")
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(|e| e.to_string())?
-    {
-        Some(pid) => pid,
-        None => project_id.clone(),
-    };
+    let real_project_id: String =
+        match sqlx::query_scalar::<_, String>("SELECT id FROM projects LIMIT 1")
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?
+        {
+            Some(pid) => pid,
+            None => project_id.clone(),
+        };
 
     let session_id: Option<String> = sqlx::query_scalar(
         "SELECT id FROM fuzzer_sessions WHERE project_id = ? ORDER BY sort_order ASC, created_at ASC LIMIT 1 OFFSET ?"
@@ -679,11 +701,15 @@ pub async fn query_fuzzer_requests_window(
         .await
         .map_err(|e| e.to_string())?;
 
-    let is_desc = sort_order.map(|s| s.eq_ignore_ascii_case("desc")).unwrap_or(false);
+    let is_desc = sort_order
+        .map(|s| s.eq_ignore_ascii_case("desc"))
+        .unwrap_or(false);
     let dir = if is_desc { "DESC" } else { "ASC" };
 
     let order_clause = match sort_by {
-        Some("statusCode") | Some("responseCode") => format!("status_code {} NULLS LAST, sort_order ASC", dir),
+        Some("statusCode") | Some("responseCode") => {
+            format!("status_code {} NULLS LAST, sort_order ASC", dir)
+        }
         Some("duration") => format!("response_time_ms {} NULLS LAST, sort_order ASC", dir),
         Some("length") => format!("response_length {} NULLS LAST, sort_order ASC", dir),
         Some("status") => format!("status {} , sort_order ASC", dir),
@@ -692,7 +718,8 @@ pub async fn query_fuzzer_requests_window(
         _ => "sort_order ASC".to_string(),
     };
 
-    let mut builder = sqlx::QueryBuilder::<sqlx::Sqlite>::new("SELECT * FROM fuzzer_requests WHERE run_id = ");
+    let mut builder =
+        sqlx::QueryBuilder::<sqlx::Sqlite>::new("SELECT * FROM fuzzer_requests WHERE run_id = ");
     builder.push_bind(run_id);
     builder.push(" ORDER BY ");
     builder.push(order_clause);
