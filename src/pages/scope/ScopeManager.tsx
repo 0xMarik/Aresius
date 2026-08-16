@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useAppDispatch, useAppSelector } from '@/hooks/redux';
 import { useProjectId } from '@/hooks/useProjectId';
 import {
@@ -10,6 +10,7 @@ import {
     removeRule,
     selectAllScopes,
     selectActiveScopeId,
+    fetchScopeDataForProject,
     type Scope,
 } from '@/store/slices/scopeSlice';
 import { isUrlInScope, isRegexPattern } from '@/lib/scopeMatcher';
@@ -246,6 +247,12 @@ export default function ScopeManager() {
     const [importModalOpen, setImportModalOpen] = useState(false);
     const [exportModalOpen, setExportModalOpen] = useState(false);
     const [exportTargetScope, setExportTargetScope] = useState<Scope | null>(null);
+
+    useEffect(() => {
+        if (projectId) {
+            dispatch(fetchScopeDataForProject(projectId) as any);
+        }
+    }, [projectId, dispatch]);
 
     const selectedScope = scopes.find((s) => s.id === selectedId) ?? null;
     const effectiveSelectedScope =

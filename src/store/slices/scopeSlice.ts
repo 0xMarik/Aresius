@@ -1,6 +1,7 @@
 import { createSlice, createSelector, PayloadAction } from '@reduxjs/toolkit';
 import type { RootState } from '@/store';
 import { deleteProject } from './projectSlice';
+import { invoke } from '@tauri-apps/api/core';
 
 // ─── Data types ────────────────────────────────────────────────────────────────
 
@@ -20,11 +21,12 @@ export interface Scope {
 interface ScopeState {
     scopes: Scope[];
     activeScopeId: string | null;
+    isLoaded?: boolean;
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
-function generateId(): string {
+export function generateId(): string {
     return Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 }
 
@@ -36,13 +38,14 @@ const SCOPE_COLORS = [
 const defaultScopeState = (): ScopeState => ({
     scopes: [],
     activeScopeId: null,
+    isLoaded: false,
 });
 
 // ─── Per-project map ────────────────────────────────────────────────────────────
 
-type ScopeByProject = Record<string, ScopeState>
+type ScopeByProject = Record<string, ScopeState>;
 
-const initialState: ScopeByProject = {}
+const initialState: ScopeByProject = {};
 
 // ─── Helper to get or create a project bucket ──────────────────────────────────
 
@@ -51,21 +54,49 @@ function getBucket(state: ScopeByProject, projectId: string): ScopeState {
     return state[projectId];
 }
 
+async function safeInvoke(cmd: string, args?: Record<string, unknown>) {
+    try {
+        if (typeof window !== 'undefined') {
+            return await invoke(cmd, args);
+        }
+    } catch (e) {
+        console.warn(`Failed to invoke ${cmd}:`, e);
+    }
+}
+
 // ─── Slice ─────────────────────────────────────────────────────────────────────
 
 const scopeSlice = createSlice({
     name: 'scope',
     initialState,
     reducers: {
-        createScope: (state, action: PayloadAction<{ name: string; projectId: string }>) => {
+        setLoadedScopeData: (
+            state,
+            action: PayloadAction<{ projectId: string; scopes: Scope[]; activeScopeId: string | null }>
+        ) => {
+            const bucket = getBucket(state, action.payload.projectId);
+            bucket.scopes = action.payload.scopes;
+            bucket.activeScopeId = action.payload.activeScopeId;
+            bucket.isLoaded = true;
+        },
+
+        createScope: (state, action: PayloadAction<{ id?: string; name: string; projectId: string }>) => {
             const bucket = getBucket(state, action.payload.projectId);
             const colorIndex = bucket.scopes.length % SCOPE_COLORS.length;
+            const scopeId = action.payload.id || generateId();
+            const color = SCOPE_COLORS[colorIndex];
             bucket.scopes.push({
-                id: generateId(),
+                id: scopeId,
                 name: action.payload.name,
-                color: SCOPE_COLORS[colorIndex],
+                color,
                 allow: [],
                 deny: [],
+            });
+            safeInvoke('create_scope_db', {
+                projectId: action.payload.projectId,
+                scopeId,
+                name: action.payload.name,
+                color,
             });
         },
 
@@ -73,30 +104,49 @@ const scopeSlice = createSlice({
             const bucket = getBucket(state, action.payload.projectId);
             bucket.scopes = bucket.scopes.filter((s) => s.id !== action.payload.id);
             if (bucket.activeScopeId === action.payload.id) bucket.activeScopeId = null;
+            safeInvoke('delete_scope_db', { scopeId: action.payload.id });
         },
 
         renameScope: (state, action: PayloadAction<{ id: string; name: string; projectId: string }>) => {
             const scope = getBucket(state, action.payload.projectId).scopes.find((s) => s.id === action.payload.id);
-            if (scope) scope.name = action.payload.name;
+            if (scope) {
+                scope.name = action.payload.name;
+                safeInvoke('rename_scope_db', { scopeId: action.payload.id, name: action.payload.name });
+            }
         },
 
         setScopeColor: (state, action: PayloadAction<{ id: string; color: string; projectId: string }>) => {
             const scope = getBucket(state, action.payload.projectId).scopes.find((s) => s.id === action.payload.id);
-            if (scope) scope.color = action.payload.color;
+            if (scope) {
+                scope.color = action.payload.color;
+                safeInvoke('set_scope_color_db', { scopeId: action.payload.id, color: action.payload.color });
+            }
         },
 
         setActiveScope: (state, action: PayloadAction<{ scopeId: string | null; projectId: string }>) => {
             const bucket = getBucket(state, action.payload.projectId);
             bucket.activeScopeId = action.payload.scopeId;
+            safeInvoke('set_active_scope_db', {
+                projectId: action.payload.projectId,
+                scopeId: action.payload.scopeId,
+            });
         },
 
         addRule: (
             state,
-            action: PayloadAction<{ scopeId: string; list: 'allow' | 'deny'; pattern: string; projectId: string }>
+            action: PayloadAction<{ id?: string; scopeId: string; list: 'allow' | 'deny'; pattern: string; projectId: string }>
         ) => {
             const scope = getBucket(state, action.payload.projectId).scopes.find((s) => s.id === action.payload.scopeId);
             if (!scope) return;
-            scope[action.payload.list].push({ id: generateId(), pattern: action.payload.pattern.trim() });
+            const ruleId = action.payload.id || generateId();
+            const pattern = action.payload.pattern.trim();
+            scope[action.payload.list].push({ id: ruleId, pattern });
+            safeInvoke('add_scope_rule_db', {
+                ruleId,
+                scopeId: action.payload.scopeId,
+                ruleType: action.payload.list,
+                pattern,
+            });
         },
 
         removeRule: (
@@ -106,6 +156,7 @@ const scopeSlice = createSlice({
             const scope = getBucket(state, action.payload.projectId).scopes.find((s) => s.id === action.payload.scopeId);
             if (!scope) return;
             scope[action.payload.list] = scope[action.payload.list].filter((r) => r.id !== action.payload.ruleId);
+            safeInvoke('remove_scope_rule_db', { ruleId: action.payload.ruleId });
         },
 
         updateRule: (
@@ -115,7 +166,16 @@ const scopeSlice = createSlice({
             const scope = getBucket(state, action.payload.projectId).scopes.find((s) => s.id === action.payload.scopeId);
             if (!scope) return;
             const rule = scope[action.payload.list].find((r) => r.id === action.payload.ruleId);
-            if (rule) rule.pattern = action.payload.pattern.trim();
+            if (rule) {
+                rule.pattern = action.payload.pattern.trim();
+                safeInvoke('remove_scope_rule_db', { ruleId: action.payload.ruleId });
+                safeInvoke('add_scope_rule_db', {
+                    ruleId: action.payload.ruleId,
+                    scopeId: action.payload.scopeId,
+                    ruleType: action.payload.list,
+                    pattern: rule.pattern,
+                });
+            }
         },
 
         importScopeRules: (
@@ -140,6 +200,11 @@ const scopeSlice = createSlice({
                     }))
                     .filter((r) => r.pattern.length > 0);
 
+            const mappedInclude = mapRules(include);
+            const mappedExclude = mapRules(exclude);
+
+            let targetScopeId = scopeId;
+
             if (mode === 'create' || !scopeId || !bucket.scopes.some((s) => s.id === scopeId)) {
                 const colorIndex = bucket.scopes.length % SCOPE_COLORS.length;
                 const newScopeId = generateId();
@@ -147,42 +212,54 @@ const scopeSlice = createSlice({
                     id: newScopeId,
                     name: scopeName || `Imported Scope ${bucket.scopes.length + 1}`,
                     color: SCOPE_COLORS[colorIndex],
-                    allow: mapRules(include),
-                    deny: mapRules(exclude),
+                    allow: mappedInclude,
+                    deny: mappedExclude,
                 };
                 bucket.scopes.push(newScope);
                 if (bucket.activeScopeId === null) {
                     bucket.activeScopeId = newScopeId;
+                    safeInvoke('set_active_scope_db', {
+                        projectId: action.payload.projectId,
+                        scopeId: newScopeId,
+                    });
                 }
-                return;
-            }
+                targetScopeId = newScopeId;
+            } else {
+                const targetScope = bucket.scopes.find((s) => s.id === scopeId);
+                if (targetScope) {
+                    if (mode === 'replace') {
+                        targetScope.allow = mappedInclude;
+                        targetScope.deny = mappedExclude;
+                    } else if (mode === 'merge') {
+                        const existingAllowPatterns = new Set(targetScope.allow.map((r) => r.pattern));
+                        for (const rule of mappedInclude) {
+                            if (!existingAllowPatterns.has(rule.pattern)) {
+                                targetScope.allow.push(rule);
+                                existingAllowPatterns.add(rule.pattern);
+                            }
+                        }
 
-            const targetScope = bucket.scopes.find((s) => s.id === scopeId);
-            if (!targetScope) return;
-
-            const newAllow = mapRules(include);
-            const newDeny = mapRules(exclude);
-
-            if (mode === 'replace') {
-                targetScope.allow = newAllow;
-                targetScope.deny = newDeny;
-            } else if (mode === 'merge') {
-                const existingAllowPatterns = new Set(targetScope.allow.map((r) => r.pattern));
-                for (const rule of newAllow) {
-                    if (!existingAllowPatterns.has(rule.pattern)) {
-                        targetScope.allow.push(rule);
-                        existingAllowPatterns.add(rule.pattern);
+                        const existingDenyPatterns = new Set(targetScope.deny.map((r) => r.pattern));
+                        for (const rule of mappedExclude) {
+                            if (!existingDenyPatterns.has(rule.pattern)) {
+                                targetScope.deny.push(rule);
+                                existingDenyPatterns.add(rule.pattern);
+                            }
+                        }
                     }
                 }
-
-                const existingDenyPatterns = new Set(targetScope.deny.map((r) => r.pattern));
-                for (const rule of newDeny) {
-                    if (!existingDenyPatterns.has(rule.pattern)) {
-                        targetScope.deny.push(rule);
-                        existingDenyPatterns.add(rule.pattern);
-                    }
-                }
             }
+
+            safeInvoke('batch_import_scope_rules_db', {
+                payload: {
+                    projectId: action.payload.projectId,
+                    mode,
+                    scopeId: targetScopeId,
+                    scopeName,
+                    include: mappedInclude,
+                    exclude: mappedExclude,
+                },
+            });
         },
     },
     extraReducers: (builder) => {
@@ -195,6 +272,7 @@ const scopeSlice = createSlice({
 // ─── Actions ───────────────────────────────────────────────────────────────────
 
 export const {
+    setLoadedScopeData,
     createScope,
     deleteScope,
     renameScope,
@@ -205,6 +283,32 @@ export const {
     updateRule,
     importScopeRules,
 } = scopeSlice.actions;
+
+// ─── Async Thunks ─────────────────────────────────────────────────────────────
+
+export const fetchScopeDataForProject = (projectId: string) => async (dispatch: any) => {
+    if (!projectId) return;
+    try {
+        const data = (await safeInvoke('get_scope_project_data', { projectId })) as
+            | {
+                  scopes: Scope[];
+                  activeScopeId: string | null;
+              }
+            | undefined;
+
+        if (data) {
+            dispatch(
+                setLoadedScopeData({
+                    projectId,
+                    scopes: data.scopes || [],
+                    activeScopeId: data.activeScopeId ?? null,
+                })
+            );
+        }
+    } catch (err) {
+        console.warn('Failed to load scope data for project:', err);
+    }
+};
 
 // ─── Selectors ─────────────────────────────────────────────────────────────────
 

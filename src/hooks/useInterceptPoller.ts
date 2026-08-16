@@ -31,11 +31,47 @@ export function useInterceptSettings() {
     const interceptor = useAppSelector(selectInterceptor(projectId));
     const settings = interceptor.settings;
 
+    // Load persisted settings on project mount
+    useEffect(() => {
+        if (!projectId) return;
+        invoke<{
+            projectId: string;
+            requestsEnabled: boolean;
+            responsesEnabled: boolean;
+            scopeFilterEnabled: boolean;
+        } | null>('get_interceptor_settings_db', { projectId })
+            .then((persisted) => {
+                if (persisted) {
+                    dispatch(
+                        setSettings({
+                            settings: {
+                                requestsEnabled: Boolean(persisted.requestsEnabled),
+                                responsesEnabled: Boolean(persisted.responsesEnabled),
+                                scopeFilterEnabled: Boolean(persisted.scopeFilterEnabled),
+                                activeScope: settings.activeScope ?? null,
+                            },
+                            projectId,
+                        })
+                    );
+                }
+            })
+            .catch(() => {});
+    }, [projectId, dispatch]);
+
     const updateSettings = async (newSettings: InterceptSettings) => {
         if (!projectId) return;
         dispatch(setSettings({ settings: newSettings, projectId }));
         try {
             await invoke('set_intercept_settings', { settings: newSettings });
+            await invoke('save_interceptor_settings_db', {
+                settings: {
+                    projectId,
+                    requestsEnabled: Boolean(newSettings.requestsEnabled),
+                    responsesEnabled: Boolean(newSettings.responsesEnabled),
+                    scopeFilterEnabled: Boolean(newSettings.scopeFilterEnabled),
+                    updatedAt: Date.now(),
+                },
+            });
         } catch (err) {
             console.error('Failed to update intercept settings:', err);
         }

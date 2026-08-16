@@ -41,6 +41,12 @@ use crate::ares_utils::database::replayer::{
     set_replayer_collection_expanded, set_replayer_expanded_ids, update_replayer_session_draft,
 };
 
+use crate::ares_utils::database::scope::{
+    add_scope_rule_db, batch_import_scope_rules_db, create_scope_db, delete_scope_db,
+    get_interceptor_settings_db, get_scope_project_data, remove_scope_rule_db, rename_scope_db,
+    save_interceptor_settings_db, set_active_scope_db, set_scope_color_db,
+};
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tracing_subscriber::fmt()
@@ -103,6 +109,8 @@ pub fn run() {
             forward_intercept_item,
             drop_intercept_item,
             drop_all_intercept_items,
+            get_interceptor_settings_db,
+            save_interceptor_settings_db,
             // Certificates
             install_cert,
             check_cert_installed,
@@ -114,6 +122,16 @@ pub fn run() {
             get_default_project_dir,
             // HTTP History
             get_http_history,
+            // Scopes
+            get_scope_project_data,
+            create_scope_db,
+            delete_scope_db,
+            rename_scope_db,
+            set_scope_color_db,
+            set_active_scope_db,
+            add_scope_rule_db,
+            remove_scope_rule_db,
+            batch_import_scope_rules_db,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

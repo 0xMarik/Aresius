@@ -32,6 +32,7 @@ import { Project } from "@/types/project.type"
 import { HttpHistory } from "@/types/http.type"
 import { setcurrentProjectId, setProjects, deleteProject, updateProject } from "@/store/slices/projectSlice"
 import { setHistoryBulk } from "@/store/slices/http-historySlice"
+import { fetchScopeDataForProject } from "@/store/slices/scopeSlice"
 import AddProjectDialog from "@/components/add-project-dialog.component"
 import { invoke } from "@tauri-apps/api/core"
 import { toast } from "sonner"
@@ -127,12 +128,18 @@ export default function Projects() {
       dispatch(setcurrentProjectId(id))
       dispatch(updateProject(updatedProject))
 
-      // Pre-populate history from the project's persisted DB rows.
+      // Pre-populate history and scopes from the project's persisted DB rows.
       try {
         const rows = await invoke<HttpHistory[]>("get_http_history")
         dispatch(setHistoryBulk({ items: rows, projectId: id }))
       } catch (err) {
         console.warn("Could not load persisted HTTP history:", err)
+      }
+
+      try {
+        dispatch(fetchScopeDataForProject(id) as any)
+      } catch (err) {
+        console.warn("Could not load persisted Scope data:", err)
       }
     } catch (err) {
       console.error("Failed to select/mount project:", err)
