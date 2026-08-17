@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { basicSetup, EditorView } from 'codemirror';
-import { EditorState } from '@codemirror/state';
+import { EditorState, Annotation } from '@codemirror/state';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { codeMirrorScrollTheme } from '@/components/codemirror-scroll.theme';
 import { http } from '@/components/http-parser.component';
@@ -75,16 +75,20 @@ interface ResponseRowItem extends BaseRow {
 /*  CodeMirror 6 Raw HTTP Message Editor Component                            */
 /* -------------------------------------------------------------------------- */
 
+const interceptorExternalUpdateAnnotation = Annotation.define<boolean>();
+
 interface RawMessageEditorProps {
     value: string;
     onChange?: (val: string) => void;
     readOnly?: boolean;
+    isPretty?: boolean;
 }
 
 const RawMessageEditor: React.FC<RawMessageEditorProps> = ({
     value,
     onChange,
     readOnly = false,
+    isPretty = false,
 }) => {
     const editorRef = useRef<HTMLDivElement>(null);
     const viewRef = useRef<EditorView | null>(null);
@@ -92,47 +96,53 @@ const RawMessageEditor: React.FC<RawMessageEditorProps> = ({
     useEffect(() => {
         if (!editorRef.current) return;
 
-        if (!viewRef.current) {
-            const extensions = [
-                basicSetup,
-                http(),
-                oneDark,
-                codeMirrorScrollTheme,
-                EditorView.theme({
-                    '&': {
-                        height: '100%',
-                        fontSize: '12px',
-                        backgroundColor: '#0d1117',
-                    },
-                    '.cm-scroller': { overflow: 'auto' },
-                    '.cm-content': { fontFamily: 'JetBrains Mono, Menlo, monospace' },
-                }),
-                EditorView.lineWrapping,
-            ];
+        if (viewRef.current) {
+            viewRef.current.destroy();
+            viewRef.current = null;
+        }
 
-            if (readOnly) {
-                extensions.push(EditorState.readOnly.of(true));
-            } else if (onChange) {
-                extensions.push(
-                    EditorView.updateListener.of((update) => {
-                        if (update.docChanged) {
+        const extensions = [
+            basicSetup,
+            http({ enableFolding: isPretty }),
+            oneDark,
+            codeMirrorScrollTheme,
+            EditorView.theme({
+                '&': {
+                    height: '100%',
+                    fontSize: '12px',
+                    backgroundColor: '#0d1117',
+                },
+                '.cm-scroller': { overflow: 'auto' },
+                '.cm-content': { fontFamily: 'JetBrains Mono, Menlo, monospace' },
+            }),
+            EditorView.lineWrapping,
+        ];
+
+        if (readOnly) {
+            extensions.push(EditorState.readOnly.of(true));
+        } else if (onChange) {
+            extensions.push(
+                EditorView.updateListener.of((update) => {
+                    if (update.docChanged) {
+                        const isExternal = update.transactions.some(tr => tr.annotation(interceptorExternalUpdateAnnotation));
+                        if (!isExternal) {
                             onChange(update.state.doc.sliceString(0, update.state.doc.length, '\r\n'));
                         }
-                    })
-                );
-            }
-
-            const state = EditorState.create({
-                doc: value,
-                extensions,
-            });
-
-            viewRef.current = new EditorView({
-                state,
-                parent: editorRef.current,
-            });
+                    }
+                })
+            );
         }
-    }, []);
+
+        const state = EditorState.create({
+            doc: value,
+            extensions,
+        });
+
+        viewRef.current = new EditorView({
+            state,
+            parent: editorRef.current,
+        });
+    }, [isPretty, readOnly]);
 
     // Sync external doc changes to editor without losing cursor position when possible
     useEffect(() => {
@@ -145,6 +155,7 @@ const RawMessageEditor: React.FC<RawMessageEditorProps> = ({
                         to: currentDoc.length,
                         insert: value,
                     },
+                    annotations: interceptorExternalUpdateAnnotation.of(true),
                 });
             }
         }
@@ -754,6 +765,7 @@ const InterceptorPage: React.FC = () => {
                                                 <RawMessageEditor
                                                     value={editedReqContent}
                                                     onChange={setEditedReqContent}
+                                                    isPretty={isReqPretty}
                                                 />
                                             </div>
 
@@ -856,6 +868,7 @@ const InterceptorPage: React.FC = () => {
                                                 <RawMessageEditor
                                                     value={editedResContent}
                                                     onChange={setEditedResContent}
+                                                    isPretty={isResPretty}
                                                 />
                                             </div>
 

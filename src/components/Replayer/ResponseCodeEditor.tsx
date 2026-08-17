@@ -24,9 +24,11 @@ const ResponseCodeEditor = () => {
             viewRef.current = null;
         }
 
+        const isPretty = resViewMode === 'pretty';
+
         const state = EditorState.create({
             doc: displayResponse,
-            extensions: getCommonEditorExtensions(isDark, [EditorState.readOnly.of(true)]),
+            extensions: getCommonEditorExtensions(isDark, isPretty, [EditorState.readOnly.of(true)]),
         });
 
         const view = new EditorView({
@@ -41,7 +43,7 @@ const ResponseCodeEditor = () => {
                 view.destroy();
             }
         };
-    }, [displayResponse, selectedSessionId, isDark]);
+    }, [displayResponse, selectedSessionId, isDark, resViewMode]);
 
     return <div ref={editorRef} className="h-full w-full" />;
 };

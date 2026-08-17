@@ -1,6 +1,6 @@
 import { LanguageSupport, StreamLanguage, foldService, foldNodeProp } from '@codemirror/language';
 import { EditorView } from '@codemirror/view';
-import { EditorState } from '@codemirror/state';
+import { EditorState, Facet } from '@codemirror/state';
 import { jsonLanguage } from '@codemirror/lang-json';
 import { htmlLanguage } from '@codemirror/lang-html';
 
@@ -964,7 +964,20 @@ function findIndentFold(state: EditorState, startLineNum: number): { from: numbe
     return null;
 }
 
+export const foldingEnabledFacet = Facet.define<boolean, boolean>({
+    combine: (values) => (values.length ? values[values.length - 1] : true),
+});
+
+export const hideFoldGutterTheme = EditorView.theme({
+    '.cm-foldGutter': {
+        display: 'none !important',
+    },
+});
+
 export const httpFoldService = foldService.of((state: EditorState, lineStart: number) => {
+    const isFoldingEnabled = state.facet(foldingEnabledFacet);
+    if (!isFoldingEnabled) return null;
+
     const line = state.doc.lineAt(lineStart);
     const lineNum = line.number;
     const lineEnd = line.to;
@@ -1062,9 +1075,14 @@ export const httpTheme = EditorView.theme({
     '.light & .cm-variable': { color: '#d84315', fontWeight: 'bold', backgroundColor: '#fff8e1' },
 });
 
-// Complete language support with folding
-export function http() {
-    return new LanguageSupport(httpStreamLanguage, [httpTheme, httpFoldService]);
+// Complete language support with optional folding
+export function http(options?: { enableFolding?: boolean }) {
+    const enableFolding = options?.enableFolding ?? true;
+    return new LanguageSupport(httpStreamLanguage, [
+        httpTheme,
+        foldingEnabledFacet.of(enableFolding),
+        ...(enableFolding ? [httpFoldService] : [hideFoldGutterTheme]),
+    ]);
 }
 
 // Example usage:

@@ -542,7 +542,10 @@ const SitemapRequestViewerPane = React.memo<SitemapRequestViewerPaneProps>(funct
                 <ContextMenu>
                     <ContextMenuTrigger asChild>
                         <div className="flex-1 min-h-0 overflow-auto bg-background">
-                            <CodeMirrorEditor value={reqViewMode === 'pretty' ? prettyReq : selectedEntity.rawRequest} />
+                            <CodeMirrorEditor
+                                value={reqViewMode === 'pretty' ? prettyReq : selectedEntity.rawRequest}
+                                isPretty={reqViewMode === 'pretty'}
+                            />
                         </div>
                     </ContextMenuTrigger>
                     <ContextMenuContent className="w-56 text-xs">
@@ -590,7 +593,10 @@ const SitemapRequestViewerPane = React.memo<SitemapRequestViewerPaneProps>(funct
 
                 {/* Response Content */}
                 <div className="flex-1 min-h-0 overflow-auto bg-background">
-                    <CodeMirrorEditor value={resViewMode === 'pretty' ? prettyRes : selectedEntity.rawResponse} />
+                    <CodeMirrorEditor
+                        value={resViewMode === 'pretty' ? prettyRes : selectedEntity.rawResponse}
+                        isPretty={resViewMode === 'pretty'}
+                    />
                 </div>
             </ResizablePanel>
         </ResizablePanelGroup>

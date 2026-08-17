@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { EditorState } from '@codemirror/state';
+import { EditorState, Annotation } from '@codemirror/state';
 import { EditorView } from 'codemirror';
 import { useTheme } from '@/components/theme-provider';
 import { useReplayerEditor } from '@/context/ReplayerContext';
@@ -7,6 +7,8 @@ import CoreContextMenu from '../ContextMenu/CoreContextMenu';
 import RequestContextMenu from './RequestContextMenu';
 import { getCommonEditorExtensions } from './editorUtils';
 import { formatHttpMessagePretty } from '@/pages/sitemap/utils';
+
+const externalUpdateAnnotation = Annotation.define<boolean>();
 
 const RequestCodeEditor = () => {
     const editorRef = useRef<HTMLDivElement | null>(null);
@@ -35,14 +37,19 @@ const RequestCodeEditor = () => {
 
         const updateListener = EditorView.updateListener.of((update) => {
             if (update.docChanged) {
-                const code = update.state.doc.sliceString(0, update.state.doc.length, '\r\n');
-                updateDraftContentRef.current(code);
+                const isExternal = update.transactions.some(tr => tr.annotation(externalUpdateAnnotation));
+                if (!isExternal) {
+                    const code = update.state.doc.sliceString(0, update.state.doc.length, '\r\n');
+                    updateDraftContentRef.current(code);
+                }
             }
         });
 
+        const isPretty = reqViewMode === 'pretty';
+
         const state = EditorState.create({
             doc: initialDoc,
-            extensions: getCommonEditorExtensions(isDark, [
+            extensions: getCommonEditorExtensions(isDark, isPretty, [
                 updateListener,
             ]),
         });
@@ -59,7 +66,7 @@ const RequestCodeEditor = () => {
                 view.destroy();
             }
         };
-    }, [sessionId, selectedHistoryIndex, isDark]);
+    }, [sessionId, selectedHistoryIndex, isDark, reqViewMode]);
 
     useEffect(() => {
         if (!viewRef.current || activeDraft?.requestTmp === undefined) return;
@@ -76,6 +83,7 @@ const RequestCodeEditor = () => {
             view.dispatch({
                 changes: { from: 0, to: view.state.doc.length, insert: targetDoc },
                 selection: { anchor: safeAnchor, head: safeHead },
+                annotations: externalUpdateAnnotation.of(true),
             });
         }
     }, [activeDraft?.requestTmp, reqViewMode]);

@@ -342,7 +342,7 @@ const RequestEditor: React.FC = () => {
             doc: currentFuzzerSession.fuzzConfig.rawRequest,
             extensions: [
                 basicSetup,
-                http(),
+                http({ enableFolding: false }),
                 EditorView.lineWrapping,
                 javascript(),
                 oneDark,

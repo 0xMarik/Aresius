@@ -20,7 +20,7 @@ const fullHeightTheme = EditorView.theme({
     },
 });
 
-export const CodeMirrorEditor: React.FC<{ value: string }> = ({ value }) => {
+export const CodeMirrorEditor: React.FC<{ value: string; isPretty?: boolean }> = ({ value, isPretty = false }) => {
     const editorRef = useRef<HTMLDivElement>(null);
     const viewRef = useRef<EditorView | null>(null);
     const { theme } = useTheme();
@@ -40,7 +40,7 @@ export const CodeMirrorEditor: React.FC<{ value: string }> = ({ value }) => {
                 EditorView.lineWrapping,
                 fullHeightTheme,
                 getCodeMirrorScrollTheme(isDark),
-                http(),
+                http({ enableFolding: isPretty }),
                 ...(isDark ? [oneDark] : []),
                 EditorState.readOnly.of(true),
             ],
@@ -57,7 +57,7 @@ export const CodeMirrorEditor: React.FC<{ value: string }> = ({ value }) => {
                 viewRef.current = null;
             }
         };
-    }, [isDark]);
+    }, [isDark, isPretty]);
 
     useEffect(() => {
         if (viewRef.current) {

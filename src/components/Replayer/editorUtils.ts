@@ -16,10 +16,14 @@ export const fullHeightTheme = EditorView.theme({
     },
 });
 
-export function getCommonEditorExtensions(isDark: boolean, additionalExtensions: Extension[] = []): Extension[] {
+export function getCommonEditorExtensions(
+    isDark: boolean,
+    isPretty: boolean = true,
+    additionalExtensions: Extension[] = []
+): Extension[] {
     return [
         basicSetup,
-        http(),
+        http({ enableFolding: isPretty }),
         ...(isDark ? [oneDark] : []),
         fullHeightTheme,
         getCodeMirrorScrollTheme(isDark),
