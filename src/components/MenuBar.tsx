@@ -83,8 +83,8 @@ export default function MenubarDemo() {
 
     useEffect(() => {
         // Set initial window state
-        appWindow.isMaximized().then(setIsMaximized).catch(() => {})
-        appWindow.isFullscreen().then(setIsFullscreen).catch(() => {})
+        appWindow.isMaximized().then(setIsMaximized).catch(() => { })
+        appWindow.isFullscreen().then(setIsFullscreen).catch(() => { })
 
         // Keep icon in sync if window is resized/maximized via OS controls,
         // double-click on title bar, snapping, etc.
@@ -92,7 +92,7 @@ export default function MenubarDemo() {
             try {
                 setIsMaximized(await appWindow.isMaximized())
                 setIsFullscreen(await appWindow.isFullscreen())
-            } catch {}
+            } catch { }
         })
 
         return () => {
@@ -133,7 +133,7 @@ export default function MenubarDemo() {
                         await appWindow.setFullscreen(false)
                         setIsFullscreen(false)
                     }
-                } catch {}
+                } catch { }
             }
         }
         window.addEventListener("keydown", handleKeyDown)
@@ -205,29 +205,13 @@ export default function MenubarDemo() {
                                 <MenubarShortcut>⌘S</MenubarShortcut>
                             </MenubarItem>
                         </MenubarGroup>
+                        <MenubarItem className="gap-2">
+                            <span>Settings...</span>
+                        </MenubarItem>
                     </MenubarContent>
+
                 </MenubarMenu>
 
-                {/* ── Edit Menu ── */}
-                <MenubarMenu>
-                    <MenubarTrigger>Edit</MenubarTrigger>
-                    <MenubarContent>
-                        <MenubarGroup>
-                            <MenubarItem>
-                                Undo <MenubarShortcut>⌘Z</MenubarShortcut>
-                            </MenubarItem>
-                            <MenubarItem>
-                                Redo <MenubarShortcut>⇧⌘Z</MenubarShortcut>
-                            </MenubarItem>
-                        </MenubarGroup>
-                        <MenubarSeparator />
-                        <MenubarGroup>
-                            <MenubarItem>Cut <MenubarShortcut>⌘X</MenubarShortcut></MenubarItem>
-                            <MenubarItem>Copy <MenubarShortcut>⌘C</MenubarShortcut></MenubarItem>
-                            <MenubarItem>Paste <MenubarShortcut>⌘V</MenubarShortcut></MenubarItem>
-                        </MenubarGroup>
-                    </MenubarContent>
-                </MenubarMenu>
 
                 {/* ── View Menu ── */}
                 <MenubarMenu>

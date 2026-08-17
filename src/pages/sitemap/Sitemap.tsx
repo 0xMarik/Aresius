@@ -10,8 +10,6 @@ import {
     ListTree,
     Search,
     X,
-    ChevronsUpDown,
-    ChevronsDownUp,
     Copy,
     Trash2,
     ShieldAlert,
@@ -21,6 +19,7 @@ import {
     Clock,
     HardDrive,
 } from 'lucide-react';
+import { ScopeFilterBar } from '@/components/ScopeFilterBar';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { SitemapKind, TreeNode } from '@/types/sitemap.type';
 import { useAppDispatch, useAppSelector } from '@/hooks/redux';
@@ -62,7 +61,6 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { isInScope } from '@/lib/scopeMatcher';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
     ContextMenu,
@@ -787,32 +785,6 @@ export default function SitemapTree() {
         });
     }, [projectId, dispatch]);
 
-    const handleExpandAll = () => {
-        if (!projectId) return;
-        const allIds: string[] = [];
-        const walk = (nodes: TreeNode[]) => {
-            for (const n of nodes) {
-                allIds.push(n.id);
-                if (n.children) walk(n.children);
-            }
-        };
-        walk(filteredTree);
-        dispatch(setSitemapExpandedIds({ projectId, expandedIds: allIds }));
-        persistSitemapStateToDb(projectId, {
-            ...sitemapStateRef.current,
-            expandedIds: allIds,
-        });
-    };
-
-    const handleCollapseAll = () => {
-        if (!projectId) return;
-        dispatch(setSitemapExpandedIds({ projectId, expandedIds: [] }));
-        persistSitemapStateToDb(projectId, {
-            ...sitemapStateRef.current,
-            expandedIds: [],
-        });
-    };
-
     if (sitemap.length === 0 && history.length === 0) {
         return (
             <div className="flex h-full min-h-0 flex-col items-center justify-center">
@@ -827,44 +799,12 @@ export default function SitemapTree() {
 
     return (
         <div className="flex h-full min-h-0 flex-col bg-background select-none font-sans">
-            {/* Top Scope & Filter Bar (Caido-style) */}
-            <div className="flex items-center justify-between gap-3 px-3 py-1.5 bg-card/30 border-b border-border/50 text-xs shrink-0">
-                {/* Left: Scope Selector Tabs */}
-                <div className="flex items-center gap-1.5">
-                    <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70 mr-1">
-                        Scope
-                    </span>
-                    {(['all', 'in', 'out'] as const).map((f) => (
-                        <button
-                            key={f}
-                            type="button"
-                            onClick={() => handleScopeFilterChange(f)}
-                            className={cn(
-                                'px-2 py-0.5 rounded-md text-[11px] font-medium transition-colors border',
-                                scopeFilter === f
-                                    ? f === 'in'
-                                        ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-600 dark:text-emerald-400'
-                                        : f === 'out'
-                                            ? 'bg-rose-500/15 border-rose-500/40 text-rose-600 dark:text-rose-400'
-                                            : 'bg-primary/10 border-primary/30 text-primary'
-                                    : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/40'
-                            )}
-                        >
-                            {f === 'all' ? 'All' : f === 'in' ? 'In Scope' : 'Out of Scope'}
-                        </button>
-                    ))}
-                </div>
-
-                {/* Right: Active Scope Info */}
-                {activeScope ? (
-                    <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                        <span className="w-2 h-2 rounded-full inline-block" style={{ backgroundColor: activeScope.color }} />
-                        <span className="font-semibold text-foreground">{activeScope.name}</span>
-                    </div>
-                ) : (
-                    <span className="text-[11px] text-muted-foreground/50">No active scope</span>
-                )}
-            </div>
+            {/* Top Scope & Filter Bar (Caido-style, rendered only when activeScope is set) */}
+            <ScopeFilterBar
+                activeScope={activeScope}
+                value={scopeFilter}
+                onChange={handleScopeFilterChange}
+            />
 
             {/* Main Resizable Panes */}
             <ResizablePanelGroup direction="horizontal" autoSaveId="aresius-sitemap-layout" className="flex-1 min-h-0">

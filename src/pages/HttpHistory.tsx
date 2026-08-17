@@ -14,8 +14,8 @@ import { Clipboard } from 'lucide-react'
 import MethodBadge from '@/components/MethodBadge';
 import { selectActiveScope } from '@/store/slices/scopeSlice';
 import { isInScope } from '@/lib/scopeMatcher';
-import { cn } from '@/lib/utils';
 import { useProjectId } from '@/hooks/useProjectId';
+import { ScopeFilterBar, ScopeFilterOption } from '@/components/ScopeFilterBar';
 
 // Flat, at the same level as rawRequest/rawResponse -- no nested metadata
 // object. Every field except `state` is now populated straight from the
@@ -215,7 +215,7 @@ const HTTPHisotry = () => {
     console.log({ history })
     const activeScope = useAppSelector(selectActiveScope(projectId));
     const [selectedRequest, setSelectedRequest] = useState<number | null>(null);
-    const [scopeFilter, setScopeFilter] = useState<'all' | 'in' | 'out'>('all');
+    const [scopeFilter, setScopeFilter] = useState<ScopeFilterOption>('in');
 
     const selectedEntity = useAppSelector((state) =>
         selectedRequest !== null ? historySelectors.selectById(state, selectedRequest) : undefined,
@@ -236,41 +236,12 @@ const HTTPHisotry = () => {
             <ResizablePanelGroup direction='vertical' autoSaveId="http-history-table" >
                 <ResizablePanel defaultSize={50} minSize={15}>
                     <div className='h-full flex flex-col'>
-                        {/* Scope filter bar */}
-                        <div className="flex items-center gap-2 px-3 py-1.5 border-b border-border/60 bg-card/30 shrink-0">
-                            <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70 mr-1">Scope</span>
-                            {(['all', 'in', 'out'] as const).map((f) => (
-                                <button
-                                    key={f}
-                                    type="button"
-                                    onClick={() => setScopeFilter(f)}
-                                    className={cn(
-                                        'px-2.5 py-0.5 rounded-md text-[11px] font-medium transition-colors border',
-                                        scopeFilter === f
-                                            ? f === 'in'
-                                                ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-600 dark:text-emerald-400'
-                                                : f === 'out'
-                                                    ? 'bg-rose-500/15 border-rose-500/40 text-rose-600 dark:text-rose-400'
-                                                    : 'bg-primary/10 border-primary/30 text-primary'
-                                            : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/40'
-                                    )}
-                                >
-                                    {f === 'all' ? 'All' : f === 'in' ? 'In Scope' : 'Out of Scope'}
-                                </button>
-                            ))}
-                            {activeScope && (
-                                <span className="ml-auto flex items-center gap-1.5 text-[11px] text-muted-foreground/70">
-                                    <span
-                                        className="w-2 h-2 rounded-full"
-                                        style={{ backgroundColor: activeScope.color }}
-                                    />
-                                    {activeScope.name}
-                                </span>
-                            )}
-                            {!activeScope && (
-                                <span className="ml-auto text-[11px] text-muted-foreground/50">No active scope</span>
-                            )}
-                        </div>
+                        {/* Scope filter bar (rendered only when activeScope is set) */}
+                        <ScopeFilterBar
+                            activeScope={activeScope}
+                            value={scopeFilter}
+                            onChange={setScopeFilter}
+                        />
                         <Table data={rows}
                             columns={httpColumns}
                             // facetFilters={httpFacetFilters}
