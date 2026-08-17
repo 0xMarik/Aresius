@@ -11,13 +11,11 @@ import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '../ui/resi
 import { renderFuzzerHistoryTableContextMenu } from './FuzzerHistoryTableContextMenu';
 import { FuzzerRunToolbar, resendSingleFuzzRequest } from './FuzzerRunToolbar';
 import { Button } from '../ui/button';
-import { Badge } from '../ui/badge';
 import MethodBadge from '@/components/MethodBadge';
 import { EmptyState } from '../ui/empty-state';
 import { AlertTriangle, Clipboard, RotateCcw } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
-import { cn } from '@/lib/utils';
-import { getStatusBadgeStyle } from '../Replayer/HistoryRequests';
+import { HttpStatusBadge } from '@/components/HttpStatusBadge';
 
 /**
  * Each row corresponds to a single FuzzerRequest (one fuzzed HTTP call),
@@ -550,28 +548,7 @@ function FuzzerHistoryBody({
                                         <div className="flex items-center justify-between px-3 py-1.5 border-b border-border/40 bg-muted/30 shrink-0 select-none">
                                             <div className="flex items-center gap-2">
                                                 <span className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">Response</span>
-                                                {focusedResult.statusCode !== undefined && (
-                                                    <Badge
-                                                        variant="outline"
-                                                        className={cn(
-                                                            "text-[10px] font-mono px-1.5 py-0 font-medium",
-                                                            getStatusBadgeStyle(String(focusedResult.statusCode))
-                                                        )}
-                                                    >
-                                                        {focusedResult.statusCode}
-                                                    </Badge>
-                                                )}
-                                                {focusedResult.status && focusedResult.statusCode === undefined && (
-                                                    <Badge
-                                                        variant="outline"
-                                                        className={cn(
-                                                            "text-[10px] font-mono px-1.5 py-0 font-medium capitalize",
-                                                            getStatusBadgeStyle(focusedResult.status)
-                                                        )}
-                                                    >
-                                                        {focusedResult.status}
-                                                    </Badge>
-                                                )}
+                                                <HttpStatusBadge status={focusedResult.statusCode ?? focusedResult.status} />
                                             </div>
                                             <div className="flex items-center gap-2">
                                                 {canResendFocused && (

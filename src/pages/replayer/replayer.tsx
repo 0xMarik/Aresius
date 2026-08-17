@@ -1,21 +1,24 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ValidateUrlInput } from "@/components/ValidateUrlInput";
-import HistoryRequests, { getStatusBadgeStyle } from "@/components/Replayer/HistoryRequests";
+import HistoryRequests from "@/components/Replayer/HistoryRequests";
+import { HttpStatusBadge } from "@/components/HttpStatusBadge";
+import { ViewModeTabs } from "@/components/ViewModeTabs";
 import RequestCodeEditor from "@/components/Replayer/RequestCodeEditor";
 import ResponseCodeEditor from "@/components/Replayer/ResponseCodeEditor";
-import { AlertTriangle, Loader2, Play, Plus, Repeat, Square } from "lucide-react";
+import { AlertTriangle, Clock, HardDrive, Loader2, Play, Plus, Repeat, Square } from "lucide-react";
 import ReplayerSession from "@/components/Replayer/ReplayerSession";
 import ReplayerSettingsPopover from "@/components/Replayer/ReplayerSettingsPopover";
+import HttpRequestFormatWarning from "@/components/HttpRequestFormatWarning";
 import { ReplayerProvider, useReplayerEditor, useReplayerTree } from "@/context/ReplayerContext";
+import { splitHttpMessage } from "@/pages/sitemap/utils";
 import { useAppDispatch } from '@/hooks/redux';
 import { useProjectId } from '@/hooks/useProjectId';
 import { resetReplayerReceivedSession } from '@/store/slices/replayerSlice';
-import { cn } from "@/lib/utils";
 
 function ReplayerContent() {
     const projectId = useProjectId();
@@ -37,6 +40,10 @@ function ReplayerContent() {
         activeStatus,
         hasError,
         errorMessage,
+        reqViewMode,
+        resViewMode,
+        setReqViewMode,
+        setResViewMode,
         updateDraftUrl,
         triggerReplay,
         cancelReplay,
@@ -47,6 +54,23 @@ function ReplayerContent() {
             dispatch(resetReplayerReceivedSession(projectId));
         }
     }, [dispatch, projectId]);
+
+    const parsedRes = useMemo(
+        () => splitHttpMessage(activeHistoryItem?.responseRaw ?? ''),
+        [activeHistoryItem?.responseRaw]
+    );
+
+    const responseLength = useMemo(() => {
+        if (!activeHistoryItem?.responseRaw) return 0;
+        return new TextEncoder().encode(activeHistoryItem.responseRaw).length;
+    }, [activeHistoryItem?.responseRaw]);
+
+    const resContentType = useMemo(() => {
+        const ctHeader = parsedRes.headersList.find((h) => h.name.toLowerCase() === 'content-type');
+        if (!ctHeader) return '';
+        const rawCt = ctHeader.value.split(';')[0].trim();
+        return rawCt.replace(/^application\//i, '').replace(/^text\//i, '');
+    }, [parsedRes.headersList]);
 
     if (!isLoaded) {
         return null;
@@ -137,7 +161,14 @@ function ReplayerContent() {
                             <ResizablePanel defaultSize={50} minSize={20}>
                                 <div className="flex flex-col h-full min-h-0 overflow-hidden bg-card">
                                     <div className="flex items-center justify-between px-3 py-1.5 border-b border-border/40 bg-muted/30 shrink-0 select-none">
-                                        <span className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">Request</span>
+                                        <div className="flex items-center gap-1.5 min-w-0">
+                                            <span className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">Request</span>
+                                            <HttpRequestFormatWarning rawRequest={activeDraft?.requestTmp} />
+                                        </div>
+
+                                        <div className="flex items-center gap-1.5 shrink-0">
+                                            <ViewModeTabs mode={reqViewMode} onChange={setReqViewMode} />
+                                        </div>
                                     </div>
                                     <div className="flex-1 min-h-0">
                                         <RequestCodeEditor />
@@ -148,15 +179,10 @@ function ReplayerContent() {
                             <ResizablePanel defaultSize={50} minSize={20}>
                                 <div className="flex flex-col h-full min-h-0 overflow-hidden bg-card">
                                     <div className="flex items-center justify-between px-3 py-1.5 border-b border-border/40 bg-muted/30 shrink-0 select-none">
-                                        <div className="flex items-center gap-2">
+                                        <div className="flex items-center gap-2 min-w-0">
                                             <span className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">Response</span>
                                             {activeStatus && (
-                                                <Badge
-                                                    variant="outline"
-                                                    className={cn("text-[10px] font-mono px-1.5 py-0 font-medium capitalize", getStatusBadgeStyle(activeStatus))}
-                                                >
-                                                    {activeStatus}
-                                                </Badge>
+                                                <HttpStatusBadge status={activeStatus} />
                                             )}
                                             {hasError && (
                                                 <TooltipProvider>
@@ -185,12 +211,28 @@ function ReplayerContent() {
                                                     </Tooltip>
                                                 </TooltipProvider>
                                             )}
+                                            {activeHistoryItem?.responseTime !== undefined && activeHistoryItem.responseTime > 0 && (
+                                                <span className="flex items-center gap-1 text-[11px] text-muted-foreground font-mono tabular-nums">
+                                                    <Clock className="w-3 h-3 text-muted-foreground/70" />
+                                                    {activeHistoryItem.responseTime} ms
+                                                </span>
+                                            )}
+                                            {responseLength > 0 && (
+                                                <span className="flex items-center gap-1 text-[11px] text-muted-foreground font-mono tabular-nums">
+                                                    <HardDrive className="w-3 h-3 text-muted-foreground/70" />
+                                                    {responseLength} B
+                                                </span>
+                                            )}
+                                            {resContentType && (
+                                                <Badge variant="outline" className="text-[9px] uppercase px-1.5 py-0 h-4 border-border/60 text-muted-foreground">
+                                                    {resContentType}
+                                                </Badge>
+                                            )}
                                         </div>
-                                        {activeHistoryItem?.responseTime !== undefined && activeHistoryItem.responseTime > 0 && (
-                                            <span className="text-[11px] font-mono text-muted-foreground">
-                                                {activeHistoryItem.responseTime} ms
-                                            </span>
-                                        )}
+
+                                        <div className="flex items-center gap-1.5 shrink-0">
+                                            <ViewModeTabs mode={resViewMode} onChange={setResViewMode} />
+                                        </div>
                                     </div>
                                     <div className="flex-1 min-h-0">
                                         {responseLoading ? (

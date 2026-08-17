@@ -43,6 +43,7 @@ import {
 import { parseRequest, parseResponse } from '@/components/utils';
 import { formatHttpMessage } from './http-pretty';
 import LightDataTable from '@/components/LightDataTable';
+import HttpRequestFormatWarning from '@/components/HttpRequestFormatWarning';
 import { EmptyState } from '@/components/ui/empty-state';
 import { selectActiveScope } from '@/store/slices/scopeSlice';
 
@@ -93,8 +94,6 @@ const RawMessageEditor: React.FC<RawMessageEditorProps> = ({
 
         if (!viewRef.current) {
             const extensions = [
-                // EditorState.lineSeparator.of("\r\n"),
-                // no need
                 basicSetup,
                 http(),
                 oneDark,
@@ -117,7 +116,7 @@ const RawMessageEditor: React.FC<RawMessageEditorProps> = ({
                 extensions.push(
                     EditorView.updateListener.of((update) => {
                         if (update.docChanged) {
-                            onChange(update.state.doc.sliceString(0, update.state.doc.length, update.state.lineBreak));
+                            onChange(update.state.doc.sliceString(0, update.state.doc.length, '\r\n'));
                         }
                     })
                 );
@@ -715,6 +714,7 @@ const InterceptorPage: React.FC = () => {
                                                     <span className="text-xs font-mono font-medium truncate text-foreground">
                                                         https://{selectedRequestItem.host}
                                                     </span>
+                                                    <HttpRequestFormatWarning rawRequest={editedReqContent} />
                                                 </div>
 
                                                 <div className="flex items-center gap-2 shrink-0">

@@ -630,11 +630,16 @@ export function filterSitemapTree(
 /** Parses a raw HTTP request or response string into header list, body, and status line. */
 export function splitHttpMessage(raw: string) {
     if (!raw) return { statusLine: '', headersText: '', headersList: [], body: '', statusCode: 0, statusText: '' };
-    const firstBlank = raw.indexOf('\r\n\r\n');
+    let separator = '\r\n\r\n';
+    let firstBlank = raw.indexOf('\r\n\r\n');
+    if (firstBlank === -1) {
+        firstBlank = raw.indexOf('\n\n');
+        separator = '\n\n';
+    }
     const headerBlock = firstBlank === -1 ? raw : raw.slice(0, firstBlank);
-    const body = firstBlank === -1 ? '' : raw.slice(firstBlank + 4);
+    const body = firstBlank === -1 ? '' : raw.slice(firstBlank + separator.length);
 
-    const lines = headerBlock.split('\r\n');
+    const lines = headerBlock.split(/\r?\n/);
     const statusLine = lines[0] || '';
     const headersText = lines.slice(1).join('\r\n');
 
@@ -733,11 +738,16 @@ export function formatUrlEncoded(body: string): string {
 /** Pretty-formats the body of an HTTP request or response based on Content-Type header. */
 export function formatHttpMessagePretty(raw: string): string {
     if (!raw) return '';
-    const blankIdx = raw.indexOf('\r\n\r\n');
+    let separator = '\r\n\r\n';
+    let blankIdx = raw.indexOf('\r\n\r\n');
+    if (blankIdx === -1) {
+        blankIdx = raw.indexOf('\n\n');
+        separator = '\n\n';
+    }
     if (blankIdx === -1) return raw;
 
     const headersBlock = raw.slice(0, blankIdx);
-    const body = raw.slice(blankIdx + 4);
+    const body = raw.slice(blankIdx + separator.length);
     if (!body.trim()) return raw;
 
     const ctMatch = headersBlock.match(/^Content-Type:\s*([^\r\n;]+)/im);
@@ -762,7 +772,7 @@ export function formatHttpMessagePretty(raw: string): string {
         formattedBody = formatUrlEncoded(body);
     }
 
-    return `${headersBlock}\r\n\r\n${formattedBody}`;
+    return `${headersBlock}${separator}${formattedBody}`;
 }
 
 /** Standard URL encode for key characters (e.g. spaces, symbols, query chars). */

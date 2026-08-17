@@ -4,6 +4,7 @@ import { EditorView } from 'codemirror';
 import { useTheme } from '@/components/theme-provider';
 import { useReplayerEditor } from '@/context/ReplayerContext';
 import { getCommonEditorExtensions } from './editorUtils';
+import { formatHttpMessagePretty } from '@/pages/sitemap/utils';
 
 const ResponseCodeEditor = () => {
     const editorRef = useRef<HTMLDivElement | null>(null);
@@ -11,8 +12,9 @@ const ResponseCodeEditor = () => {
     const { theme } = useTheme();
     const isDark = theme === 'dark' || (theme === 'system' && typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches);
 
-    const { activeHistoryItem, selectedSessionId } = useReplayerEditor();
+    const { activeHistoryItem, selectedSessionId, resViewMode } = useReplayerEditor();
     const responseRaw = activeHistoryItem?.responseRaw ?? '';
+    const displayResponse = resViewMode === 'pretty' ? formatHttpMessagePretty(responseRaw) : responseRaw;
 
     useEffect(() => {
         if (!editorRef.current || !selectedSessionId) return;
@@ -23,7 +25,7 @@ const ResponseCodeEditor = () => {
         }
 
         const state = EditorState.create({
-            doc: responseRaw,
+            doc: displayResponse,
             extensions: getCommonEditorExtensions(isDark, [EditorState.readOnly.of(true)]),
         });
 
@@ -39,7 +41,7 @@ const ResponseCodeEditor = () => {
                 view.destroy();
             }
         };
-    }, [responseRaw, selectedSessionId, isDark]);
+    }, [displayResponse, selectedSessionId, isDark]);
 
     return <div ref={editorRef} className="h-full w-full" />;
 };

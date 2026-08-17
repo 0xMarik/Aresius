@@ -15,6 +15,7 @@ import { oneDark } from '@codemirror/theme-one-dark';
 import { codeMirrorScrollTheme } from "@/components/codemirror-scroll.theme";
 import CoreContextMenu from "@/components/ContextMenu/CoreContextMenu";
 import RequestEditorContextMenu from "./RequestEditorContextMenu";
+import HttpRequestFormatWarning from "@/components/HttpRequestFormatWarning";
 import { toast } from "sonner";
 
 export const fullHeightTheme = EditorView.theme({
@@ -81,24 +82,30 @@ export const fuzzerParamsField = StateField.define<{
                 const oldFrom = param.highlightRange.from;
                 const newFrom = tr.changes.mapPos(oldFrom, 1);
                 const newTo = newFrom + param.highlightRange.originalText.length;
-                const delta = newFrom - oldFrom;
+
+                let isActive = true;
+                if (newTo <= doc.length && newFrom >= 0) {
+                    const currentText = doc.sliceString(newFrom, newTo);
+                    if (currentText !== param.highlightRange.originalText) {
+                        isActive = false;
+                    }
+                } else {
+                    isActive = false;
+                }
+
+                const textBefore = doc.sliceString(0, newFrom, "\r\n");
+                const textHighlight = doc.sliceString(newFrom, newTo, "\r\n");
+                const byteFrom = new TextEncoder().encode(textBefore).length;
+                const byteTo = byteFrom + new TextEncoder().encode(textHighlight).length;
 
                 let newHighlight = {
                     ...param.highlightRange,
                     from: newFrom,
                     to: newTo,
-                    byteFrom: param.highlightRange.byteFrom + delta,
-                    byteTo: param.highlightRange.byteTo + delta,
+                    byteFrom,
+                    byteTo,
+                    isActive,
                 };
-
-                if (newTo <= doc.length && newFrom >= 0) {
-                    const currentText = doc.sliceString(newFrom, newTo);
-                    if (currentText !== param.highlightRange.originalText) {
-                        newHighlight.isActive = false;
-                    }
-                } else {
-                    newHighlight.isActive = false;
-                }
 
                 updated.push({
                     ...param,
@@ -212,15 +219,20 @@ const RequestEditor: React.FC = () => {
     }, [currentFuzzerSession.fuzzConfig.parameters, currentFuzzerSession.selectedHighlightId]);
 
     // Function to add a new highlight range
-    const addHighlightRange = (from: number, to: number, lineNumber: number) => {
+    const addHighlightRange = (from: number, to: number) => {
         if (!viewRef.current || !projectId || activeSessionIndex === null) return;
         const state = viewRef.current.state;
         if (from >= 0 && to <= state.doc.length && from < to) {
             const originalText = state.sliceDoc(from, to);
+            const textBefore = state.doc.sliceString(0, from, "\r\n");
+            const textHighlight = state.doc.sliceString(from, to, "\r\n");
+            const byteFrom = new TextEncoder().encode(textBefore).length;
+            const byteTo = byteFrom + new TextEncoder().encode(textHighlight).length;
+
             const newRange: HighlightRange = {
                 id: `range-${Date.now()}-${Math.random()}`,
-                byteFrom: from + (lineNumber - 1),
-                byteTo: to + (lineNumber - 1),
+                byteFrom,
+                byteTo,
                 from,
                 to,
                 originalText,
@@ -259,8 +271,7 @@ const RequestEditor: React.FC = () => {
         const params = fState?.parameters ?? currentFuzzerSession.fuzzConfig.parameters;
 
         if (!selection.empty) {
-            const line = view.state.doc.lineAt(selection.from);
-            addHighlightRange(selection.from, selection.to, line.number);
+            addHighlightRange(selection.from, selection.to);
         } else {
             const pos = selection.from;
 
@@ -280,8 +291,7 @@ const RequestEditor: React.FC = () => {
             });
 
             // After dispatch, view.state has the updated doc with the inserted space at pos
-            const line = view.state.doc.lineAt(pos);
-            addHighlightRange(pos, pos + 1, line.number);
+            addHighlightRange(pos, pos + 1);
         }
     };
 
@@ -305,7 +315,7 @@ const RequestEditor: React.FC = () => {
             if (update.docChanged) {
                 const state = update.state;
                 const doc = state.doc;
-                const code = doc.sliceString(0, doc.length, state.lineBreak);
+                const code = doc.sliceString(0, doc.length, "\r\n");
                 if (projectId) dispatch(setContent({ rawRequest: code, projectId }));
 
                 // If parameters shifted due to document edits, update Redux
@@ -331,7 +341,6 @@ const RequestEditor: React.FC = () => {
         const state = EditorState.create({
             doc: currentFuzzerSession.fuzzConfig.rawRequest,
             extensions: [
-                EditorState.lineSeparator.of("\r\n"),
                 basicSetup,
                 http(),
                 EditorView.lineWrapping,
@@ -378,6 +387,7 @@ const RequestEditor: React.FC = () => {
                     <Badge variant="outline" className="text-xs">
                         HTTP
                     </Badge>
+                    <HttpRequestFormatWarning rawRequest={currentFuzzerSession.fuzzConfig.rawRequest} />
                     <Button
                         className="h-[2rem]"
                         onClick={clearAllHighlights}

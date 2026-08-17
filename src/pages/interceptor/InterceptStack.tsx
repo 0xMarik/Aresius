@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/badge';
 import MethodBadge, { METHOD_COLORS } from '@/components/MethodBadge';
 import { ColumnDef } from '@tanstack/react-table';
 import { Play, Trash2, ArrowRight, Shield } from 'lucide-react';
+import HttpRequestFormatWarning from '@/components/HttpRequestFormatWarning';
 import type { InterceptItem, InterceptItemType } from '@/store/slices/interceptorSlice';
 
 interface TableItem extends BaseRow {
@@ -222,6 +223,9 @@ export const InterceptStack: React.FC<InterceptStackProps> = ({
                             <span className="text-xs font-mono text-muted-foreground truncate">
                                 {selectedItem.host} {itemType === 'response' ? `— ${selectedItem.methodOrStatus}` : ''}
                             </span>
+                            {itemType === 'request' && (
+                                <HttpRequestFormatWarning rawRequest={editedContent} />
+                            )}
                         </div>
 
                         <div className="flex items-center gap-2 shrink-0">

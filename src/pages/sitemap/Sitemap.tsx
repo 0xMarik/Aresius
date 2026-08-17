@@ -77,17 +77,8 @@ import SendToFuzzer from '@/components/ContextMenu/SendToFuzzer';
 import RequestCopyActions from '@/components/ContextMenu/RequestCopyActions';
 import MethodBadge from '@/components/MethodBadge';
 
-// ---------------------------------------------------------------------------
-// Status Badge Styles
-// ---------------------------------------------------------------------------
-
-function getStatusBadgeStyle(status: number): string {
-    if (!status) return 'bg-muted text-muted-foreground border-border';
-    if (status < 300) return 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30';
-    if (status < 400) return 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30';
-    if (status < 500) return 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30';
-    return 'bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/30';
-}
+import { HttpStatusBadge } from '@/components/HttpStatusBadge';
+import { ViewModeTabs } from '@/components/ViewModeTabs';
 
 const kindIcon: Record<SitemapKind, ReactNode> = {
     domain: <Globe className="w-3.5 h-3.5 text-primary shrink-0" />,
@@ -543,24 +534,7 @@ const SitemapRequestViewerPane = React.memo<SitemapRequestViewerPaneProps>(funct
                     </div>
 
                     <div className="flex items-center gap-1.5 shrink-0">
-                        {/* View Tabs */}
-                        <div className="flex items-center rounded-md bg-muted/40 p-0.5 border border-border/40">
-                            {(['raw', 'pretty'] as const).map((mode) => (
-                                <button
-                                    key={mode}
-                                    type="button"
-                                    onClick={() => onReqViewModeChange(mode)}
-                                    className={cn(
-                                        'px-2.5 py-0.5 text-[10px] font-medium uppercase tracking-wider transition-colors',
-                                        reqViewMode === mode
-                                            ? 'bg-background text-foreground shadow-xs font-semibold'
-                                            : 'text-muted-foreground hover:text-foreground'
-                                    )}
-                                >
-                                    {mode}
-                                </button>
-                            ))}
-                        </div>
+                        <ViewModeTabs mode={reqViewMode} onChange={onReqViewModeChange} />
                     </div>
                 </div>
 
@@ -590,9 +564,7 @@ const SitemapRequestViewerPane = React.memo<SitemapRequestViewerPaneProps>(funct
                 {/* Response Header Bar */}
                 <div className="flex items-center justify-between px-3 py-1.5 bg-card/60 border-b border-border/50 text-xs shrink-0 select-none">
                     <div className="flex items-center gap-2 min-w-0">
-                        <span className={cn('px-1.5 py-0.5 font-mono text-[10px] font-bold border', getStatusBadgeStyle(selectedEntity.statusCode))}>
-                            {selectedEntity.statusCode || '0'} {parsedRes.statusText}
-                        </span>
+                        <HttpStatusBadge status={selectedEntity.statusCode} />
 
                         <span className="flex items-center gap-1 text-[11px] text-muted-foreground font-mono tabular-nums">
                             <Clock className="w-3 h-3 text-muted-foreground/70" />
@@ -612,24 +584,7 @@ const SitemapRequestViewerPane = React.memo<SitemapRequestViewerPaneProps>(funct
                     </div>
 
                     <div className="flex items-center gap-1.5 shrink-0">
-                        {/* View Tabs */}
-                        <div className="flex items-center rounded-md bg-muted/40 p-0.5 border border-border/40">
-                            {(['raw', 'pretty'] as const).map((mode) => (
-                                <button
-                                    key={mode}
-                                    type="button"
-                                    onClick={() => onResViewModeChange(mode)}
-                                    className={cn(
-                                        'px-2.5 py-0.5 text-[10px] font-medium uppercase tracking-wider transition-colors',
-                                        resViewMode === mode
-                                            ? 'bg-background text-foreground shadow-xs font-semibold'
-                                            : 'text-muted-foreground hover:text-foreground'
-                                    )}
-                                >
-                                    {mode}
-                                </button>
-                            ))}
-                        </div>
+                        <ViewModeTabs mode={resViewMode} onChange={onResViewModeChange} />
                     </div>
                 </div>
 

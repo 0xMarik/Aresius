@@ -4,29 +4,13 @@ import { Button } from '../ui/button';
 import { ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/table';
-import { Badge } from '../ui/badge';
 import MethodBadge from '@/components/MethodBadge';
 import { parseRequest, parseResponse } from '../utils';
+import { HttpStatusBadge, getStatusBadgeStyle } from '@/components/HttpStatusBadge';
 import { useReplayerEditor } from '@/context/ReplayerContext';
 import { ReplayerHistoryItem } from '@/types/replayer.type';
-import { cn } from '@/lib/utils';
 
-export function getStatusBadgeStyle(status: string) {
-    if (!status) return 'bg-muted text-muted-foreground border-border';
-    const lower = status.toLowerCase();
-    if (lower === 'pending') return 'bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30';
-    if (lower === 'error') return 'bg-rose-500/15 text-rose-700 dark:text-rose-400 border-rose-500/30';
-    if (lower === 'canceled' || lower === 'cancelled') return 'bg-muted text-muted-foreground border-border';
-
-    const num = parseInt(status);
-    if (!isNaN(num)) {
-        if (num < 300) return 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/30';
-        if (num < 400) return 'bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30';
-        if (num < 500) return 'bg-rose-500/15 text-rose-700 dark:text-rose-400 border-rose-500/30';
-        return 'bg-red-500/15 text-red-700 dark:text-red-400 border-red-500/30';
-    }
-    return 'bg-muted text-muted-foreground border-border';
-}
+export { getStatusBadgeStyle };
 
 function formatHistoryBaseUrl(item: ReplayerHistoryItem, headers?: Record<string, string>): string {
     if (item.baseUrl && item.baseUrl !== 'https://' && item.baseUrl.trim() !== '') {
@@ -122,12 +106,7 @@ const HistoryRequests = () => {
                                         >
                                             <TableCell className="py-1">
                                                 {status ? (
-                                                    <Badge
-                                                        variant="outline"
-                                                        className={cn("text-[10px] font-mono px-1.5 py-0 font-medium", getStatusBadgeStyle(status))}
-                                                    >
-                                                        {status}
-                                                    </Badge>
+                                                    <HttpStatusBadge status={status} />
                                                 ) : (
                                                     <span className="text-muted-foreground text-xs">—</span>
                                                 )}

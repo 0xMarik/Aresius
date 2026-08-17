@@ -31,7 +31,7 @@ export default function AboutDialog({ open: isOpen, onOpenChange }: AboutDialogP
                     </Avatar>
                     <div>
                         <DialogTitle className="text-xl font-bold tracking-tight">Aresius</DialogTitle>
-                        <p className="text-xs text-muted-foreground font-mono mt-0.5">Version 0.1.1 • Beta</p>
+                        <p className="text-xs text-muted-foreground font-mono mt-0.5">Version 0.1.0 • Beta</p>
                     </div>
                 </DialogHeader>
 

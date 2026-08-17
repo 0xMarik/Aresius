@@ -78,7 +78,11 @@ interface ReplayerEditorContextType {
     errorMessage: string | null;
     updateContentLength: boolean;
     forceCloseConnection: boolean;
+    reqViewMode: 'raw' | 'pretty';
+    resViewMode: 'raw' | 'pretty';
 
+    setReqViewMode: (mode: 'raw' | 'pretty') => void;
+    setResViewMode: (mode: 'raw' | 'pretty') => void;
     setUpdateContentLength: (val: boolean) => void;
     setForceCloseConnection: (val: boolean) => void;
     updateDraftContent: (requestTmp: string) => void;
@@ -116,6 +120,26 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
     const activeRequestsRef = useRef<Map<string, string>>(new Map());
     const debounceDraftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    const [reqViewMode, setReqViewModeState] = React.useState<'raw' | 'pretty'>(() => {
+        const saved = localStorage.getItem('aresius_replayer_req_view_mode');
+        return saved === 'pretty' ? 'pretty' : 'raw';
+    });
+
+    const [resViewMode, setResViewModeState] = React.useState<'raw' | 'pretty'>(() => {
+        const saved = localStorage.getItem('aresius_replayer_res_view_mode');
+        return saved === 'pretty' ? 'pretty' : 'raw';
+    });
+
+    const setReqViewMode = useCallback((mode: 'raw' | 'pretty') => {
+        setReqViewModeState(mode);
+        localStorage.setItem('aresius_replayer_req_view_mode', mode);
+    }, []);
+
+    const setResViewMode = useCallback((mode: 'raw' | 'pretty') => {
+        setResViewModeState(mode);
+        localStorage.setItem('aresius_replayer_res_view_mode', mode);
+    }, []);
 
     const [updateContentLength, setUpdateContentLengthState] = React.useState<boolean>(() => {
         const saved = localStorage.getItem('aresius_replayer_update_content_length');
@@ -639,7 +663,11 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         errorMessage,
         updateContentLength,
         forceCloseConnection,
+        reqViewMode,
+        resViewMode,
 
+        setReqViewMode,
+        setResViewMode,
         setUpdateContentLength,
         setForceCloseConnection,
         updateDraftContent,
@@ -660,6 +688,10 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         errorMessage,
         updateContentLength,
         forceCloseConnection,
+        reqViewMode,
+        resViewMode,
+        setReqViewMode,
+        setResViewMode,
         setUpdateContentLength,
         setForceCloseConnection,
         updateDraftContent,

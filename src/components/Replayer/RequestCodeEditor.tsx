@@ -6,6 +6,7 @@ import { useReplayerEditor } from '@/context/ReplayerContext';
 import CoreContextMenu from '../ContextMenu/CoreContextMenu';
 import RequestContextMenu from './RequestContextMenu';
 import { getCommonEditorExtensions } from './editorUtils';
+import { formatHttpMessagePretty } from '@/pages/sitemap/utils';
 
 const RequestCodeEditor = () => {
     const editorRef = useRef<HTMLDivElement | null>(null);
@@ -13,7 +14,7 @@ const RequestCodeEditor = () => {
     const { theme } = useTheme();
     const isDark = theme === 'dark' || (theme === 'system' && typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches);
 
-    const { activeDraft, updateDraftContent, selectedHistoryIndex } = useReplayerEditor();
+    const { activeDraft, updateDraftContent, selectedHistoryIndex, reqViewMode } = useReplayerEditor();
     const sessionId = activeDraft?.sessionId;
     const requestTmp = activeDraft?.requestTmp ?? '';
 
@@ -21,6 +22,8 @@ const RequestCodeEditor = () => {
     useEffect(() => {
         updateDraftContentRef.current = updateDraftContent;
     }, [updateDraftContent]);
+
+    const initialDoc = reqViewMode === 'pretty' ? formatHttpMessagePretty(requestTmp) : requestTmp;
 
     useEffect(() => {
         if (!editorRef.current || !sessionId) return;
@@ -32,15 +35,14 @@ const RequestCodeEditor = () => {
 
         const updateListener = EditorView.updateListener.of((update) => {
             if (update.docChanged) {
-                const code = update.state.doc.sliceString(0, update.state.doc.length, update.state.lineBreak);
+                const code = update.state.doc.sliceString(0, update.state.doc.length, '\r\n');
                 updateDraftContentRef.current(code);
             }
         });
 
         const state = EditorState.create({
-            doc: requestTmp,
+            doc: initialDoc,
             extensions: getCommonEditorExtensions(isDark, [
-                EditorState.lineSeparator.of('\r\n'),
                 updateListener,
             ]),
         });
@@ -62,19 +64,21 @@ const RequestCodeEditor = () => {
     useEffect(() => {
         if (!viewRef.current || activeDraft?.requestTmp === undefined) return;
         const view = viewRef.current;
-        const currentDoc = view.state.doc.sliceString(0, view.state.doc.length, view.state.lineBreak);
-        if (currentDoc !== activeDraft.requestTmp) {
+        const currentDoc = view.state.doc.sliceString(0, view.state.doc.length, '\r\n');
+        const targetDoc = reqViewMode === 'pretty' ? formatHttpMessagePretty(activeDraft.requestTmp) : activeDraft.requestTmp;
+
+        if (currentDoc !== targetDoc) {
             const currentSelection = view.state.selection;
-            const newLen = activeDraft.requestTmp.length;
+            const newLen = targetDoc.length;
             const safeAnchor = Math.min(currentSelection.main.anchor, newLen);
             const safeHead = Math.min(currentSelection.main.head, newLen);
 
             view.dispatch({
-                changes: { from: 0, to: view.state.doc.length, insert: activeDraft.requestTmp },
+                changes: { from: 0, to: view.state.doc.length, insert: targetDoc },
                 selection: { anchor: safeAnchor, head: safeHead },
             });
         }
-    }, [activeDraft?.requestTmp]);
+    }, [activeDraft?.requestTmp, reqViewMode]);
 
     return (
         <div className="bg-card w-full h-full">

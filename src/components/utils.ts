@@ -300,3 +300,14 @@ export const applyForceCloseConnection = (rawRequest?: string | null): string =>
 
     return `${updatedHeaderLines.join(newline)}${separator}${body}`;
 };
+
+/**
+ * Checks if the raw HTTP request is missing the required blank line (\r\n\r\n or \n\n)
+ * between headers and body, or at the end of headers when bodyless.
+ */
+export const hasMissingHeaderTerminator = (rawRequest?: string | null): boolean => {
+    if (!rawRequest || typeof rawRequest !== 'string' || !rawRequest.trim()) {
+        return false;
+    }
+    return !/\r?\n\r?\n/.test(rawRequest);
+};
