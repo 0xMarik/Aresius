@@ -1,21 +1,17 @@
-import { CodeMirrorEditor } from '@/components/result-table.components';
-import Table from '@/components/Table';
+import Table, { isRowSelected } from '@/components/Table';
 import { useAppSelector } from '@/hooks/redux';
 import { ColumnDef, createColumnHelper } from '@tanstack/react-table';
 import { useMemo, useState } from 'react';
-
-import { isRowSelected, } from '@/components/Table';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { renderHttpHistoryTableContextMenu } from '@/components/HttpHistoryTableContextMenu';
 import { HttpHistory, RequestState } from '@/types/http.type';
 import { getHistorySelectors } from '@/store/slices/http-historySlice';
-import { EmptyState } from '@/components/ui/empty-state';
-import { Clipboard } from 'lucide-react'
 import MethodBadge from '@/components/MethodBadge';
 import { selectActiveScope } from '@/store/slices/scopeSlice';
 import { isInScope } from '@/lib/scopeMatcher';
 import { useProjectId } from '@/hooks/useProjectId';
 import { ScopeFilterBar, ScopeFilterOption } from '@/components/ScopeFilterBar';
+import HttpRequestViewerPane from '@/components/HttpRequestViewerPane';
 
 // Flat, at the same level as rawRequest/rawResponse -- no nested metadata
 // object. Every field except `state` is now populated straight from the
@@ -201,18 +197,10 @@ export const httpColumns: ColumnDef<HttpTransaction, any>[] = [
     }),
 ];
 
-// export const httpFacetFilters: FacetFilter<HttpTransaction>[] = [
-//     { id: 'method', label: 'Method', getValue: (r: any) => r.method },
-//     { id: 'state', label: 'State', getValue: (r: any) => r.state },
-//     { id: 'extension', label: 'Extension', getValue: (r: any) => r.extension ?? '—' },
-// ];
-
-
-const HTTPHisotry = () => {
+const HTTPHistory = () => {
     const projectId = useProjectId();
     const historySelectors = useMemo(() => getHistorySelectors(projectId), [projectId]);
     const history = useAppSelector(historySelectors.selectAll);
-    console.log({ history })
     const activeScope = useAppSelector(selectActiveScope(projectId));
     const [selectedRequest, setSelectedRequest] = useState<number | null>(null);
     const [scopeFilter, setScopeFilter] = useState<ScopeFilterOption>('in');
@@ -244,8 +232,6 @@ const HTTPHisotry = () => {
                         />
                         <Table data={rows}
                             columns={httpColumns}
-                            // facetFilters={httpFacetFilters}
-                            // searchPlaceholder="Search host, path, method, status…"
                             emptyLabel="No requests captured yet"
                             emptyHint="Start your proxy to begin capturing HTTP traffic"
                             setSelectedRequest={setSelectedRequest}
@@ -257,36 +243,15 @@ const HTTPHisotry = () => {
                 <ResizableHandle withHandle />
                 <ResizablePanel defaultSize={50} minSize={15}>
                     <div className='h-full'>
-                        <ResizablePanelGroup direction='horizontal' autoSaveId="http-history-req-res" >
-                            <ResizablePanel defaultSize={50} minSize={15}>
-                                <div className=' h-full'>
-                                    {
-                                        !selectedEntity ? <EmptyState
-                                            icon={Clipboard}
-                                            title="Nothing Selected"
-                                            description="Choose a request from the history list to view its details."
-                                        /> : <CodeMirrorEditor value={selectedEntity.rawRequest} />
-                                    }
-                                </div>
-                            </ResizablePanel>
-                            <ResizableHandle withHandle />
-                            <ResizablePanel defaultSize={50} minSize={15}>
-                                <div className=' h-full'>
-                                    {
-                                        !selectedEntity ? <EmptyState
-                                            icon={Clipboard}
-                                            title="Nothing Selected"
-                                            description="Choose a request from the history list to view its details."
-                                        /> : <CodeMirrorEditor value={selectedEntity.rawResponse} />
-                                    }
-                                </div>
-                            </ResizablePanel>
-                        </ResizablePanelGroup>
+                        <HttpRequestViewerPane
+                            request={selectedEntity}
+                            autoSaveId="http-history-req-res"
+                        />
                     </div>
                 </ResizablePanel>
             </ResizablePanelGroup>
         </div>
-    )
-}
+    );
+};
 
-export default HTTPHisotry
+export default HTTPHistory;

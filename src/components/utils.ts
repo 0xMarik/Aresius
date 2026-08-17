@@ -311,3 +311,231 @@ export const hasMissingHeaderTerminator = (rawRequest?: string | null): boolean 
     }
     return !/\r?\n\r?\n/.test(rawRequest);
 };
+
+/** Parses a raw HTTP request or response string into header list, body, and status line. */
+export function splitHttpMessage(raw: string) {
+    if (!raw) return { statusLine: '', headersText: '', headersList: [], body: '', statusCode: 0, statusText: '' };
+    let separator = '\r\n\r\n';
+    let firstBlank = raw.indexOf('\r\n\r\n');
+    if (firstBlank === -1) {
+        firstBlank = raw.indexOf('\n\n');
+        separator = '\n\n';
+    }
+    const headerBlock = firstBlank === -1 ? raw : raw.slice(0, firstBlank);
+    const body = firstBlank === -1 ? '' : raw.slice(firstBlank + separator.length);
+
+    const lines = headerBlock.split(/\r?\n/);
+    const statusLine = lines[0] || '';
+    const headersText = lines.slice(1).join('\r\n');
+
+    const headersList: Array<{ name: string; value: string }> = [];
+    for (let i = 1; i < lines.length; i++) {
+        const line = lines[i];
+        if (!line) continue;
+        const colonIdx = line.indexOf(':');
+        if (colonIdx === -1) continue;
+        headersList.push({
+            name: line.slice(0, colonIdx).trim(),
+            value: line.slice(colonIdx + 1).trim(),
+        });
+    }
+
+    let statusCode = 0;
+    let statusText = '';
+    if (statusLine.startsWith('HTTP/')) {
+        const parts = statusLine.split(' ');
+        statusCode = parseInt(parts[1] || '0', 10) || 0;
+        statusText = parts.slice(2).join(' ');
+    }
+
+    return {
+        statusLine,
+        headersText,
+        headersList,
+        body,
+        statusCode,
+        statusText,
+    };
+}
+
+/** Attempts to pretty-print a JSON string, returns formatted JSON or null if invalid. */
+export function tryFormatJson(raw: string): string | null {
+    if (!raw) return null;
+    const trimmed = raw.trim();
+    if (!((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']')))) {
+        return null;
+    }
+    try {
+        const parsed = JSON.parse(trimmed);
+        return JSON.stringify(parsed, null, 2);
+    } catch {
+        return null;
+    }
+}
+
+/** Formats XML / HTML text with 2-space indentation. */
+export function formatXmlHtml(xml: string): string {
+    let formatted = '';
+    let indent = 0;
+    const tab = '  ';
+    const tagRegex = /(<\/?[^>]+>)|([^<]+)/g;
+    const tokens = xml.match(tagRegex) || [];
+
+    for (const token of tokens) {
+        const trimmed = token.trim();
+        if (!trimmed) continue;
+
+        if (trimmed.startsWith('</')) {
+            indent = Math.max(0, indent - 1);
+            formatted += tab.repeat(indent) + trimmed + '\n';
+        } else if (trimmed.startsWith('<') && (trimmed.endsWith('/>') || trimmed.startsWith('<!') || trimmed.startsWith('<?'))) {
+            formatted += tab.repeat(indent) + trimmed + '\n';
+        } else if (trimmed.startsWith('<')) {
+            formatted += tab.repeat(indent) + trimmed + '\n';
+            indent++;
+        } else {
+            formatted += tab.repeat(indent) + trimmed + '\n';
+        }
+    }
+
+    return formatted.trimEnd() || xml;
+}
+
+/** Formats URL-encoded form data into multi-line decoded key-value lines. */
+export function formatUrlEncoded(body: string): string {
+    try {
+        const parts = body.split('&');
+        if (parts.length <= 1) return body;
+        return parts
+            .map((part) => {
+                const eqIdx = part.indexOf('=');
+                if (eqIdx === -1) return decodeURIComponent(part);
+                const key = decodeURIComponent(part.slice(0, eqIdx));
+                const val = decodeURIComponent(part.slice(eqIdx + 1));
+                return `${key} = ${val}`;
+            })
+            .join('\n');
+    } catch {
+        return body;
+    }
+}
+
+/** Pretty-formats the body of an HTTP request or response based on Content-Type header. */
+export function formatHttpMessagePretty(raw: string): string {
+    if (!raw) return '';
+    let separator = '\r\n\r\n';
+    let blankIdx = raw.indexOf('\r\n\r\n');
+    if (blankIdx === -1) {
+        blankIdx = raw.indexOf('\n\n');
+        separator = '\n\n';
+    }
+    if (blankIdx === -1) return raw;
+
+    const headersBlock = raw.slice(0, blankIdx);
+    const body = raw.slice(blankIdx + separator.length);
+    if (!body.trim()) return raw;
+
+    const ctMatch = headersBlock.match(/^Content-Type:\s*([^\r\n;]+)/im);
+    const contentType = ctMatch ? ctMatch[1].trim().toLowerCase() : '';
+
+    let formattedBody = body;
+
+    if (contentType.includes('json') || (!contentType && (body.trim().startsWith('{') || body.trim().startsWith('[')))) {
+        try {
+            const parsed = JSON.parse(body.trim());
+            formattedBody = JSON.stringify(parsed, null, 2);
+        } catch {
+            // fallback
+        }
+    } else if (contentType.includes('xml') || contentType.includes('html')) {
+        try {
+            formattedBody = formatXmlHtml(body);
+        } catch {
+            // fallback
+        }
+    } else if (contentType.includes('x-www-form-urlencoded')) {
+        formattedBody = formatUrlEncoded(body);
+    }
+
+    return `${headersBlock}${separator}${formattedBody}`;
+}
+
+/** Converts a raw HTTP request and host string into a runnable cURL command. */
+export function rawRequestToCurl(rawRequest: string, host: string): string {
+    if (!rawRequest) return '';
+    const firstBlank = rawRequest.indexOf('\r\n\r\n');
+    const headerBlock = firstBlank === -1 ? rawRequest : rawRequest.slice(0, firstBlank);
+    const body = firstBlank === -1 ? '' : rawRequest.slice(firstBlank + 4);
+
+    const lines = headerBlock.split('\r\n');
+    const requestLine = lines[0] || '';
+    const reqParts = requestLine.split(' ');
+    const method = (reqParts[0] || 'GET').toUpperCase();
+    const target = reqParts[1] || '/';
+
+    const fullUrl = target.startsWith('http://') || target.startsWith('https://')
+        ? target
+        : `https://${host}${target.startsWith('/') ? target : `/${target}`}`;
+
+    const headers: string[] = [];
+    for (let i = 1; i < lines.length; i++) {
+        const line = lines[i];
+        if (!line) continue;
+        const colonIdx = line.indexOf(':');
+        if (colonIdx === -1) continue;
+        const key = line.slice(0, colonIdx).trim();
+        const value = line.slice(colonIdx + 1).trim();
+        if (key.toLowerCase() === 'host' || key.toLowerCase() === 'content-length') continue;
+        headers.push(`-H '${key}: ${value.replace(/'/g, "'\\''")}'`);
+    }
+
+    const parts = [`curl -i -s -k -X '${method}'`];
+    parts.push(`'${fullUrl.replace(/'/g, "'\\''")}'`);
+    for (const h of headers) {
+        parts.push(h);
+    }
+    if (body && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
+        parts.push(`--data-raw '${body.replace(/'/g, "'\\''")}'`);
+    }
+
+    return parts.join(' \\\n  ');
+}
+
+/** Saves a string content to a local file via Save File Picker or browser download. */
+export async function saveStringToFile(defaultFilename: string, content: string, mimeType = 'text/plain'): Promise<boolean> {
+    if (typeof window !== 'undefined' && 'showSaveFilePicker' in window) {
+        try {
+            const handle = await (window as any).showSaveFilePicker({
+                suggestedName: defaultFilename,
+                types: [
+                    {
+                        description: 'HTTP Request (*.http, *.txt)',
+                        accept: {
+                            'text/plain': ['.http', '.txt'],
+                        },
+                    },
+                ],
+            });
+            const writable = await handle.createWritable();
+            await writable.write(content);
+            await writable.close();
+            return true;
+        } catch (err: unknown) {
+            if (err instanceof Error && err.name === 'AbortError') {
+                return false;
+            }
+        }
+    }
+
+    // Fallback to blob download
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = defaultFilename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    return true;
+}

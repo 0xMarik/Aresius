@@ -14,10 +14,7 @@ import {
     Trash2,
     ShieldAlert,
     ShieldCheck,
-    FileText,
     Terminal,
-    Clock,
-    HardDrive,
 } from 'lucide-react';
 import { ScopeFilterBar } from '@/components/ScopeFilterBar';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
@@ -25,7 +22,6 @@ import { SitemapKind, TreeNode } from '@/types/sitemap.type';
 import { useAppDispatch, useAppSelector } from '@/hooks/redux';
 import { useProjectId } from '@/hooks/useProjectId';
 import Table from '@/components/Table';
-import { CodeMirrorEditor } from '@/components/result-table.components';
 import { renderHttpHistoryTableContextMenu } from '@/components/HttpHistoryTableContextMenu';
 import { adaptFromReqRes, httpColumns } from '@/pages/HttpHistory';
 import { getHistorySelectors } from '@/store/slices/http-historySlice';
@@ -51,8 +47,6 @@ import {
     filterSitemapTree,
     getNodeTargetInfo,
     rawRequestToCurl,
-    splitHttpMessage,
-    formatHttpMessagePretty,
 } from './utils';
 import type { EntityId } from '@reduxjs/toolkit';
 import type { HttpHistory } from '@/types/http.type';
@@ -74,11 +68,8 @@ import {
 } from '@/components/ui/context-menu';
 import SendToReplayer from '@/components/ContextMenu/SendToReplayer';
 import SendToFuzzer from '@/components/ContextMenu/SendToFuzzer';
-import RequestCopyActions from '@/components/ContextMenu/RequestCopyActions';
 import MethodBadge from '@/components/MethodBadge';
-
-import { HttpStatusBadge } from '@/components/HttpStatusBadge';
-import { ViewModeTabs } from '@/components/ViewModeTabs';
+import HttpRequestViewerPane from '@/components/HttpRequestViewerPane';
 
 const kindIcon: Record<SitemapKind, ReactNode> = {
     domain: <Globe className="w-3.5 h-3.5 text-primary shrink-0" />,
@@ -465,143 +456,7 @@ const SitemapRequestTablePane = React.memo<SitemapRequestTablePaneProps>(functio
     );
 });
 
-// ---------------------------------------------------------------------------
-// 3. Upgraded Request / Response Code & Header Viewer Pane
-// ---------------------------------------------------------------------------
-interface SitemapRequestViewerPaneProps {
-    selectedRequestId: number | null;
-    reqViewMode: 'raw' | 'pretty';
-    resViewMode: 'raw' | 'pretty';
-    onReqViewModeChange: (mode: 'raw' | 'pretty') => void;
-    onResViewModeChange: (mode: 'raw' | 'pretty') => void;
-}
 
-const SitemapRequestViewerPane = React.memo<SitemapRequestViewerPaneProps>(function SitemapRequestViewerPane({
-    selectedRequestId,
-    reqViewMode,
-    resViewMode,
-    onReqViewModeChange,
-    onResViewModeChange,
-}) {
-    const projectId = useProjectId();
-
-    const selectedEntity = useAppSelector((state) =>
-        selectedRequestId !== null ? getHistorySelectors(projectId).selectById(state, selectedRequestId) : undefined
-    );
-
-    const prettyReq = useMemo(
-        () => (selectedEntity?.rawRequest ? formatHttpMessagePretty(selectedEntity.rawRequest) : ''),
-        [selectedEntity?.rawRequest]
-    );
-
-    const prettyRes = useMemo(
-        () => (selectedEntity?.rawResponse ? formatHttpMessagePretty(selectedEntity.rawResponse) : ''),
-        [selectedEntity?.rawResponse]
-    );
-
-    const parsedRes = useMemo(() => splitHttpMessage(selectedEntity?.rawResponse ?? ''), [selectedEntity?.rawResponse]);
-
-    const resContentType = useMemo(() => {
-        const ctHeader = parsedRes.headersList.find((h) => h.name.toLowerCase() === 'content-type');
-        if (!ctHeader) return '';
-        const rawCt = ctHeader.value.split(';')[0].trim();
-        return rawCt.replace(/^application\//i, '').replace(/^text\//i, '');
-    }, [parsedRes.headersList]);
-
-    if (!selectedEntity) {
-        return (
-            <div className="h-full flex items-center justify-center bg-card/10">
-                <EmptyState
-                    icon={FileText}
-                    title="No Request Selected"
-                    description="Choose a request row above to inspect its raw HTTP request and response payload."
-                />
-            </div>
-        );
-    }
-
-    return (
-        <ResizablePanelGroup direction="horizontal" autoSaveId="aresius-sitemap-req-res" className="h-full min-h-0">
-            {/* Request Pane */}
-            <ResizablePanel defaultSize={50} minSize={20} className="min-h-0 flex flex-col overflow-hidden border-r border-border/50">
-                {/* Request Header Bar */}
-                <div className="flex items-center justify-between px-3 py-1.5 bg-card/60 border-b border-border/50 text-xs shrink-0 select-none">
-                    <div className="flex items-center gap-2 min-w-0">
-                        <MethodBadge method={selectedEntity.method} className="px-1.5 py-0.5 font-bold" />
-                        <span className="font-mono text-xs text-foreground/90 truncate max-w-[240px]" title={selectedEntity.path}>
-                            {selectedEntity.path || '/'}
-                        </span>
-                    </div>
-
-                    <div className="flex items-center gap-1.5 shrink-0">
-                        <ViewModeTabs mode={reqViewMode} onChange={onReqViewModeChange} />
-                    </div>
-                </div>
-
-                {/* Request Content with Right-Click Context Menu */}
-                <ContextMenu>
-                    <ContextMenuTrigger asChild>
-                        <div className="flex-1 min-h-0 overflow-auto bg-background">
-                            <CodeMirrorEditor
-                                value={reqViewMode === 'pretty' ? prettyReq : selectedEntity.rawRequest}
-                                isPretty={reqViewMode === 'pretty'}
-                            />
-                        </div>
-                    </ContextMenuTrigger>
-                    <ContextMenuContent className="w-56 text-xs">
-                        <RequestCopyActions rawRequest={selectedEntity.rawRequest} host={selectedEntity.host} />
-
-                        <ContextMenuSeparator />
-
-                        <SendToReplayer rawRequest={selectedEntity.rawRequest} />
-
-                        <SendToFuzzer rawRequest={selectedEntity.rawRequest} host={selectedEntity.host || ''} />
-                    </ContextMenuContent>
-                </ContextMenu>
-            </ResizablePanel>
-
-            <ResizableHandle withHandle />
-
-            {/* Response Pane */}
-            <ResizablePanel defaultSize={50} minSize={20} className="min-h-0 flex flex-col overflow-hidden">
-                {/* Response Header Bar */}
-                <div className="flex items-center justify-between px-3 py-1.5 bg-card/60 border-b border-border/50 text-xs shrink-0 select-none">
-                    <div className="flex items-center gap-2 min-w-0">
-                        <HttpStatusBadge status={selectedEntity.statusCode} />
-
-                        <span className="flex items-center gap-1 text-[11px] text-muted-foreground font-mono tabular-nums">
-                            <Clock className="w-3 h-3 text-muted-foreground/70" />
-                            {selectedEntity.responseTimeMs} ms
-                        </span>
-
-                        <span className="flex items-center gap-1 text-[11px] text-muted-foreground font-mono tabular-nums">
-                            <HardDrive className="w-3 h-3 text-muted-foreground/70" />
-                            {selectedEntity.responseLength} B
-                        </span>
-
-                        {resContentType && (
-                            <Badge variant="outline" className="text-[9px] uppercase px-1.5 py-0 h-4 border-border/60 text-muted-foreground">
-                                {resContentType}
-                            </Badge>
-                        )}
-                    </div>
-
-                    <div className="flex items-center gap-1.5 shrink-0">
-                        <ViewModeTabs mode={resViewMode} onChange={onResViewModeChange} />
-                    </div>
-                </div>
-
-                {/* Response Content */}
-                <div className="flex-1 min-h-0 overflow-auto bg-background">
-                    <CodeMirrorEditor
-                        value={resViewMode === 'pretty' ? prettyRes : selectedEntity.rawResponse}
-                        isPretty={resViewMode === 'pretty'}
-                    />
-                </div>
-            </ResizablePanel>
-        </ResizablePanelGroup>
-    );
-});
 
 // ---------------------------------------------------------------------------
 // Main Sitemap Page Component
@@ -828,12 +683,13 @@ export default function SitemapTree() {
 
                         {/* Lower: Request/Response Split View */}
                         <ResizablePanel defaultSize={50} minSize={15} className="min-h-0 overflow-hidden">
-                            <SitemapRequestViewerPane
-                                selectedRequestId={selectedRequest}
+                            <HttpRequestViewerPane
+                                request={selectedRequest !== null ? historyEntities[selectedRequest] : undefined}
                                 reqViewMode={reqViewMode}
                                 resViewMode={resViewMode}
                                 onReqViewModeChange={handleReqViewModeChange}
                                 onResViewModeChange={handleResViewModeChange}
+                                autoSaveId="aresius-sitemap-req-res"
                             />
                         </ResizablePanel>
                     </ResizablePanelGroup>
