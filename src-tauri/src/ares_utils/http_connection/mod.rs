@@ -204,8 +204,8 @@ impl HttpConnection {
         // total timeout eventually fires.
         let is_head_request = http_request.starts_with(b"HEAD ");
 
-        let mut buffer: Vec<u8> = Vec::new();
-        let mut chunk = [0u8; 4096];
+        let mut buffer: Vec<u8> = Vec::with_capacity(65536);
+        let mut chunk = [0u8; 65536];
 
         let mut header_scan_from = 0usize;
         let mut header_end_pos = 0usize;
@@ -347,8 +347,8 @@ where
 {
     use tokio::io::AsyncReadExt;
 
-    let mut buffer: Vec<u8> = Vec::new();
-    let mut chunk = [0u8; 4096];
+    let mut buffer: Vec<u8> = Vec::with_capacity(65536);
+    let mut chunk = [0u8; 65536];
     let mut header_scan_from = 0usize;
     let mut header_end_pos = 0usize;
     let mut framing: Option<BodyFraming> = None;

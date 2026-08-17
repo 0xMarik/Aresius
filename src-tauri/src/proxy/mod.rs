@@ -54,13 +54,13 @@ struct HttpHistoryPayload {
 } 
 
 pub struct CertCache {
-    pub certs: Mutex<HashMap<String, (Vec<u8>, Vec<u8>)>>, // domain -> (cert_pem, key_pem)
+    pub acceptors: Mutex<HashMap<String, tokio_rustls::TlsAcceptor>>,
 }
 
 impl CertCache {
     pub fn new() -> Self {
         Self {
-            certs: Mutex::new(HashMap::new()),
+            acceptors: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -189,7 +189,7 @@ async fn handle_client(
     ca_key_pair: Arc<KeyPair>,
     connection_options: ConnectionOptions,
 ) -> std::io::Result<()> {
-    let mut buffer = [0u8; 8192];
+    let mut buffer = [0u8; 65536];
     let bytes_read = client_stream.read(&mut buffer).await?;
 
     if bytes_read == 0 {
@@ -242,11 +242,8 @@ async fn handle_connect(
         .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
         .await?;
 
-    let (cert_pem, key_pem) =
-        get_or_generate_server_cert(&app_handle, &domain, &ca_cert_pem, &ca_key_pair).await?;
-
-    let acceptor = create_tls_acceptor(&cert_pem, &key_pem)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    let acceptor =
+        get_or_create_tls_acceptor(&app_handle, &domain, &ca_cert_pem, &ca_key_pair).await?;
 
     // Perform TLS handshake with client
     let mut client_tls = acceptor.accept(client_stream).await?;
@@ -330,29 +327,49 @@ async fn handle_connect(
             }
         }
 
-        let conn = match upstream.as_mut() {
-            Some(c) => c,
-            None => match HttpConnection::with_options(&upstream_url, connection_options.clone())
-                .await
-            {
-                Ok(c) => {
-                    upstream = Some(c);
-                    upstream.as_mut().unwrap()
+        let response = match upstream.as_mut() {
+            Some(conn) => {
+                match conn.send_request(&outgoing_request_bytes).await {
+                    Ok(r) => Ok(r),
+                    Err(e) => {
+                        tracing::debug!(
+                            "Reused upstream connection failed for {}: {}, reconnecting...",
+                            target,
+                            e
+                        );
+                        // Upstream server closed the idle keep-alive socket. Reconnect and retry once.
+                        match HttpConnection::with_options(&upstream_url, connection_options.clone()).await {
+                            Ok(mut fresh_conn) => {
+                                let res = fresh_conn.send_request(&outgoing_request_bytes).await;
+                                *conn = fresh_conn;
+                                res
+                            }
+                            Err(reconnect_err) => Err(reconnect_err),
+                        }
+                    }
                 }
-                Err(e) => {
-                    tracing::warn!("Failed to connect upstream {}: {}", target, e);
-                    let error_response = build_error_response(&target, &e);
-                    client_tls.write_all(&error_response).await.ok();
-                    break;
+            }
+            None => {
+                match HttpConnection::with_options(&upstream_url, connection_options.clone()).await {
+                    Ok(mut new_conn) => {
+                        let res = new_conn.send_request(&outgoing_request_bytes).await;
+                        upstream = Some(new_conn);
+                        res
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to connect upstream {}: {}", target, e);
+                        let error_response = build_error_response(&target, &e);
+                        client_tls.write_all(&error_response).await.ok();
+                        break;
+                    }
                 }
-            },
+            }
         };
 
-        let response = match conn.send_request(&outgoing_request_bytes).await {
+        let response = match response {
             Ok(r) => r,
             Err(e) => {
                 tracing::warn!("Upstream request failed for {}: {}", target, e);
-                // upstream = None;
                 break;
             }
         };
@@ -362,15 +379,13 @@ async fn handle_connect(
         let mut outgoing_response_bytes = response.headers.clone().into_bytes();
         outgoing_response_bytes.extend_from_slice(&response.body);
 
-        // Decoded copy, purely for the history/UI payload.
-        let mut final_response_text =
-            decode_for_display(&response.headers, &response.body, &connection_options);
-
-        let req_meta_res = parse_request_line(&outgoing_request_bytes);
+        let req_meta = parse_request_line(&outgoing_request_bytes);
         if intercept_state
-            .should_intercept(InterceptItemType::Response, &target, &req_meta_res.path)
+            .should_intercept(InterceptItemType::Response, &target, &req_meta.path)
             .await
         {
+            let mut final_response_text =
+                decode_for_display(&response.headers, &response.body, &connection_options);
             let res_id = Uuid::new_v4().to_string();
             let item = InterceptItem {
                 id: res_id.clone(),
@@ -400,57 +415,125 @@ async fn handle_connect(
                     continue;
                 }
             }
-        }
 
-        let req_meta = parse_request_line(&outgoing_request_bytes);
-        let (response_head, response_body) = split_message(&final_response_text);
-        let status = parse_status_code(response_head);
-        let response_length = response_body.as_bytes().len();
-
-        let history_counter: tauri::State<HistoryIdCounter> = app_handle.state();
-        let payload = HttpHistoryPayload {
-            id: history_counter.next(),
-            raw_request: String::from_utf8_lossy(&outgoing_request_bytes).to_string(),
-            raw_response: final_response_text,
-            host: target.clone(),
-            method: req_meta.method,
-            path: req_meta.path,
-            query: req_meta.query,
-            extension: req_meta.extension,
-            status_code: status,
-            response_length,
-            response_time_ms: response.elapsed.as_millis() as u64,
-            sent_at_ms: sent_at_ms,
-            is_https: true,
-        };
-        app_handle.emit("http_history", payload.clone()).ok();
-
-        // Persist to the project database (fire-and-forget -- never blocks the proxy).
-        let db_state: tauri::State<DbState> = app_handle.state();
-        if let Ok(pool) = db_state.pool().await {
-            if let Some(project_id) = db_state.get_active_id().await {
-                tokio::spawn(save_http_history(
-                    pool,
-                    project_id,
-                    payload.host,
-                    payload.method,
-                    payload.path,
-                    payload.query,
-                    payload.extension,
-                    payload.status_code,
-                    payload.response_length,
-                    payload.response_time_ms,
-                    payload.sent_at_ms,
-                    payload.is_https,
-                    payload.raw_request,
-                    payload.raw_response,
-                ));
+            if let Err(e) = client_tls.write_all(&outgoing_response_bytes).await {
+                tracing::debug!("Client write failed for {}: {}", target, e);
+                break;
             }
-        }
 
-        if let Err(e) = client_tls.write_all(&outgoing_response_bytes).await {
-            tracing::debug!("Client write failed for {}: {}", target, e);
-            break;
+            let (response_head, response_body) = split_message(&final_response_text);
+            let status = parse_status_code(response_head);
+            let response_length = response_body.as_bytes().len();
+
+            let history_counter: tauri::State<HistoryIdCounter> = app_handle.state();
+            let payload = HttpHistoryPayload {
+                id: history_counter.next(),
+                raw_request: String::from_utf8_lossy(&outgoing_request_bytes).to_string(),
+                raw_response: final_response_text,
+                host: target.clone(),
+                method: req_meta.method,
+                path: req_meta.path,
+                query: req_meta.query,
+                extension: req_meta.extension,
+                status_code: status,
+                response_length,
+                response_time_ms: response.elapsed.as_millis() as u64,
+                sent_at_ms: sent_at_ms,
+                is_https: true,
+            };
+            app_handle.emit("http_history", payload.clone()).ok();
+
+            let db_state: tauri::State<DbState> = app_handle.state();
+            if let Ok(pool) = db_state.pool().await {
+                if let Some(project_id) = db_state.get_active_id().await {
+                    tokio::spawn(save_http_history(
+                        pool,
+                        project_id,
+                        payload.host,
+                        payload.method,
+                        payload.path,
+                        payload.query,
+                        payload.extension,
+                        payload.status_code,
+                        payload.response_length,
+                        payload.response_time_ms,
+                        payload.sent_at_ms,
+                        payload.is_https,
+                        payload.raw_request,
+                        payload.raw_response,
+                    ));
+                }
+            }
+        } else {
+            // Write immediately to the client socket (zero TTFB delay for the browser)
+            if let Err(e) = client_tls.write_all(&outgoing_response_bytes).await {
+                tracing::debug!("Client write failed for {}: {}", target, e);
+                break;
+            }
+
+            // Decompress, emit history, and save to DB in background
+            let app_handle_bg = app_handle.clone();
+            let target_bg = target.clone();
+            let connection_options_bg = connection_options.clone();
+            let req_meta_bg = req_meta;
+            let outgoing_request_bytes_bg = outgoing_request_bytes;
+            let response_elapsed = response.elapsed;
+            let response_headers_bg = response.headers;
+            let response_body_bg = response.body;
+
+            tokio::spawn(async move {
+                let final_response_text = tokio::task::spawn_blocking(move || {
+                    decode_for_display(&response_headers_bg, &response_body_bg, &connection_options_bg)
+                })
+                .await
+                .unwrap_or_default();
+
+                let (response_head, response_body) = split_message(&final_response_text);
+                let status = parse_status_code(response_head);
+                let response_length = response_body.as_bytes().len();
+
+                let history_counter: tauri::State<HistoryIdCounter> = app_handle_bg.state();
+                let payload = HttpHistoryPayload {
+                    id: history_counter.next(),
+                    raw_request: String::from_utf8_lossy(&outgoing_request_bytes_bg).to_string(),
+                    raw_response: final_response_text,
+                    host: target_bg,
+                    method: req_meta_bg.method,
+                    path: req_meta_bg.path,
+                    query: req_meta_bg.query,
+                    extension: req_meta_bg.extension,
+                    status_code: status,
+                    response_length,
+                    response_time_ms: response_elapsed.as_millis() as u64,
+                    sent_at_ms: sent_at_ms,
+                    is_https: true,
+                };
+                app_handle_bg.emit("http_history", payload.clone()).ok();
+
+                let db_state: tauri::State<DbState> = app_handle_bg.state();
+                if let Ok(pool) = db_state.pool().await {
+                    if let Some(project_id) = db_state.get_active_id().await {
+                        save_http_history(
+                            pool,
+                            project_id,
+                            payload.host,
+                            payload.method,
+                            payload.path,
+                            payload.query,
+                            payload.extension,
+                            payload.status_code,
+                            payload.response_length,
+                            payload.response_time_ms,
+                            payload.sent_at_ms,
+                            payload.is_https,
+                            payload.raw_request,
+                            payload.raw_response,
+                        )
+                        .await
+                        .ok();
+                    }
+                }
+            });
         }
     }
 
@@ -458,43 +541,43 @@ async fn handle_connect(
     Ok(())
 }
 
-/// Looks up a cached leaf cert for `domain`, or generates one. The
-/// (CPU-bound, synchronous) signing work happens in spawn_blocking and
-/// WITHOUT holding the cache lock, so one domain's first-visit cert
-/// generation no longer stalls every other connection.
-async fn get_or_generate_server_cert(
+/// Looks up a cached `TlsAcceptor` for `domain`, or generates the leaf cert and creates one.
+/// The (CPU-bound, synchronous) signing and cert parsing happens in spawn_blocking
+/// WITHOUT holding the cache lock, and the resulting `TlsAcceptor` is cached directly so
+/// subsequent connections to the same domain avoid all PEM parsing and crypto setup.
+async fn get_or_create_tls_acceptor(
     app_handle: &AppHandle,
     domain: &str,
     ca_cert_pem: &str,
     ca_key_pair: &Arc<KeyPair>,
-) -> std::io::Result<(Vec<u8>, Vec<u8>)> {
+) -> std::io::Result<tokio_rustls::TlsAcceptor> {
     let cert_cache: tauri::State<CertCache> = app_handle.state();
 
     let cached = {
-        let cache = cert_cache.certs.lock().await;
+        let cache = cert_cache.acceptors.lock().await;
         cache.get(domain).cloned()
     };
-    if let Some(pair) = cached {
-        return Ok(pair);
+    if let Some(acceptor) = cached {
+        return Ok(acceptor);
     }
 
     let ca_cert_pem = ca_cert_pem.to_string();
     let ca_key_pair = ca_key_pair.clone();
     let domain_owned = domain.to_string();
 
-    let (cert, key) = tokio::task::spawn_blocking(move || {
-        generate_server_cert(&ca_cert_pem, &ca_key_pair, &domain_owned)
+    let acceptor = tokio::task::spawn_blocking(move || -> std::io::Result<tokio_rustls::TlsAcceptor> {
+        let (cert_pem, key_pem) = generate_server_cert(&ca_cert_pem, &ca_key_pair, &domain_owned)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        create_tls_acceptor(&cert_pem, &key_pem)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
     })
     .await
-    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?
-    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))??;
 
-    let mut cache = cert_cache.certs.lock().await;
-    cache
-        .entry(domain.to_string())
-        .or_insert_with(|| (cert.clone(), key.clone()));
+    let mut cache = cert_cache.acceptors.lock().await;
+    cache.insert(domain.to_string(), acceptor.clone());
 
-    Ok((cert, key))
+    Ok(acceptor)
 }
 
 /// Plain HTTP gets the same intercept/log/modify/decode treatment as HTTPS.
@@ -573,28 +656,46 @@ async fn handle_http_request(
             }
         }
 
-        let conn = match upstream.as_mut() {
-            Some(c) => c,
-            None => match HttpConnection::with_options(&upstream_url, connection_options.clone())
-                .await
-            {
-                Ok(c) => {
-                    upstream = Some(c);
-                    upstream.as_mut().unwrap()
+        let response = match upstream.as_mut() {
+            Some(conn) => {
+                match conn.send_request(&outgoing_request_bytes).await {
+                    Ok(r) => Ok(r),
+                    Err(e) => {
+                        tracing::debug!(
+                            "Reused plain HTTP connection failed for {}: {}, reconnecting...",
+                            target,
+                            e
+                        );
+                        match HttpConnection::with_options(&upstream_url, connection_options.clone()).await {
+                            Ok(mut fresh_conn) => {
+                                let res = fresh_conn.send_request(&outgoing_request_bytes).await;
+                                *conn = fresh_conn;
+                                res
+                            }
+                            Err(reconnect_err) => Err(reconnect_err),
+                        }
+                    }
                 }
-                Err(e) => {
-                    tracing::warn!("Failed to connect upstream {}: {}", target, e);
-
-                    break;
+            }
+            None => {
+                match HttpConnection::with_options(&upstream_url, connection_options.clone()).await {
+                    Ok(mut new_conn) => {
+                        let res = new_conn.send_request(&outgoing_request_bytes).await;
+                        upstream = Some(new_conn);
+                        res
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to connect upstream {}: {}", target, e);
+                        break;
+                    }
                 }
-            },
+            }
         };
 
-        let response = match conn.send_request(&outgoing_request_bytes).await {
+        let response = match response {
             Ok(r) => r,
             Err(e) => {
                 tracing::warn!("Upstream request failed for {}: {}", target, e);
-                // upstream = None;
                 break;
             }
         };
@@ -602,14 +703,13 @@ async fn handle_http_request(
         let mut outgoing_response_bytes = response.headers.clone().into_bytes();
         outgoing_response_bytes.extend_from_slice(&response.body);
 
-        let mut final_response_text =
-            decode_for_display(&response.headers, &response.body, &connection_options);
-
-        let req_meta_res = parse_request_line(&outgoing_request_bytes);
+        let req_meta = parse_request_line(&outgoing_request_bytes);
         if intercept_state
-            .should_intercept(InterceptItemType::Response, &target, &req_meta_res.path)
+            .should_intercept(InterceptItemType::Response, &target, &req_meta.path)
             .await
         {
+            let mut final_response_text =
+                decode_for_display(&response.headers, &response.body, &connection_options);
             let res_id = Uuid::new_v4().to_string();
             let item = InterceptItem {
                 id: res_id.clone(),
@@ -636,60 +736,131 @@ async fn handle_http_request(
                     continue;
                 }
             }
-        }
 
-        let req_meta = parse_request_line(&outgoing_request_bytes);
-        let (response_head, response_body) = split_message(&final_response_text);
-        let status_code = parse_status_code(response_head);
-        let response_length = response_body.as_bytes().len();
-
-        let history_counter: tauri::State<HistoryIdCounter> = app_handle.state();
-        let payload = HttpHistoryPayload {
-            id: history_counter.next(),
-            raw_request: String::from_utf8_lossy(&outgoing_request_bytes).to_string(),
-            raw_response: final_response_text,
-            host: target.clone(),
-            method: req_meta.method,
-            path: req_meta.path,
-            query: req_meta.query,
-            extension: req_meta.extension,
-            status_code: status_code,
-            response_length,
-            response_time_ms: response.elapsed.as_millis() as u64,
-            sent_at_ms: sent_at_ms,
-            is_https: false,
-        };
-        app_handle.emit("http_history", payload.clone()).ok();
-
-        // Persist to the project database (fire-and-forget -- never blocks the proxy).
-        let db_state: tauri::State<DbState> = app_handle.state();
-        if let Ok(pool) = db_state.pool().await {
-            if let Some(project_id) = db_state.get_active_id().await {
-                tokio::spawn(save_http_history(
-                    pool,
-                    project_id,
-                    payload.host,
-                    payload.method,
-                    payload.path,
-                    payload.query,
-                    payload.extension,
-                    payload.status_code,
-                    payload.response_length,
-                    payload.response_time_ms,
-                    payload.sent_at_ms,
-                    payload.is_https,
-                    payload.raw_request,
-                    payload.raw_response,
-                ));
+            if client_stream
+                .write_all(&outgoing_response_bytes)
+                .await
+                .is_err()
+            {
+                break;
             }
-        }
 
-        if client_stream
-            .write_all(&outgoing_response_bytes)
-            .await
-            .is_err()
-        {
-            break;
+            let (response_head, response_body) = split_message(&final_response_text);
+            let status_code = parse_status_code(response_head);
+            let response_length = response_body.as_bytes().len();
+
+            let history_counter: tauri::State<HistoryIdCounter> = app_handle.state();
+            let payload = HttpHistoryPayload {
+                id: history_counter.next(),
+                raw_request: String::from_utf8_lossy(&outgoing_request_bytes).to_string(),
+                raw_response: final_response_text,
+                host: target.clone(),
+                method: req_meta.method,
+                path: req_meta.path,
+                query: req_meta.query,
+                extension: req_meta.extension,
+                status_code: status_code,
+                response_length,
+                response_time_ms: response.elapsed.as_millis() as u64,
+                sent_at_ms: sent_at_ms,
+                is_https: false,
+            };
+            app_handle.emit("http_history", payload.clone()).ok();
+
+            let db_state: tauri::State<DbState> = app_handle.state();
+            if let Ok(pool) = db_state.pool().await {
+                if let Some(project_id) = db_state.get_active_id().await {
+                    tokio::spawn(save_http_history(
+                        pool,
+                        project_id,
+                        payload.host,
+                        payload.method,
+                        payload.path,
+                        payload.query,
+                        payload.extension,
+                        payload.status_code,
+                        payload.response_length,
+                        payload.response_time_ms,
+                        payload.sent_at_ms,
+                        payload.is_https,
+                        payload.raw_request,
+                        payload.raw_response,
+                    ));
+                }
+            }
+        } else {
+            // Write immediately to the client socket (zero TTFB delay for the browser)
+            if client_stream
+                .write_all(&outgoing_response_bytes)
+                .await
+                .is_err()
+            {
+                break;
+            }
+
+            // Decompress, emit history, and save to DB in background
+            let app_handle_bg = app_handle.clone();
+            let target_bg = target.clone();
+            let connection_options_bg = connection_options.clone();
+            let req_meta_bg = req_meta;
+            let outgoing_request_bytes_bg = outgoing_request_bytes;
+            let response_elapsed = response.elapsed;
+            let response_headers_bg = response.headers;
+            let response_body_bg = response.body;
+
+            tokio::spawn(async move {
+                let final_response_text = tokio::task::spawn_blocking(move || {
+                    decode_for_display(&response_headers_bg, &response_body_bg, &connection_options_bg)
+                })
+                .await
+                .unwrap_or_default();
+
+                let (response_head, response_body) = split_message(&final_response_text);
+                let status_code = parse_status_code(response_head);
+                let response_length = response_body.as_bytes().len();
+
+                let history_counter: tauri::State<HistoryIdCounter> = app_handle_bg.state();
+                let payload = HttpHistoryPayload {
+                    id: history_counter.next(),
+                    raw_request: String::from_utf8_lossy(&outgoing_request_bytes_bg).to_string(),
+                    raw_response: final_response_text,
+                    host: target_bg,
+                    method: req_meta_bg.method,
+                    path: req_meta_bg.path,
+                    query: req_meta_bg.query,
+                    extension: req_meta_bg.extension,
+                    status_code: status_code,
+                    response_length,
+                    response_time_ms: response_elapsed.as_millis() as u64,
+                    sent_at_ms: sent_at_ms,
+                    is_https: false,
+                };
+                app_handle_bg.emit("http_history", payload.clone()).ok();
+
+                let db_state: tauri::State<DbState> = app_handle_bg.state();
+                if let Ok(pool) = db_state.pool().await {
+                    if let Some(project_id) = db_state.get_active_id().await {
+                        save_http_history(
+                            pool,
+                            project_id,
+                            payload.host,
+                            payload.method,
+                            payload.path,
+                            payload.query,
+                            payload.extension,
+                            payload.status_code,
+                            payload.response_length,
+                            payload.response_time_ms,
+                            payload.sent_at_ms,
+                            payload.is_https,
+                            payload.raw_request,
+                            payload.raw_response,
+                        )
+                        .await
+                        .ok();
+                    }
+                }
+            });
         }
     }
     Ok(())

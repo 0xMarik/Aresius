@@ -151,9 +151,10 @@ pub fn create_tls_acceptor(cert_pem: &[u8], key_pem: &[u8]) -> Result<TlsAccepto
         .ok_or_else(|| anyhow!("No private key found"))?;
 
     // Build server config
-    let config = ServerConfig::builder()
+    let mut config = ServerConfig::builder()
         .with_no_client_auth()
         .with_single_cert(certs, key)?;
+    config.alpn_protocols = vec![b"http/1.1".to_vec()];
 
     Ok(TlsAcceptor::from(Arc::new(config)))
 }

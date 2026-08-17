@@ -88,7 +88,7 @@ fn decode_one(encoding: &str, input: &[u8], limits: &DecodeLimits) -> Result<Vec
         "deflate" => bounded_read(ZlibDecoder::new(input), limits.max_output_bytes)
             .or_else(|_| bounded_read(DeflateDecoder::new(input), limits.max_output_bytes)),
         "br" => {
-            let decompressor = brotli::Decompressor::new(input, 4096);
+            let decompressor = brotli::Decompressor::new(input, 65536);
             bounded_read(decompressor, limits.max_output_bytes)
         }
 
@@ -105,7 +105,7 @@ fn decode_one(encoding: &str, input: &[u8], limits: &DecodeLimits) -> Result<Vec
 /// body can't be used to exhaust memory (zip-bomb style).
 fn bounded_read<R: Read>(mut reader: R, max_output_bytes: usize) -> Result<Vec<u8>> {
     let mut out = Vec::new();
-    let mut buf = [0u8; 8192];
+    let mut buf = [0u8; 65536];
     loop {
         let n = reader.read(&mut buf)?;
         if n == 0 {
