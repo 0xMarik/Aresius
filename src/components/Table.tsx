@@ -17,10 +17,6 @@ import {
     ChevronDown,
     ChevronsUpDown,
     Trash2,
-    Layers,
-    FolderPlus,
-    FolderMinus,
-    Circle,
     GripVertical,
 } from 'lucide-react';
 import {
@@ -29,9 +25,6 @@ import {
     ContextMenuItem,
     ContextMenuLabel,
     ContextMenuSeparator,
-    ContextMenuSub,
-    ContextMenuSubContent,
-    ContextMenuSubTrigger,
     ContextMenuTrigger,
 } from '@/components/ui/context-menu';
 import {
@@ -51,13 +44,6 @@ import {
 
 export type BaseRow = {
     id: number;
-    group?: string;
-};
-
-export type RequestGroup = {
-    id: string;
-    name: string;
-    color: string;
 };
 
 export type TableMeta = { selectedIds: Set<number> };
@@ -77,9 +63,9 @@ export function isRowSelected<TData extends BaseRow>(info: {
 /*  A row's ContextMenuContent is produced by calling                  */
 /*  `renderRowContextMenu(ctx)` (or DataTable's own default, below, if  */
 /*  the consumer doesn't pass one). Everything the renderer could      */
-/*  plausibly need — including DataTable's built-in group/remove       */
-/*  actions — is bundled into `ctx`, so a fully custom menu can still   */
-/*  call into the built-in grouping behavior, or ignore it completely   */
+/*  plausibly need — including DataTable's built-in remove action —    */
+/*  is bundled into `ctx`, so a fully custom menu can still            */
+/*  call into the built-in remove behavior, or ignore it completely    */
 /*  and render its own domain-specific items instead.                  */
 /* ------------------------------------------------------------------ */
 
@@ -92,17 +78,8 @@ export type RowContextMenuContext<TData extends BaseRow> = {
      *  current multi-selection if rowId is part of it. */
     actionIds: number[];
     isMultiple: boolean;
-    /** the group this row currently belongs to, if any. */
-    group?: RequestGroup;
-    /** all groups that currently exist in the table. */
-    groups: RequestGroup[];
-    onCreateGroup: (ids: number[]) => void;
-    onAssignToGroup: (ids: number[], groupId: string) => void;
-    onUngroup: (ids: number[]) => void;
     onRemove: (ids: number[]) => void;
 };
-
-const GROUP_PALETTE = ['#B23A2E', '#8F2E24', '#C08A3E', '#3C7A5A', '#5C6360', '#6E4A3E', '#A85D3B'];
 
 /** Fixed row height in px. Must match the actual rendered row height
  *  (padding + line-height below) since the virtualizer uses this to
@@ -196,8 +173,6 @@ function DraggableHeaderCell({
 interface TableRowProps<TData extends BaseRow> {
     row: Row<TData>;
     selected: boolean;
-    group?: RequestGroup;
-    groups: RequestGroup[];
     /** Not read directly in the row body below — `row.getVisibleCells()`
      *  already reflects the table's current column order whenever it's
      *  called. It's threaded through purely so the memo comparator (see
@@ -216,25 +191,17 @@ interface TableRowProps<TData extends BaseRow> {
     /** If omitted, the row renders with no context menu at all (no Radix
      *  wrapper, no popover) — cheaper than rendering an empty menu. */
     renderContextMenu?: (ctx: RowContextMenuContext<TData>) => React.ReactNode;
-    onCreateGroup: (ids: number[]) => void;
-    onAssignToGroup: (ids: number[], groupId: string) => void;
-    onUngroup: (ids: number[]) => void;
     onRemove: (ids: number[]) => void;
 }
 
 function TableRowInner<TData extends BaseRow>({
     row,
     selected,
-    group,
-    groups,
     columnOrder,
     onRowClick,
     onContextMenu,
     getActionIds,
     renderContextMenu,
-    onCreateGroup,
-    onAssignToGroup,
-    onUngroup,
     onRemove,
 }: TableRowProps<TData>) {
     // Not read directly — see the doc comment on `columnOrder` above.
@@ -249,9 +216,8 @@ function TableRowInner<TData extends BaseRow>({
         <div
             onClick={(e) => onRowClick(e, rowId)}
             onContextMenu={() => onContextMenu(rowId)}
-            className={`flex h-full cursor-pointer items-center border-b border-border/40 border-l-[3px] ${selected ? 'bg-primary text-primary-foreground' : 'hover:bg-accent/50 text-foreground'
+            className={`flex h-full cursor-pointer items-center border-b border-border/40 ${selected ? 'bg-primary text-primary-foreground' : 'hover:bg-accent/50 text-foreground'
                 }`}
-            style={{ borderLeftColor: group?.color ?? 'transparent' }}
         >
             {row.getVisibleCells().map((cell) => (
                 <div
@@ -276,11 +242,6 @@ function TableRowInner<TData extends BaseRow>({
         row: row.original,
         actionIds,
         isMultiple: actionIds.length > 1,
-        group,
-        groups,
-        onCreateGroup,
-        onAssignToGroup,
-        onUngroup,
         onRemove,
     };
 
@@ -296,16 +257,11 @@ const TableRow = React.memo(TableRowInner, (prev, next) => {
     return (
         prev.row === next.row &&
         prev.selected === next.selected &&
-        prev.group?.id === next.group?.id &&
-        prev.groups === next.groups &&
         prev.columnOrder === next.columnOrder &&
         prev.onRowClick === next.onRowClick &&
         prev.onContextMenu === next.onContextMenu &&
         prev.getActionIds === next.getActionIds &&
         prev.renderContextMenu === next.renderContextMenu &&
-        prev.onCreateGroup === next.onCreateGroup &&
-        prev.onAssignToGroup === next.onAssignToGroup &&
-        prev.onUngroup === next.onUngroup &&
         prev.onRemove === next.onRemove
     );
 }) as typeof TableRowInner;
@@ -396,8 +352,6 @@ const TableHeaderRow = React.memo(TableHeaderRowInner) as typeof TableHeaderRowI
 
 interface RowsViewportProps<TData extends BaseRow> {
     visibleRows: Row<TData>[];
-    groups: RequestGroup[];
-    groupMap: Map<string, RequestGroup>;
     columnOrder: string[];
     selectedIds: Set<number>;
     setSelectedIds: React.Dispatch<React.SetStateAction<Set<number>>>;
@@ -406,9 +360,6 @@ interface RowsViewportProps<TData extends BaseRow> {
     emptyLabel: string;
     emptyHint?: string;
     renderContextMenu?: (ctx: RowContextMenuContext<TData>) => React.ReactNode;
-    onCreateGroup: (ids: number[]) => void;
-    onAssignToGroup: (ids: number[], groupId: string) => void;
-    onUngroup: (ids: number[]) => void;
     onRemove: (ids: number[]) => void;
     totalCount?: number;
     windowOffset?: number;
@@ -417,8 +368,6 @@ interface RowsViewportProps<TData extends BaseRow> {
 
 function RowsViewportInner<TData extends BaseRow>({
     visibleRows,
-    groups,
-    groupMap,
     columnOrder,
     selectedIds,
     setSelectedIds,
@@ -427,9 +376,6 @@ function RowsViewportInner<TData extends BaseRow>({
     emptyLabel,
     emptyHint,
     renderContextMenu,
-    onCreateGroup,
-    onAssignToGroup,
-    onUngroup,
     onRemove,
     totalCount,
     windowOffset,
@@ -630,8 +576,6 @@ function RowsViewportInner<TData extends BaseRow>({
                         );
                     }
                     const rowId = row.original.id;
-                    const groupId = row.original.group;
-                    const group = groupId ? groupMap.get(groupId) : undefined;
 
                     return (
                         <div
@@ -648,16 +592,11 @@ function RowsViewportInner<TData extends BaseRow>({
                             <TableRow
                                 row={row}
                                 selected={selectedIds.has(rowId)}
-                                group={group}
-                                groups={groups}
                                 columnOrder={columnOrder}
                                 onRowClick={handleRowClick}
                                 onContextMenu={handleRowContextMenu}
                                 getActionIds={getActionIds}
                                 renderContextMenu={renderContextMenu}
-                                onCreateGroup={onCreateGroup}
-                                onAssignToGroup={onAssignToGroup}
-                                onUngroup={onUngroup}
                                 onRemove={onRemove}
                             />
                         </div>
@@ -700,13 +639,12 @@ interface DataTableProps<TData extends BaseRow> {
     maxColumnWidth?: number;
     /** Customize (or fully replace) the row context menu. Receives a
      *  RowContextMenuContext with the clicked row, the current
-     *  multi-selection, and DataTable's built-in group/remove actions
+     *  multi-selection, and DataTable's built-in remove action
      *  ready to call. Return the contents of a ContextMenuContent (labels,
      *  items, separators, subs — whatever you need); DataTable supplies
      *  the ContextMenu/ContextMenuTrigger/ContextMenuContent wrapper.
-     *  If omitted, falls back to the built-in New group / Add to group /
-     *  Ungroup / Remove menu. Pass an empty fragment-returning function
-     *  to suppress the menu without losing the built-in group state. */
+     *  If omitted, falls back to the built-in Remove menu. Pass an empty
+     *  fragment-returning function to suppress the menu. */
     renderRowContextMenu?: (ctx: RowContextMenuContext<TData>) => React.ReactNode;
     totalCount?: number;
     windowOffset?: number;
@@ -741,78 +679,37 @@ export default function DataTable<TData extends BaseRow>({
     const sorting = propsSorting !== undefined ? propsSorting : internalSorting;
     const setSorting = onSortingChange !== undefined ? onSortingChange : setInternalSorting;
 
-    // ------------------------------------------------------------------
-    // FIX #1 — local-only edits (grouping, removal) no longer get
-    // stomped by the next streamed update.
-    //
-    // Previously the rAF sync loop did:
-    //   setRows(prev => prev === latestDataRef.current ? prev : latestDataRef.current)
-    // i.e. it *replaced* `rows` outright with the incoming `data` prop
-    // whenever they differed by reference. But grouping/removal mutate
-    // the local `rows` copy only (they have nowhere else to write to —
-    // `data` is owned by the parent/Redux). Under a live stream pushing
-    // 60-80 updates/sec, `data` changes reference almost every frame, so
-    // the very next tick after a user grouped or removed rows would
-    // overwrite `rows` back to the raw, group-less, un-removed `data` —
-    // the action visibly reverted within ~16ms.
-    //
-    // Fix: `rows` is now a *merge* of the incoming `data` with two
-    // local-only overlays tracked in refs (so mutating them doesn't
-    // itself trigger renders — only marking the merge dirty does):
-    //   - `groupOverridesRef`: id -> groupId | null (null = explicitly
-    //     ungrouped). Applied on top of whatever `group` value (if any)
-    //     the incoming row carries.
-    //   - `removedIdsRef`: ids locally removed, filtered out of every
-    //     incoming `data` even if the upstream stream still includes them.
-    // The rAF loop still runs at most once per frame, but now recomputes
-    // the merge (instead of blindly copying) whenever either the
-    // incoming `data` reference changed OR a local action marked the
-    // merge dirty.
     const latestDataRef = useRef(data);
     latestDataRef.current = data;
 
     const removedIdsRef = useRef<Set<number>>(new Set());
-    const groupOverridesRef = useRef<Map<number, string | null>>(new Map());
     const mergeDirtyRef = useRef(false);
     const lastMergedDataRef = useRef<TData[]>(data);
 
     const computeMergedRows = useCallback(
         (incoming: TData[]): TData[] => {
             const removed = removedIdsRef.current;
-            const overrides = groupOverridesRef.current;
 
             let merged: TData[];
-            if (removed.size === 0 && overrides.size === 0) {
+            if (removed.size === 0) {
                 merged = incoming;
             } else {
                 merged = [];
                 for (let i = 0; i < incoming.length; i++) {
                     const r = incoming[i];
                     if (removed.has(r.id)) continue;
-                    if (overrides.has(r.id)) {
-                        const ov = overrides.get(r.id);
-                        const nextGroup = ov === null ? undefined : ov;
-                        merged.push(r.group === nextGroup ? r : { ...r, group: nextGroup });
-                    } else {
-                        merged.push(r);
-                    }
+                    merged.push(r);
                 }
             }
 
-            // FIX #4 — bound memory/CPU growth for long-running capture
-            // sessions. Without a cap, `rows` (and therefore every sort
-            // pass derived from it) grows for as long as the session
-            // runs, so the same operation gets slower over time.
+            // Bound memory/CPU growth for long-running capture sessions.
             // Dropping the oldest rows once the buffer is full keeps every
             // per-update pass O(maxBufferRows) instead of O(session length).
             if (maxBufferRows && merged.length > maxBufferRows) {
                 const dropCount = merged.length - maxBufferRows;
                 for (let i = 0; i < dropCount; i++) {
                     const droppedId = merged[i].id;
-                    // Clean up the overlays too, or they'd accumulate
-                    // forever for rows that have scrolled out of the buffer.
                     removedIdsRef.current.delete(droppedId);
-                    groupOverridesRef.current.delete(droppedId);
                 }
                 merged = merged.slice(dropCount);
             }
@@ -839,10 +736,6 @@ export default function DataTable<TData extends BaseRow>({
         return () => cancelAnimationFrame(rafId);
     }, [computeMergedRows]);
 
-    // Read-only mirror of `rows`, kept for callbacks (group/remove actions)
-    // that need to see current row content without depending on `rows`
-    // directly — depending on it would make those callbacks' identities
-    // churn every frame during streaming, defeating TableRow's memo.
     const rowsRef = useRef<TData[]>(rows);
     useEffect(() => {
         rowsRef.current = rows;
@@ -851,30 +744,10 @@ export default function DataTable<TData extends BaseRow>({
     const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
     const [columnOrder, setColumnOrder] = useState<string[]>(() => columns.map((c) => c.id as string));
 
-    // Selection lives here (not pushed down into RowsViewport) because it
-    // also has to feed `meta.selectedIds` on the `table` instance below, for
-    // consumer column-defs that use the exported `isRowSelected` helper.
-    // Everything that doesn't need it — the toolbar and header below — is
-    // isolated in its own memoized component so this state changing does
-    // not force them to reconcile.
     const [selectedIds, setSelectedIds] = useState<Set<number>>(() =>
         selectedRequestId != null ? new Set([selectedRequestId]) : new Set()
     );
 
-    const [groups, setGroups] = useState<RequestGroup[]>([]);
-    const groupCounter = useRef(0);
-    const colorCursor = useRef(0);
-
-    // O(1) group lookup instead of groups.find(...) per row per render.
-    const groupMap = useMemo(() => {
-        const map = new Map<string, RequestGroup>();
-        groups.forEach((g) => map.set(g.id, g));
-        return map;
-    }, [groups]);
-
-    // Hoisted so dnd-kit's internal useMemo (keyed on this options object)
-    // doesn't see a "new" value every render, which would otherwise make
-    // `sensors` a fresh array every render and defeat TableHeaderRow's memo.
     const pointerSensorOptions = useMemo(() => ({ activationConstraint: { distance: 8 } }), []);
     const sensors = useSensors(useSensor(PointerSensor, pointerSensorOptions));
 
@@ -892,14 +765,6 @@ export default function DataTable<TData extends BaseRow>({
     const table = useReactTable({
         data: rows,
         columns,
-        // FIX #2 — stable row identity. Without this, TanStack Table
-        // defaults `row.id` to array index, so after any sort/filter/
-        // insert the row that *used to* sit at index N and the row that
-        // *now* sits at index N share the same `row.id` even though
-        // they're different underlying requests. That breaks `key={row.id}`
-        // in RowsViewport (React reconciles the wrong DOM node against the
-        // wrong data) and anything downstream that assumes row identity
-        // tracks the request it came from.
         getRowId: (row) => String(row.id),
         state: { sorting, columnVisibility, columnOrder },
         onSortingChange: setSorting,
@@ -911,38 +776,8 @@ export default function DataTable<TData extends BaseRow>({
         meta: { selectedIds } as TableMeta,
     });
 
-    // Stable across selection-only re-renders: tanstack-table memoizes the
-    // row model on [data, sorting, columnOrder, ...] — none of which change
-    // when `selectedIds` changes — so this reference doesn't churn on
-    // arrow-key nav.
     const visibleRows = table.getRowModel().rows;
 
-    // ------------------------------------------------------------------
-    // Column resizing.
-    //
-    // Perf constraint: this table can be receiving 60-80 streamed row
-    // updates/sec (see the merge-tick effect above), so anything that
-    // runs on every pointermove during a drag — and would ALSO cause the
-    // whole virtualized row list to re-render — is a non-starter; it'd be
-    // fighting the stream for every animation frame, and jank on every
-    // resize.
-    //
-    // So resizing never touches React state while the pointer is down.
-    // Every column's width lives in one CSS custom property
-    // (`--col-<id>-w`, see `colWidthVar` up top) defined on this table's
-    // own root element and referenced via var(...) by that column's
-    // header cell AND by that column's cell in every rendered row. During
-    // a drag we write straight to `containerRef.current.style` — bypassing
-    // React entirely — so a resize is a single CSSOM write per animation
-    // frame that the browser fans out to every element referencing that
-    // var, not a React re-render of N row components.
-    //
-    // `columnSizing` (React state) is written exactly once, on pointer-up.
-    // That's the only state touched, and it isn't part of `useReactTable`'s
-    // `state` — so `table`, `visibleRows`, and everything RowsViewport
-    // depends on stay referentially identical across a resize commit, and
-    // RowsViewport's React.memo bails out without re-rendering a single
-    // row. Only the toolbar/header (which read `table` directly) re-render.
     const containerRef = useRef<HTMLDivElement>(null);
     const [columnSizing, setColumnSizing] = useState<Record<string, number>>({});
 
@@ -955,12 +790,6 @@ export default function DataTable<TData extends BaseRow>({
         return vars;
     }, [table, columnSizing, columns]);
 
-    // The only thing that ever writes these vars through React — and it
-    // only re-runs when `columnSizing` (a committed resize) or the column
-    // set itself changes, never on the high-frequency streaming
-    // re-renders. That matters: if this ran every render, it would stomp
-    // an in-progress drag's live CSSOM value back to the last *committed*
-    // width up to 60-80 times a second.
     useEffect(() => {
         const el = containerRef.current;
         if (!el) return;
@@ -986,9 +815,6 @@ export default function DataTable<TData extends BaseRow>({
             const startWidth = columnSizing[colId] ?? col?.getSize() ?? minColumnWidth;
             resizeRef.current = { colId, startX: e.clientX, startWidth, pending: null, rafId: null };
 
-            // rAF-coalesced, same pattern as the keyboard-nav fix above:
-            // however many pointermove events fire in a frame, only the
-            // last one before paint gets written to the DOM.
             const flush = () => {
                 const state = resizeRef.current;
                 if (!state) return;
@@ -1019,9 +845,6 @@ export default function DataTable<TData extends BaseRow>({
                 if (!state) return;
                 if (state.rafId !== null) cancelAnimationFrame(state.rafId);
 
-                // The one and only React state write in the whole drag —
-                // everything up to here was a direct DOM mutation — so a
-                // resize costs one re-render total, not one per pixel.
                 const finalWidth = state.pending ?? state.startWidth;
                 setColumnSizing((prev) => (prev[state.colId] === finalWidth ? prev : { ...prev, [state.colId]: finalWidth }));
             };
@@ -1050,7 +873,6 @@ export default function DataTable<TData extends BaseRow>({
 
     const prevSelectedIdRef = useRef<number | null | undefined>(selectedRequestId);
 
-    // Sync external selectedRequestId prop into internal selectedIds
     useEffect(() => {
         if (selectedRequestId !== undefined && selectedRequestId !== prevSelectedIdRef.current) {
             prevSelectedIdRef.current = selectedRequestId;
@@ -1066,7 +888,6 @@ export default function DataTable<TData extends BaseRow>({
         }
     }, [selectedRequestId]);
 
-    // Notify parent when internal selection changes
     useEffect(() => {
         const cb = setSelectedRequestRef.current;
         if (!cb) return;
@@ -1078,148 +899,40 @@ export default function DataTable<TData extends BaseRow>({
         }
     }, [selectedIds]);
 
-    // Safety net for `data` shrinking via the external prop (e.g. a
-    // parent-driven reset/clear-session), as opposed to a local removal
-    // (which is handled immediately and precisely by `removeIds` below).
-    // Only runs when row count actually drops, so it stays out of the way
-    // of the streaming append path.
     const prevRowsLengthRef = useRef(rows.length);
     useEffect(() => {
         const prevLength = prevRowsLengthRef.current;
         prevRowsLengthRef.current = rows.length;
-        if (rows.length >= prevLength || rows.length === 0) return; // don't prune during empty/loading transitions
+        if (rows.length >= prevLength || rows.length === 0) return;
 
         setSelectedIds((prev) => {
             const validIds = new Set(rows.map((r) => r.id));
             const next = new Set(Array.from(prev).filter((id) => validIds.has(id)));
             return next.size === prev.size ? prev : next;
         });
-
-        setGroups((prev) => {
-            const usedIds = new Set(rows.map((r) => r.group).filter(Boolean));
-            const next = prev.filter((g) => usedIds.has(g.id));
-            return next.length === prev.length ? prev : next;
-        });
     }, [rows]);
-
-    // FIX #5 — group pruning no longer nests setState calls inside
-    // setState updaters (setGroups(prev => { setRows(cur => { setGroups...
-    // }) })), which is fragile and can double-fire under StrictMode.
-    // Instead it reads current row content from `rowsRef` (a plain ref,
-    // not reactive state) and folds in the not-yet-merged overrides
-    // directly, so it can run as an ordinary function call from within
-    // the action that triggered it. This only runs on user-driven group/
-    // remove actions (human-paced), never on every streamed update, so
-    // the O(n) scan here is not a performance concern.
-    const pruneUnusedGroups = useCallback(() => {
-        setGroups((prev) => {
-            if (prev.length === 0) return prev;
-            const used = new Set<string>();
-            for (const r of rowsRef.current) {
-                if (removedIdsRef.current.has(r.id)) continue;
-                let g: string | undefined;
-                if (groupOverridesRef.current.has(r.id)) {
-                    const ov = groupOverridesRef.current.get(r.id);
-                    g = ov === null ? undefined : ov;
-                } else {
-                    g = r.group;
-                }
-                if (g) used.add(g);
-            }
-            const next = prev.filter((grp) => used.has(grp.id));
-            return next.length === prev.length ? prev : next;
-        });
-    }, []);
-
-    const createGroupAndAssign = useCallback((ids: number[]) => {
-        groupCounter.current += 1;
-        const color = GROUP_PALETTE[colorCursor.current % GROUP_PALETTE.length];
-        colorCursor.current += 1;
-        const newGroup: RequestGroup = {
-            id: `grp-${Date.now()}-${groupCounter.current}`,
-            name: `Group ${groupCounter.current}`,
-            color,
-        };
-        setGroups((prev) => [...prev, newGroup]);
-        ids.forEach((id) => groupOverridesRef.current.set(id, newGroup.id));
-        mergeDirtyRef.current = true;
-    }, []);
-
-    const assignToGroup = useCallback((ids: number[], groupId: string) => {
-        ids.forEach((id) => groupOverridesRef.current.set(id, groupId));
-        mergeDirtyRef.current = true;
-        // Reassigning can empty out the group these ids used to belong to.
-        pruneUnusedGroups();
-    }, [pruneUnusedGroups]);
-
-    const ungroupIds = useCallback((ids: number[]) => {
-        ids.forEach((id) => groupOverridesRef.current.set(id, null));
-        mergeDirtyRef.current = true;
-        pruneUnusedGroups();
-    }, [pruneUnusedGroups]);
 
     const removeIds = useCallback((ids: number[]) => {
         ids.forEach((id) => removedIdsRef.current.add(id));
         mergeDirtyRef.current = true;
 
-        // Immediate, O(ids.length) prune — no need to wait for the merge
-        // tick or the shrink-detecting effect above.
         setSelectedIds((prev) => {
             if (!ids.some((id) => prev.has(id))) return prev;
             const next = new Set(prev);
             ids.forEach((id) => next.delete(id));
             return next;
         });
+    }, []);
 
-        pruneUnusedGroups();
-    }, [pruneUnusedGroups]);
-
-    // Default context menu — reproduces the original hardcoded behavior
-    // (New group / Add to group / Ungroup / Remove) so DataTable still
-    // works out of the box if `renderRowContextMenu` isn't supplied.
-    // Consumers that want something else entirely (different actions,
-    // domain-specific items, or no menu at all) just pass their own
-    // `renderRowContextMenu` and this is never called.
     const defaultRenderContextMenu = useCallback(
         (ctx: RowContextMenuContext<TData>) => {
-            const { actionIds, isMultiple, group, groups: allGroups, onCreateGroup, onAssignToGroup, onUngroup, onRemove } = ctx;
-            const otherGroups = allGroups.filter((g) => g.id !== group?.id);
+            const { actionIds, isMultiple, onRemove } = ctx;
 
             return (
                 <>
                     <ContextMenuLabel className="text-[11px] text-muted-foreground">
                         {isMultiple ? `${actionIds.length} rows` : `Row #${actionIds[0]}`}
                     </ContextMenuLabel>
-                    <ContextMenuSeparator />
-
-                    <ContextMenuItem onSelect={() => onCreateGroup(actionIds)}>
-                        <FolderPlus className="mr-2 h-3.5 w-3.5" />
-                        New group
-                    </ContextMenuItem>
-
-                    <ContextMenuSub>
-                        <ContextMenuSubTrigger disabled={otherGroups.length === 0}>
-                            <Layers className="mr-2 h-3.5 w-3.5" />
-                            Add to group
-                        </ContextMenuSubTrigger>
-                        <ContextMenuSubContent>
-                            {otherGroups.length === 0 && (
-                                <ContextMenuItem disabled>No other groups yet</ContextMenuItem>
-                            )}
-                            {otherGroups.map((g) => (
-                                <ContextMenuItem key={g.id} onSelect={() => onAssignToGroup(actionIds, g.id)}>
-                                    <Circle className="mr-2 h-3 w-3" style={{ color: g.color, fill: g.color }} />
-                                    {g.name}
-                                </ContextMenuItem>
-                            ))}
-                        </ContextMenuSubContent>
-                    </ContextMenuSub>
-
-                    <ContextMenuItem onSelect={() => onUngroup(actionIds)} disabled={!group}>
-                        <FolderMinus className="mr-2 h-3.5 w-3.5" />
-                        Ungroup
-                    </ContextMenuItem>
-
                     <ContextMenuSeparator />
 
                     <ContextMenuItem
@@ -1242,10 +955,6 @@ export default function DataTable<TData extends BaseRow>({
             ref={containerRef}
             className={fillHeight ? 'flex h-full min-h-0 w-full flex-col bg-background' : 'w-full flex flex-col bg-background'}
         >
-            {/* <div className={fillHeight ? 'shrink-0' : undefined}>
-                <TableToolbar table={table} columnVisibility={columnVisibility} totalCount={rows.length} />
-            </div> */}
-
             <div className={fillHeight
                 ? 'flex min-h-0 flex-1 flex-col overflow-hidden bg-card'
                 : 'overflow-hidden bg-card'
@@ -1264,8 +973,6 @@ export default function DataTable<TData extends BaseRow>({
 
                 <RowsViewport
                     visibleRows={visibleRows}
-                    groups={groups}
-                    groupMap={groupMap}
                     columnOrder={columnOrder}
                     selectedIds={selectedIds}
                     setSelectedIds={setSelectedIds}
@@ -1274,9 +981,6 @@ export default function DataTable<TData extends BaseRow>({
                     emptyLabel={emptyLabel}
                     emptyHint={emptyHint}
                     renderContextMenu={resolvedRenderContextMenu}
-                    onCreateGroup={createGroupAndAssign}
-                    onAssignToGroup={assignToGroup}
-                    onUngroup={ungroupIds}
                     onRemove={removeIds}
                     totalCount={totalCount}
                     windowOffset={windowOffset}

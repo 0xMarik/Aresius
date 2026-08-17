@@ -8,11 +8,7 @@ import {
 } from '@/components/ui/context-menu';
 import {
     Copy,
-    FolderPlus,
-    Layers,
-    FolderMinus,
     Trash2,
-    Circle,
     Braces,
 } from 'lucide-react';
 import { RowContextMenuContext } from '../Table';
@@ -26,15 +22,8 @@ export function renderFuzzerHistoryTableContextMenu(
         row,
         actionIds,
         isMultiple,
-        group,
-        groups,
-        onCreateGroup,
-        onAssignToGroup,
-        onUngroup,
         onRemove,
     } = ctx;
-
-    const otherGroups = groups.filter((g) => g.id !== group?.id);
 
     const copyRawRequest = () => {
         navigator.clipboard.writeText(row.rawRequest ?? '');
@@ -69,36 +58,6 @@ export function renderFuzzerHistoryTableContextMenu(
                     </ContextMenuItem>
                 </ContextMenuSubContent>
             </ContextMenuSub>
-
-            <ContextMenuSeparator />
-
-            <ContextMenuItem onSelect={() => onCreateGroup(actionIds)}>
-                <FolderPlus className="mr-2 h-3.5 w-3.5" />
-                New group
-            </ContextMenuItem>
-
-            <ContextMenuSub>
-                <ContextMenuSubTrigger disabled={otherGroups.length === 0}>
-                    <Layers className="mr-2 h-3.5 w-3.5" />
-                    Add to group
-                </ContextMenuSubTrigger>
-                <ContextMenuSubContent>
-                    {otherGroups.length === 0 && (
-                        <ContextMenuItem disabled>No other groups yet</ContextMenuItem>
-                    )}
-                    {otherGroups.map((g) => (
-                        <ContextMenuItem key={g.id} onSelect={() => onAssignToGroup(actionIds, g.id)}>
-                            <Circle className="mr-2 h-3 w-3" style={{ color: g.color, fill: g.color }} />
-                            {g.name}
-                        </ContextMenuItem>
-                    ))}
-                </ContextMenuSubContent>
-            </ContextMenuSub>
-
-            <ContextMenuItem onSelect={() => onUngroup(actionIds)} disabled={!group}>
-                <FolderMinus className="mr-2 h-3.5 w-3.5" />
-                Ungroup
-            </ContextMenuItem>
 
             <ContextMenuSeparator />
 
