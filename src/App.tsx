@@ -143,7 +143,7 @@ export default function App() {
 
     return (
         <Router>
-            <div className="flex flex-col h-svh [&_*]:text-[12px] w-full overflow-hidden">
+            <div className="flex flex-col h-screen h-full [&_*]:text-[12px] w-full overflow-hidden">
                 <MenubarDemo />
                 <div className="flex-1 min-h-0 relative">
                     <SidebarProvider className="h-full min-h-0" style={{

@@ -891,31 +891,7 @@ export default function SitemapTree() {
                             )}
                         </div>
 
-                        <div className="flex items-center justify-between text-[11px] text-muted-foreground px-0.5">
-                            <span>
-                                {searchTerm ? `${matchingIds.size} matching` : `${sitemap.length} root domains`}
-                            </span>
-                            <div className="flex items-center gap-1">
-                                <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-5 w-5 text-muted-foreground hover:text-foreground"
-                                    onClick={handleExpandAll}
-                                    title="Expand All"
-                                >
-                                    <ChevronsUpDown className="w-3 h-3" />
-                                </Button>
-                                <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-5 w-5 text-muted-foreground hover:text-foreground"
-                                    onClick={handleCollapseAll}
-                                    title="Collapse All"
-                                >
-                                    <ChevronsDownUp className="w-3 h-3" />
-                                </Button>
-                            </div>
-                        </div>
+
                     </div>
 
                     {/* Tree Node Content */}

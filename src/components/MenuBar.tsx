@@ -1,12 +1,9 @@
 import {
     Menubar,
-    MenubarCheckboxItem,
     MenubarContent,
     MenubarGroup,
     MenubarItem,
     MenubarMenu,
-    MenubarRadioGroup,
-    MenubarRadioItem,
     MenubarSeparator,
     MenubarShortcut,
     MenubarSub,
@@ -17,50 +14,85 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from "./ui/avatar"
 import { useEffect, useRef, useState } from "react"
 import { getCurrentWindow } from "@tauri-apps/api/window"
-import { Minus, Square, Copy, X, Sun, Moon, Laptop, Check, ChevronDown, CircleDot } from "lucide-react"
+import {
+    Minus,
+    Square,
+    Copy,
+    X,
+    Sun,
+    Moon,
+    Laptop,
+    Check,
+    ChevronDown,
+    CircleDot,
+    FolderOpen,
+    Library,
+    Clock,
+    Save,
+    Shield,
+    Upload,
+    Download,
+    ClipboardCopy,
+    RotateCcw,
+    Maximize2,
+    Minimize2,
+    RotateCw,
+    Bug,
+    Info,
+} from "lucide-react"
 import InstallCertificateDialog from "./InstallCert"
-import { open } from "@tauri-apps/plugin-shell";
-import { useTheme } from "./theme-provider";
-import { useAppDispatch, useAppSelector } from "@/hooks/redux";
-import { useProjectId } from "@/hooks/useProjectId";
-import { selectAllScopes, selectActiveScope, selectActiveScopeId, setActiveScope } from "@/store/slices/scopeSlice";
-import { cn } from "@/lib/utils";
+import AboutDialog from "./AboutDialog"
+import { open } from "@tauri-apps/plugin-shell"
+import { useTheme } from "./theme-provider"
+import { useAppDispatch, useAppSelector } from "@/hooks/redux"
+import { useProjectId } from "@/hooks/useProjectId"
+import { selectAllScopes, selectActiveScope, selectActiveScopeId, setActiveScope } from "@/store/slices/scopeSlice"
+import { cn } from "@/lib/utils"
 
 const appWindow = getCurrentWindow()
 
 export default function MenubarDemo() {
     const [isMaximized, setIsMaximized] = useState(false)
+    const [isFullscreen, setIsFullscreen] = useState(false)
     const { theme, setTheme } = useTheme()
 
+    // Dialog states
+    const [certDialogOpen, setCertDialogOpen] = useState(false)
+    const [aboutDialogOpen, setAboutDialogOpen] = useState(false)
+
     // Scope state
-    const dispatch = useAppDispatch();
-    const projectId = useProjectId();
-    const allScopes = useAppSelector(selectAllScopes(projectId));
-    const activeScope = useAppSelector(selectActiveScope(projectId));
-    const activeScopeId = useAppSelector(selectActiveScopeId(projectId));
-    const [scopeDropdownOpen, setScopeDropdownOpen] = useState(false);
-    const scopeDropdownRef = useRef<HTMLDivElement>(null);
+    const dispatch = useAppDispatch()
+    const projectId = useProjectId()
+    const allScopes = useAppSelector(selectAllScopes(projectId))
+    const activeScope = useAppSelector(selectActiveScope(projectId))
+    const activeScopeId = useAppSelector(selectActiveScopeId(projectId))
+    const [scopeDropdownOpen, setScopeDropdownOpen] = useState(false)
+    const scopeDropdownRef = useRef<HTMLDivElement>(null)
 
     // Close scope dropdown on outside click
     useEffect(() => {
-        if (!scopeDropdownOpen) return;
+        if (!scopeDropdownOpen) return
         const handler = (e: MouseEvent) => {
             if (scopeDropdownRef.current && !scopeDropdownRef.current.contains(e.target as Node)) {
-                setScopeDropdownOpen(false);
+                setScopeDropdownOpen(false)
             }
-        };
-        document.addEventListener('mousedown', handler);
-        return () => document.removeEventListener('mousedown', handler);
-    }, [scopeDropdownOpen]);
+        }
+        document.addEventListener("mousedown", handler)
+        return () => document.removeEventListener("mousedown", handler)
+    }, [scopeDropdownOpen])
 
     useEffect(() => {
-        // Set initial state
-        appWindow.isMaximized().then(setIsMaximized)
+        // Set initial window state
+        appWindow.isMaximized().then(setIsMaximized).catch(() => {})
+        appWindow.isFullscreen().then(setIsFullscreen).catch(() => {})
 
         // Keep icon in sync if window is resized/maximized via OS controls,
         // double-click on title bar, snapping, etc.
         const unlistenPromise = appWindow.onResized(async () => {
-            setIsMaximized(await appWindow.isMaximized())
+            try {
+                setIsMaximized(await appWindow.isMaximized())
+                setIsFullscreen(await appWindow.isFullscreen())
+            } catch {}
         })
 
         return () => {
@@ -68,16 +100,60 @@ export default function MenubarDemo() {
         }
     }, [])
 
+    const handleToggleFullscreen = async () => {
+        try {
+            const isFull = await appWindow.isFullscreen()
+            if (!isFull) {
+                const wasMax = await appWindow.isMaximized()
+                if (wasMax) {
+                    await appWindow.unmaximize()
+                }
+                await appWindow.setFullscreen(true)
+                setIsFullscreen(true)
+            } else {
+                await appWindow.setFullscreen(false)
+                setIsFullscreen(false)
+            }
+        } catch (err) {
+            console.error("Failed to toggle fullscreen:", err)
+        }
+    }
+
+    // F11 & Escape key listeners for fullscreen toggle
+    useEffect(() => {
+        const handleKeyDown = async (e: KeyboardEvent) => {
+            if (e.key === "F11") {
+                e.preventDefault()
+                await handleToggleFullscreen()
+            } else if (e.key === "Escape") {
+                try {
+                    const isFull = await appWindow.isFullscreen()
+                    if (isFull) {
+                        e.preventDefault()
+                        await appWindow.setFullscreen(false)
+                        setIsFullscreen(false)
+                    }
+                } catch {}
+            }
+        }
+        window.addEventListener("keydown", handleKeyDown)
+        return () => window.removeEventListener("keydown", handleKeyDown)
+    }, [])
+
     const handleMinimize = () => appWindow.minimize()
 
     const handleMaximizeToggle = async () => {
+        const isFull = await appWindow.isFullscreen()
+        if (isFull) {
+            await appWindow.setFullscreen(false)
+            setIsFullscreen(false)
+        }
         await appWindow.toggleMaximize()
         setIsMaximized(await appWindow.isMaximized())
     }
 
-    const handleClose = () => appWindow.close()
 
-    const [certDialogOpen, setCertDialogOpen] = useState(false)
+    const handleClose = () => appWindow.close()
 
     return (
         <div
@@ -93,40 +169,46 @@ export default function MenubarDemo() {
             <span className="text-sm font-medium select-none shrink-0">Aresius</span>
 
             <Menubar className="border-none bg-transparent p-0 shrink-0 shadow-none rounded-none h-auto">
+                {/* ── File Menu ── */}
                 <MenubarMenu>
                     <MenubarTrigger>File</MenubarTrigger>
                     <MenubarContent>
                         <MenubarGroup>
-                            <MenubarItem>
-                                New Tab <MenubarShortcut>⌘T</MenubarShortcut>
+                            <MenubarItem className="gap-2">
+                                <FolderOpen className="h-3.5 w-3.5 text-muted-foreground" />
+                                <span>Open Project (.ares)</span>
+                                <MenubarShortcut>⌘O</MenubarShortcut>
                             </MenubarItem>
-                            <MenubarItem>
-                                New Window <MenubarShortcut>⌘N</MenubarShortcut>
+                            <MenubarItem className="gap-2">
+                                <Library className="h-3.5 w-3.5 text-muted-foreground" />
+                                <span>Open Project Catalog</span>
                             </MenubarItem>
-                            <MenubarItem disabled>New Incognito Window</MenubarItem>
-                        </MenubarGroup>
-                        <MenubarSeparator />
-                        <MenubarGroup>
                             <MenubarSub>
-                                <MenubarSubTrigger>Share</MenubarSubTrigger>
-                                <MenubarSubContent>
+                                <MenubarSubTrigger className="gap-2">
+                                    <Clock className="h-3.5 w-3.5 text-muted-foreground" />
+                                    <span>Recent Projects</span>
+                                </MenubarSubTrigger>
+                                <MenubarSubContent className="w-48">
                                     <MenubarGroup>
-                                        <MenubarItem>Email link</MenubarItem>
-                                        <MenubarItem>Messages</MenubarItem>
-                                        <MenubarItem>Notes</MenubarItem>
+                                        <MenubarItem disabled className="text-xs text-muted-foreground italic">
+                                            No recent projects
+                                        </MenubarItem>
                                     </MenubarGroup>
                                 </MenubarSubContent>
                             </MenubarSub>
                         </MenubarGroup>
                         <MenubarSeparator />
                         <MenubarGroup>
-                            <MenubarItem>
-                                Print... <MenubarShortcut>⌘P</MenubarShortcut>
+                            <MenubarItem className="gap-2">
+                                <Save className="h-3.5 w-3.5 text-muted-foreground" />
+                                <span>Save Project in...</span>
+                                <MenubarShortcut>⌘S</MenubarShortcut>
                             </MenubarItem>
                         </MenubarGroup>
                     </MenubarContent>
                 </MenubarMenu>
 
+                {/* ── Edit Menu ── */}
                 <MenubarMenu>
                     <MenubarTrigger>Edit</MenubarTrigger>
                     <MenubarContent>
@@ -140,39 +222,23 @@ export default function MenubarDemo() {
                         </MenubarGroup>
                         <MenubarSeparator />
                         <MenubarGroup>
-                            <MenubarSub>
-                                <MenubarSubTrigger>Find</MenubarSubTrigger>
-                                <MenubarSubContent>
-                                    <MenubarGroup>
-                                        <MenubarItem>Search the web</MenubarItem>
-                                    </MenubarGroup>
-                                    <MenubarSeparator />
-                                    <MenubarGroup>
-                                        <MenubarItem>Find...</MenubarItem>
-                                        <MenubarItem>Find Next</MenubarItem>
-                                        <MenubarItem>Find Previous</MenubarItem>
-                                    </MenubarGroup>
-                                </MenubarSubContent>
-                            </MenubarSub>
-                        </MenubarGroup>
-                        <MenubarSeparator />
-                        <MenubarGroup>
-                            <MenubarItem>Cut</MenubarItem>
-                            <MenubarItem>Copy</MenubarItem>
-                            <MenubarItem>Paste</MenubarItem>
+                            <MenubarItem>Cut <MenubarShortcut>⌘X</MenubarShortcut></MenubarItem>
+                            <MenubarItem>Copy <MenubarShortcut>⌘C</MenubarShortcut></MenubarItem>
+                            <MenubarItem>Paste <MenubarShortcut>⌘V</MenubarShortcut></MenubarItem>
                         </MenubarGroup>
                     </MenubarContent>
                 </MenubarMenu>
 
+                {/* ── View Menu ── */}
                 <MenubarMenu>
                     <MenubarTrigger>View</MenubarTrigger>
-                    <MenubarContent className="w-48">
+                    <MenubarContent className="w-52">
                         <MenubarGroup>
                             <MenubarSub>
                                 <MenubarSubTrigger className="gap-2">
-                                    {theme === 'light' ? (
+                                    {theme === "light" ? (
                                         <Sun className="h-4 w-4 text-amber-500" />
-                                    ) : theme === 'dark' ? (
+                                    ) : theme === "dark" ? (
                                         <Moon className="h-4 w-4 text-primary" />
                                     ) : (
                                         <Laptop className="h-4 w-4 text-muted-foreground" />
@@ -206,76 +272,98 @@ export default function MenubarDemo() {
                         </MenubarGroup>
                         <MenubarSeparator />
                         <MenubarGroup>
-                            <MenubarCheckboxItem>Bookmarks Bar</MenubarCheckboxItem>
-                            <MenubarCheckboxItem checked>Full URLs</MenubarCheckboxItem>
+                            <MenubarItem onClick={handleToggleFullscreen} className="gap-2 justify-between">
+                                <span className="flex items-center gap-2">
+                                    {isFullscreen ? (
+                                        <Minimize2 className="h-3.5 w-3.5 text-muted-foreground" />
+                                    ) : (
+                                        <Maximize2 className="h-3.5 w-3.5 text-muted-foreground" />
+                                    )}
+                                    {isFullscreen ? "Exit Fullscreen" : "Toggle Fullscreen"}
+                                </span>
+                                <MenubarShortcut>F11</MenubarShortcut>
+                            </MenubarItem>
                         </MenubarGroup>
                         <MenubarSeparator />
                         <MenubarGroup>
-                            <MenubarItem inset>
-                                Reload <MenubarShortcut>⌘R</MenubarShortcut>
+                            <MenubarItem onClick={() => window.location.reload()} className="gap-2 justify-between">
+                                <span className="flex items-center gap-2">
+                                    <RotateCw className="h-3.5 w-3.5 text-muted-foreground" />
+                                    Reload
+                                </span>
+                                <MenubarShortcut>⌘R</MenubarShortcut>
                             </MenubarItem>
-                            <MenubarItem disabled inset>
-                                Force Reload <MenubarShortcut>⇧⌘R</MenubarShortcut>
-                            </MenubarItem>
-                        </MenubarGroup>
-                        <MenubarSeparator />
-                        <MenubarGroup>
-                            <MenubarItem inset>Toggle Fullscreen</MenubarItem>
                         </MenubarGroup>
                     </MenubarContent>
                 </MenubarMenu>
 
-                <MenubarMenu>
-                    <MenubarTrigger>Profiles</MenubarTrigger>
-                    <MenubarContent>
-                        <MenubarRadioGroup value="benoit">
-                            <MenubarRadioItem value="andy">Andy</MenubarRadioItem>
-                            <MenubarRadioItem value="benoit">Benoit</MenubarRadioItem>
-                            <MenubarRadioItem value="Luis">Luis</MenubarRadioItem>
-                        </MenubarRadioGroup>
-                        <MenubarSeparator />
-                        <MenubarGroup>
-                            <MenubarItem inset>Edit...</MenubarItem>
-                        </MenubarGroup>
-                        <MenubarSeparator />
-                        <MenubarGroup>
-                            <MenubarItem inset>Add Profile...</MenubarItem>
-                        </MenubarGroup>
-                    </MenubarContent>
-                </MenubarMenu>
-
+                {/* ── Certificate Menu ── */}
                 <MenubarMenu>
                     <MenubarTrigger>Certificate</MenubarTrigger>
-                    <MenubarContent>
+                    <MenubarContent className="w-56">
                         <MenubarGroup>
                             <MenubarItem
+                                className="gap-2"
                                 onSelect={(event) => {
                                     event.preventDefault()
                                     setCertDialogOpen(true)
                                 }}
-
-                            >Install Certificate</MenubarItem>
+                            >
+                                <Shield className="h-3.5 w-3.5 text-primary" />
+                                <span>Install Certificate</span>
+                            </MenubarItem>
+                            <MenubarItem className="gap-2">
+                                <Upload className="h-3.5 w-3.5 text-muted-foreground" />
+                                <span>Import Custom Root CA...</span>
+                            </MenubarItem>
                         </MenubarGroup>
                         <MenubarSeparator />
                         <MenubarGroup>
-                            <MenubarItem>Reset All Aresius Certificates</MenubarItem>
+                            <MenubarItem className="gap-2">
+                                <Download className="h-3.5 w-3.5 text-muted-foreground" />
+                                <span>Export Root CA Certificate</span>
+                            </MenubarItem>
+                            <MenubarItem className="gap-2">
+                                <ClipboardCopy className="h-3.5 w-3.5 text-muted-foreground" />
+                                <span>Copy CA File Path to Clipboard</span>
+                            </MenubarItem>
+                        </MenubarGroup>
+                        <MenubarSeparator />
+                        <MenubarGroup>
+                            <MenubarItem className="gap-2 text-destructive focus:text-destructive">
+                                <RotateCcw className="h-3.5 w-3.5" />
+                                <span>Regenerate / Reset CA Certificates</span>
+                            </MenubarItem>
                         </MenubarGroup>
                     </MenubarContent>
                 </MenubarMenu>
+
+                {/* ── Help Menu ── */}
                 <MenubarMenu>
                     <MenubarTrigger>Help</MenubarTrigger>
-                    <MenubarContent>
-
-                        <MenubarGroup >
-                            <MenubarItem onSelect={() => open("https://github.com/0xMarik/Aresius/issues")}>Report Bugs?...</MenubarItem>
-                        </MenubarGroup>
-                        <MenubarSeparator />
-                        <MenubarGroup >
-                            <MenubarItem>
-                                About
+                    <MenubarContent className="w-44">
+                        <MenubarGroup>
+                            <MenubarItem
+                                className="gap-2"
+                                onSelect={() => open("https://github.com/0xMarik/Aresius/issues")}
+                            >
+                                <Bug className="h-3.5 w-3.5 text-muted-foreground" />
+                                <span>Report Bugs...</span>
                             </MenubarItem>
                         </MenubarGroup>
-
+                        <MenubarSeparator />
+                        <MenubarGroup>
+                            <MenubarItem
+                                className="gap-2"
+                                onSelect={(event) => {
+                                    event.preventDefault()
+                                    setAboutDialogOpen(true)
+                                }}
+                            >
+                                <Info className="h-3.5 w-3.5 text-primary" />
+                                <span>About Aresius</span>
+                            </MenubarItem>
+                        </MenubarGroup>
                     </MenubarContent>
                 </MenubarMenu>
             </Menubar>
@@ -286,12 +374,12 @@ export default function MenubarDemo() {
                     type="button"
                     onClick={() => setScopeDropdownOpen((v) => !v)}
                     className={cn(
-                        'flex items-center gap-1.5 h-6 px-2 rounded-md border text-[11px] font-medium transition-all select-none',
+                        "flex items-center gap-1.5 h-6 px-2 rounded-md border text-[11px] font-medium transition-all select-none",
                         activeScope
-                            ? 'border-border bg-accent/60 text-foreground hover:bg-accent'
-                            : 'border-border/50 bg-transparent text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted/40'
+                            ? "border-border bg-accent/60 text-foreground hover:bg-accent"
+                            : "border-border/50 bg-transparent text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted/40"
                     )}
-                    title={activeScope ? `Active scope: ${activeScope.name}` : 'No active scope'}
+                    title={activeScope ? `Active scope: ${activeScope.name}` : "No active scope"}
                 >
                     {activeScope ? (
                         <span
@@ -301,8 +389,8 @@ export default function MenubarDemo() {
                     ) : (
                         <CircleDot className="w-2.5 h-2.5 shrink-0 text-muted-foreground/50" />
                     )}
-                    <span className={activeScope ? 'text-foreground' : 'text-muted-foreground/60'}>
-                        {activeScope ? activeScope.name : 'No Scope'}
+                    <span className={activeScope ? "text-foreground" : "text-muted-foreground/60"}>
+                        {activeScope ? activeScope.name : "No Scope"}
                     </span>
                     <ChevronDown className="w-2.5 h-2.5 text-muted-foreground/60" />
                 </button>
@@ -314,12 +402,12 @@ export default function MenubarDemo() {
                         <button
                             type="button"
                             onClick={() => {
-                                if (projectId) dispatch(setActiveScope({ scopeId: null, projectId }));
-                                setScopeDropdownOpen(false);
+                                if (projectId) dispatch(setActiveScope({ scopeId: null, projectId }))
+                                setScopeDropdownOpen(false)
                             }}
                             className={cn(
-                                'w-full flex items-center gap-2 px-3 py-1.5 hover:bg-accent text-left transition-colors',
-                                activeScopeId === null ? 'text-primary font-medium' : 'text-muted-foreground'
+                                "w-full flex items-center gap-2 px-3 py-1.5 hover:bg-accent text-left transition-colors",
+                                activeScopeId === null ? "text-primary font-medium" : "text-muted-foreground"
                             )}
                         >
                             <CircleDot className="w-2.5 h-2.5 shrink-0" />
@@ -336,12 +424,12 @@ export default function MenubarDemo() {
                                 key={scope.id}
                                 type="button"
                                 onClick={() => {
-                                    if (projectId) dispatch(setActiveScope({ scopeId: scope.id, projectId }));
-                                    setScopeDropdownOpen(false);
+                                    if (projectId) dispatch(setActiveScope({ scopeId: scope.id, projectId }))
+                                    setScopeDropdownOpen(false)
                                 }}
                                 className={cn(
-                                    'w-full flex items-center gap-2 px-3 py-1.5 hover:bg-accent text-left transition-colors',
-                                    scope.id === activeScopeId ? 'text-foreground font-medium' : 'text-muted-foreground'
+                                    "w-full flex items-center gap-2 px-3 py-1.5 hover:bg-accent text-left transition-colors",
+                                    scope.id === activeScopeId ? "text-foreground font-medium" : "text-muted-foreground"
                                 )}
                             >
                                 <span
@@ -393,7 +481,9 @@ export default function MenubarDemo() {
                     <X className="h-3.5 w-3.5" />
                 </button>
             </div>
+
             <InstallCertificateDialog open={certDialogOpen} onOpenChange={setCertDialogOpen} />
+            <AboutDialog open={aboutDialogOpen} onOpenChange={setAboutDialogOpen} />
         </div>
     )
 }
