@@ -193,3 +193,110 @@ export const toggleRequestMethod = (rawRequest?: string | null): string => {
         return resultLines.join(newline);
     }
 };
+
+/**
+ * Calculates the exact UTF-8 byte length of the body in an HTTP request
+ * and updates or inserts the Content-Length header accordingly.
+ */
+export const updateContentLengthInRequest = (rawRequest?: string | null): string => {
+    if (!rawRequest || typeof rawRequest !== 'string') return rawRequest || '';
+
+    const isCrLf = rawRequest.includes('\r\n');
+    const newline = isCrLf ? '\r\n' : '\n';
+
+    // Find the boundary between headers and body (\r\n\r\n or \n\n)
+    const headerEndMatch = rawRequest.match(/\r?\n\r?\n/);
+    if (!headerEndMatch || headerEndMatch.index === undefined) {
+        const lines = rawRequest.split(/\r?\n/);
+        let hasCl = false;
+        const updatedLines = lines.map((line) => {
+            const colonIdx = line.indexOf(':');
+            if (colonIdx > 0 && line.substring(0, colonIdx).trim().toLowerCase() === 'content-length') {
+                hasCl = true;
+                return `${line.substring(0, colonIdx).trim()}: 0`;
+            }
+            return line;
+        });
+        return hasCl ? updatedLines.join(newline) : rawRequest;
+    }
+
+    const headerBlock = rawRequest.substring(0, headerEndMatch.index);
+    const separator = headerEndMatch[0];
+    const body = rawRequest.substring(headerEndMatch.index + separator.length);
+
+    const bodyBytes = new TextEncoder().encode(body).length;
+
+    const headerLines = headerBlock.split(/\r?\n/);
+    let hasContentLength = false;
+
+    const updatedHeaderLines = headerLines.map((line) => {
+        const colonIdx = line.indexOf(':');
+        if (colonIdx > 0) {
+            const key = line.substring(0, colonIdx).trim().toLowerCase();
+            if (key === 'content-length') {
+                hasContentLength = true;
+                return `${line.substring(0, colonIdx).trim()}: ${bodyBytes}`;
+            }
+        }
+        return line;
+    });
+
+    if (!hasContentLength && bodyBytes > 0) {
+        updatedHeaderLines.push(`Content-Length: ${bodyBytes}`);
+    }
+
+    return `${updatedHeaderLines.join(newline)}${separator}${body}`;
+};
+
+/**
+ * Ensures the HTTP request has Connection: close header to force closing connection.
+ */
+export const applyForceCloseConnection = (rawRequest?: string | null): string => {
+    if (!rawRequest || typeof rawRequest !== 'string') return rawRequest || '';
+
+    const isCrLf = rawRequest.includes('\r\n');
+    const newline = isCrLf ? '\r\n' : '\n';
+
+    const headerEndMatch = rawRequest.match(/\r?\n\r?\n/);
+    if (!headerEndMatch || headerEndMatch.index === undefined) {
+        const lines = rawRequest.split(/\r?\n/);
+        let hasConn = false;
+        const updatedLines = lines.map((line) => {
+            const colonIdx = line.indexOf(':');
+            if (colonIdx > 0 && line.substring(0, colonIdx).trim().toLowerCase() === 'connection') {
+                hasConn = true;
+                return `${line.substring(0, colonIdx).trim()}: close`;
+            }
+            return line;
+        });
+        if (!hasConn && lines.length > 0 && lines[0].trim()) {
+            updatedLines.push('Connection: close');
+        }
+        return updatedLines.join(newline);
+    }
+
+    const headerBlock = rawRequest.substring(0, headerEndMatch.index);
+    const separator = headerEndMatch[0];
+    const body = rawRequest.substring(headerEndMatch.index + separator.length);
+
+    const headerLines = headerBlock.split(/\r?\n/);
+    let hasConnectionHeader = false;
+
+    const updatedHeaderLines = headerLines.map((line) => {
+        const colonIdx = line.indexOf(':');
+        if (colonIdx > 0) {
+            const key = line.substring(0, colonIdx).trim().toLowerCase();
+            if (key === 'connection') {
+                hasConnectionHeader = true;
+                return `${line.substring(0, colonIdx).trim()}: close`;
+            }
+        }
+        return line;
+    });
+
+    if (!hasConnectionHeader) {
+        updatedHeaderLines.push('Connection: close');
+    }
+
+    return `${updatedHeaderLines.join(newline)}${separator}${body}`;
+};

@@ -10,6 +10,7 @@ import RequestCodeEditor from "@/components/Replayer/RequestCodeEditor";
 import ResponseCodeEditor from "@/components/Replayer/ResponseCodeEditor";
 import { AlertTriangle, Loader2, Play, Plus, Repeat, Square } from "lucide-react";
 import ReplayerSession from "@/components/Replayer/ReplayerSession";
+import ReplayerSettingsPopover from "@/components/Replayer/ReplayerSettingsPopover";
 import { ReplayerProvider, useReplayerEditor, useReplayerTree } from "@/context/ReplayerContext";
 import { useAppDispatch } from '@/hooks/redux';
 import { useProjectId } from '@/hooks/useProjectId';
@@ -107,6 +108,7 @@ function ReplayerContent() {
                                     updateDraftUrl(url, urlIsValid);
                                 }}
                             />
+                            <ReplayerSettingsPopover />
                             {responseLoading ? (
                                 <Button
                                     onClick={cancelReplay}

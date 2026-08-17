@@ -17,6 +17,11 @@ const RequestCodeEditor = () => {
     const sessionId = activeDraft?.sessionId;
     const requestTmp = activeDraft?.requestTmp ?? '';
 
+    const updateDraftContentRef = useRef(updateDraftContent);
+    useEffect(() => {
+        updateDraftContentRef.current = updateDraftContent;
+    }, [updateDraftContent]);
+
     useEffect(() => {
         if (!editorRef.current || !sessionId) return;
 
@@ -28,7 +33,7 @@ const RequestCodeEditor = () => {
         const updateListener = EditorView.updateListener.of((update) => {
             if (update.docChanged) {
                 const code = update.state.doc.sliceString(0, update.state.doc.length, update.state.lineBreak);
-                updateDraftContent(code);
+                updateDraftContentRef.current(code);
             }
         });
 
@@ -52,7 +57,24 @@ const RequestCodeEditor = () => {
                 view.destroy();
             }
         };
-    }, [sessionId, selectedHistoryIndex, isDark, updateDraftContent]);
+    }, [sessionId, selectedHistoryIndex, isDark]);
+
+    useEffect(() => {
+        if (!viewRef.current || activeDraft?.requestTmp === undefined) return;
+        const view = viewRef.current;
+        const currentDoc = view.state.doc.sliceString(0, view.state.doc.length, view.state.lineBreak);
+        if (currentDoc !== activeDraft.requestTmp) {
+            const currentSelection = view.state.selection;
+            const newLen = activeDraft.requestTmp.length;
+            const safeAnchor = Math.min(currentSelection.main.anchor, newLen);
+            const safeHead = Math.min(currentSelection.main.head, newLen);
+
+            view.dispatch({
+                changes: { from: 0, to: view.state.doc.length, insert: activeDraft.requestTmp },
+                selection: { anchor: safeAnchor, head: safeHead },
+            });
+        }
+    }, [activeDraft?.requestTmp]);
 
     return (
         <div className="bg-card w-full h-full">

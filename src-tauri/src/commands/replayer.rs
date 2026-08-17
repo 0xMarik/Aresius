@@ -21,11 +21,62 @@ pub async fn cancel_replayer_request(req_id: String) -> Result<(), String> {
     Ok(())
 }
 
+fn apply_force_close_connection(req: &str) -> String {
+    let is_crlf = req.contains("\r\n");
+    let newline = if is_crlf { "\r\n" } else { "\n" };
+
+    if let Some(pos) = req.find("\r\n\r\n").or_else(|| req.find("\n\n")) {
+        let sep_len = if req[pos..].starts_with("\r\n\r\n") { 4 } else { 2 };
+        let header_block = &req[..pos];
+        let body = &req[pos + sep_len..];
+
+        let mut has_conn = false;
+        let mut new_headers = Vec::new();
+
+        for line in header_block.lines() {
+            if let Some(colon_idx) = line.find(':') {
+                let key = line[..colon_idx].trim().to_lowercase();
+                if key == "connection" {
+                    has_conn = true;
+                    new_headers.push(format!("{}: close", line[..colon_idx].trim()));
+                    continue;
+                }
+            }
+            new_headers.push(line.to_string());
+        }
+
+        if !has_conn {
+            new_headers.push("Connection: close".to_string());
+        }
+
+        format!("{}{}{}", new_headers.join(newline), &req[pos..pos + sep_len], body)
+    } else {
+        let mut has_conn = false;
+        let mut new_headers = Vec::new();
+        for line in req.lines() {
+            if let Some(colon_idx) = line.find(':') {
+                let key = line[..colon_idx].trim().to_lowercase();
+                if key == "connection" {
+                    has_conn = true;
+                    new_headers.push(format!("{}: close", line[..colon_idx].trim()));
+                    continue;
+                }
+            }
+            new_headers.push(line.to_string());
+        }
+        if !has_conn && !req.trim().is_empty() {
+            new_headers.push("Connection: close".to_string());
+        }
+        new_headers.join(newline)
+    }
+}
+
 #[tauri::command]
 pub async fn replay_request(
     url: String,
     request_tmp: String,
     req_id: Option<String>,
+    force_close_connection: Option<bool>,
 ) -> Result<ReplayerResponse, String> {
     let (tx, rx) = oneshot::channel::<()>();
 
@@ -41,8 +92,14 @@ pub async fn replay_request(
         url
     };
     let task_url = target_url.clone();
+    let force_close = force_close_connection.unwrap_or(false);
+
     let task = async move {
-        let req = request_tmp;
+        let req = if force_close {
+            apply_force_close_connection(&request_tmp)
+        } else {
+            request_tmp
+        };
 
         let mut conn = HttpConnection::new(&task_url)
             .await

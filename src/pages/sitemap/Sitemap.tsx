@@ -33,8 +33,7 @@ import {
     deleteSitemapNode,
     selectSitemap,
     selectSitemapState,
-    setSiteMapBulk,
-    fetchSitemapStateForProject,
+    loadSitemapFromBackend,
     persistSitemapStateToDb,
     setSitemapExpandedIds,
     setSitemapSelectedNode,
@@ -672,19 +671,12 @@ export default function SitemapTree() {
     const reqViewMode = sitemapState.reqViewMode;
     const resViewMode = sitemapState.resViewMode;
 
-    // Load persisted sitemap state from SQLite DB on mount if not loaded
+    // Load latest sitemap tree and view state directly from backend SQLite DB on mount / visit, updating Redux cache
     useEffect(() => {
-        if (projectId && !sitemapState.isLoaded) {
-            dispatch(fetchSitemapStateForProject(projectId) as any);
+        if (projectId) {
+            dispatch(loadSitemapFromBackend(projectId) as any);
         }
-    }, [projectId, sitemapState.isLoaded, dispatch]);
-
-    // Auto populate sitemap from history if empty on mount
-    useEffect(() => {
-        if (projectId && sitemap.length === 0 && history.length > 0) {
-            dispatch(setSiteMapBulk({ items: history, projectId }));
-        }
-    }, [projectId, sitemap.length, history, dispatch]);
+    }, [projectId, dispatch]);
 
     const nodeIndex = useMemo(() => buildSitemapNodeIndex(sitemap), [sitemap]);
     const selectedNode = selectedNodeId ? nodeIndex.get(selectedNodeId) ?? null : null;

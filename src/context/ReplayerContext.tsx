@@ -2,7 +2,7 @@ import React, { createContext, useContext, useEffect, useRef, useCallback, useMe
 import { invoke } from '@tauri-apps/api/core';
 import { useProjectId } from '@/hooks/useProjectId';
 import { useAppDispatch, useAppSelector } from '@/hooks/redux';
-import { parseResponse } from '@/components/utils';
+import { parseResponse, updateContentLengthInRequest } from '@/components/utils';
 import { stripPath, isDnsResolutionError } from '@/components/ValidateUrlInput';
 import { toast } from 'sonner';
 import { ReplayerHistoryItem } from '@/types/replayer.type';
@@ -76,7 +76,11 @@ interface ReplayerEditorContextType {
     activeStatus: string;
     hasError: boolean;
     errorMessage: string | null;
+    updateContentLength: boolean;
+    forceCloseConnection: boolean;
 
+    setUpdateContentLength: (val: boolean) => void;
+    setForceCloseConnection: (val: boolean) => void;
     updateDraftContent: (requestTmp: string) => void;
     updateDraftUrl: (url: string, urlIsValid: boolean) => void;
     selectHistoryIndex: (index: number) => void;
@@ -112,6 +116,16 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
     const activeRequestsRef = useRef<Map<string, string>>(new Map());
     const debounceDraftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    const [updateContentLength, setUpdateContentLengthState] = React.useState<boolean>(() => {
+        const saved = localStorage.getItem('aresius_replayer_update_content_length');
+        return saved !== null ? saved === 'true' : true;
+    });
+
+    const [forceCloseConnection, setForceCloseConnectionState] = React.useState<boolean>(() => {
+        const saved = localStorage.getItem('aresius_replayer_force_close_connection');
+        return saved !== null ? saved === 'true' : true;
+    });
 
     // Dynamic responseLoading scoped strictly to the currently selected session
     const responseLoading = Boolean(selectedSessionId && pendingSessions[selectedSessionId]);
@@ -334,6 +348,28 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         }, 300);
     }, [dispatch, projectId, selectedSessionId]);
 
+    const activeDraftRef = useRef(activeDraft);
+    useEffect(() => {
+        activeDraftRef.current = activeDraft;
+    }, [activeDraft]);
+
+    const setUpdateContentLength = useCallback((val: boolean) => {
+        setUpdateContentLengthState(val);
+        localStorage.setItem('aresius_replayer_update_content_length', String(val));
+        const draft = activeDraftRef.current;
+        if (val && draft?.requestTmp) {
+            const updated = updateContentLengthInRequest(draft.requestTmp);
+            if (updated !== draft.requestTmp) {
+                updateDraftContent(updated);
+            }
+        }
+    }, [updateDraftContent]);
+
+    const setForceCloseConnection = useCallback((val: boolean) => {
+        setForceCloseConnectionState(val);
+        localStorage.setItem('aresius_replayer_force_close_connection', String(val));
+    }, []);
+
     // Update URL
     const updateDraftUrl = useCallback((url: string, urlIsValid: boolean) => {
         if (!projectId || !selectedSessionId) return;
@@ -381,13 +417,21 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         const stripedUrl = stripPath(activeDraft.url);
         updateDraftUrl(stripedUrl, true);
 
-        const currentRequestTmp = activeDraft.requestTmp;
+        let currentRequestTmp = activeDraft.requestTmp;
+        if (updateContentLength) {
+            const updated = updateContentLengthInRequest(currentRequestTmp);
+            if (updated !== currentRequestTmp) {
+                currentRequestTmp = updated;
+                updateDraftContent(updated);
+            }
+        }
 
         try {
             const response = await invoke<ReplayerHistoryItem>('replay_request', {
                 requestTmp: currentRequestTmp,
                 url: stripedUrl,
                 reqId,
+                forceCloseConnection,
             });
 
             if (activeRequestsRef.current.get(sessId) === reqId) {
@@ -475,7 +519,7 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                 }).catch(console.error);
             }
         }
-    }, [activeDraft, dispatch, projectId, selectedSessionId, updateDraftUrl]);
+    }, [activeDraft, dispatch, forceCloseConnection, projectId, selectedSessionId, updateContentLength, updateDraftContent, updateDraftUrl]);
 
     // Cancel Replay (scoped per sessionId)
     const cancelReplay = useCallback(async () => {
@@ -593,7 +637,11 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         activeStatus,
         hasError,
         errorMessage,
+        updateContentLength,
+        forceCloseConnection,
 
+        setUpdateContentLength,
+        setForceCloseConnection,
         updateDraftContent,
         updateDraftUrl,
         selectHistoryIndex,
@@ -610,6 +658,10 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         activeStatus,
         hasError,
         errorMessage,
+        updateContentLength,
+        forceCloseConnection,
+        setUpdateContentLength,
+        setForceCloseConnection,
         updateDraftContent,
         updateDraftUrl,
         selectHistoryIndex,

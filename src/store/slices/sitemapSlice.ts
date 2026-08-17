@@ -3,6 +3,7 @@ import { HttpHistory } from "@/types/http.type";
 import { TreeNode } from "@/types/sitemap.type";
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 import { deleteProject } from "./projectSlice";
+import { setHistoryBulk } from "./http-historySlice";
 import type { AppDispatch, RootState } from "@/store";
 import { invoke } from "@tauri-apps/api/core";
 
@@ -202,6 +203,62 @@ export const fetchSitemapStateForProject = (projectId: string) => async (dispatc
     }
   } catch (err) {
     console.warn('Failed to load sitemap state from DB:', err);
+  }
+};
+
+/** Thunk: Loads HTTP history and sitemap state from backend SQLite DB if not already cached in Redux */
+export const loadSitemapFromBackend = (projectId: string, force = false) => async (
+  dispatch: AppDispatch,
+  getState: () => RootState
+) => {
+  if (!projectId) return;
+
+  const state = getState();
+  const projectSitemap = state.sitemap[projectId];
+  const isAlreadyLoaded = projectSitemap && projectSitemap.isLoaded;
+
+  // If already warm in Redux and not forcing a reload, skip redundant DB query & tree rebuild
+  if (isAlreadyLoaded && !force) {
+    return;
+  }
+
+  try {
+    const [historyRows, sitemapData] = await Promise.all([
+      invoke<HttpHistory[]>('get_http_history'),
+      invoke<any>('get_sitemap_state_db', { projectId }),
+    ]);
+
+    if (historyRows && Array.isArray(historyRows)) {
+      dispatch(setHistoryBulk({ items: historyRows, projectId }));
+      dispatch(setSiteMapBulk({ items: historyRows, projectId }));
+    }
+
+    if (sitemapData) {
+      dispatch(
+        setSitemapLoadedState({
+          projectId,
+          state: {
+            selectedNodeId: sitemapData.selectedNodeId ?? null,
+            selectedRequestId: sitemapData.selectedRequestId ?? null,
+            expandedIds: Array.isArray(sitemapData.expandedIds) ? sitemapData.expandedIds : [],
+            searchTerm: sitemapData.searchTerm ?? '',
+            scopeFilter: (sitemapData.scopeFilter as 'all' | 'in' | 'out') ?? 'in',
+            reqViewMode: (sitemapData.reqViewMode as 'raw' | 'pretty') ?? 'raw',
+            resViewMode: (sitemapData.resViewMode as 'raw' | 'pretty') ?? 'raw',
+            isLoaded: true,
+          },
+        })
+      );
+    } else {
+      dispatch(
+        setSitemapLoadedState({
+          projectId,
+          state: { isLoaded: true },
+        })
+      );
+    }
+  } catch (err) {
+    console.warn('Failed to load sitemap from backend DB:', err);
   }
 };
 
