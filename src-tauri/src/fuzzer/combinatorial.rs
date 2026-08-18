@@ -53,6 +53,7 @@ fn build_combinatorial_fuzz_requests(session: &FuzzerSession) -> Vec<FuzzTarget>
         targets.push(FuzzTarget {
             id: format!("{}", combo_idx),
             request: modified_request,
+            payload: Some(combination.join(", ")),
         });
     }
 

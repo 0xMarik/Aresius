@@ -26,6 +26,7 @@ fn build_echo_fuzz_requests(session: &FuzzerSession) -> Vec<FuzzTarget> {
         targets.push(FuzzTarget {
             id: format!("{}", value_idx),
             request: modified_request,
+            payload: Some(value.clone()),
         });
     }
 

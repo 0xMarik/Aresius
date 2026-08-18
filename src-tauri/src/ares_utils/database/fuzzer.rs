@@ -89,6 +89,7 @@ pub struct FuzzerRequestDb {
     pub error_message: Option<String>,
     pub connection_dropped: bool,
     pub sort_order: i64,
+    pub payload: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -713,6 +714,9 @@ pub async fn query_fuzzer_requests_window(
         Some("duration") => format!("response_time_ms {} NULLS LAST, sort_order ASC", dir),
         Some("length") => format!("response_length {} NULLS LAST, sort_order ASC", dir),
         Some("status") => format!("status {} , sort_order ASC", dir),
+        Some("payload") | Some("payloadPreview") => {
+            format!("payload {} NULLS LAST, sort_order ASC", dir)
+        }
         Some("requestDate") => format!("request_date {} , sort_order ASC", dir),
         Some("id") => format!("sort_order {}", dir),
         _ => "sort_order ASC".to_string(),
@@ -741,7 +745,7 @@ pub async fn query_fuzzer_requests_window(
 pub async fn batch_insert_fuzzer_requests(
     pool: &SqlitePool,
     run_id: &str,
-    targets: &[(String, String, Option<u32>)], // (id, raw_request, worker_id)
+    targets: &[(String, String, Option<u32>, Option<String>)], // (id, raw_request, worker_id, payload)
 ) -> Result<(), String> {
     if targets.is_empty() {
         return Ok(());
@@ -750,13 +754,14 @@ pub async fn batch_insert_fuzzer_requests(
     let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
     let now = chrono::Utc::now().timestamp_millis();
 
-    for (idx, (id, req, worker_id)) in targets.iter().enumerate() {
+    for (idx, (id, req, worker_id, payload)) in targets.iter().enumerate() {
         sqlx::query(
             "INSERT INTO fuzzer_requests
-                (id, run_id, worker_id, raw_request, request_date, status, connection_dropped, sort_order)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (id, run_id, worker_id, raw_request, payload, request_date, status, connection_dropped, sort_order)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(run_id, id) DO UPDATE SET
                 raw_request = excluded.raw_request,
+                payload = excluded.payload,
                 request_date = excluded.request_date,
                 status = 'pending',
                 connection_dropped = 0,
@@ -766,6 +771,7 @@ pub async fn batch_insert_fuzzer_requests(
         .bind(run_id)
         .bind(worker_id.map(|w| w as i64))
         .bind(req)
+        .bind(payload)
         .bind(now)
         .bind("pending")
         .bind(false)

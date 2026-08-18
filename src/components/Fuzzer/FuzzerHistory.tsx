@@ -38,7 +38,10 @@ export type EnrichedFuzzerRow = FuzzerRow & {
 };
 
 export function adaptFuzzerRequests(requests: FuzzerRequest[], offset = 0): FuzzerRow[] {
-    return requests.map((r, idx) => ({ ...r, id: offset + idx }));
+    return requests.map((r, idx) => ({
+        ...r,
+        id: r.id !== undefined ? r.id : (offset + idx),
+    }));
 }
 
 /**
@@ -130,6 +133,12 @@ export function enrichFuzzerRow(
         fuzzConfigSnapshot?.parameters ?? [],
     );
 
+    const payloadPreview =
+        row.payload ??
+        (payloadValues.length <= 1
+            ? (payloadValues[0]?.value ?? '')
+            : payloadValues.map((p) => p.value).join(',  '));
+
     return {
         ...row,
         response: normalizedResponse,
@@ -139,10 +148,7 @@ export function enrichFuzzerRow(
         statusCode: parsedResponse?.statusCode,
         targetUrl: fuzzConfigSnapshot?.metadata?.targetUrl ?? '',
         payloadValues,
-        payloadPreview:
-            payloadValues.length <= 1
-                ? (payloadValues[0]?.value ?? '')
-                : payloadValues.map((p) => p.value).join(',  '),
+        payloadPreview,
     };
 }
 

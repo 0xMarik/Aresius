@@ -426,18 +426,37 @@ function RowsViewportInner<TData extends BaseRow>({
     // Kept in refs so the keyboard-nav effect below never needs to be
     // re-subscribed, and so it always reads live data.
     const lastClickedId = useRef<number | null>(null);
+    const lastClickedVisualIndex = useRef<number | null>(null);
+    const pendingVisualIndex = useRef<number | null>(null);
     const visibleIdsRef = useRef<number[]>([]);
     const idIndexRef = useRef<Map<number, number>>(new Map());
+    const visibleRowsRef = useRef(visibleRows);
+    const windowOffsetRef = useRef(windowOffset);
     const rowVirtualizerRef = useRef(rowVirtualizer);
     const selectedIdsRef = useRef(selectedIds);
 
     useEffect(() => {
+        visibleRowsRef.current = visibleRows;
+        windowOffsetRef.current = windowOffset;
         const ids = visibleRows.map((r) => r.original.id);
         visibleIdsRef.current = ids;
         const map = new Map<number, number>();
         for (let i = 0; i < ids.length; i++) map.set(ids[i], i);
         idIndexRef.current = map;
-    }, [visibleRows]);
+
+        // If an arrow-key navigation was waiting for a window slice to load:
+        if (pendingVisualIndex.current !== null) {
+            const offset = windowOffset ?? 0;
+            const sliceIndex = pendingVisualIndex.current - offset;
+            const targetRow = visibleRows[sliceIndex];
+            if (targetRow) {
+                pendingVisualIndex.current = null;
+                const rowId = targetRow.original.id;
+                lastClickedId.current = rowId;
+                setSelectedIds(new Set([rowId]));
+            }
+        }
+    }, [visibleRows, windowOffset, setSelectedIds]);
 
     useEffect(() => {
         rowVirtualizerRef.current = rowVirtualizer;
@@ -448,6 +467,11 @@ function RowsViewportInner<TData extends BaseRow>({
     }, [selectedIds]);
 
     const handleRowClick = useCallback((e: React.MouseEvent, id: number) => {
+        const localIdx = idIndexRef.current.get(id);
+        if (localIdx !== undefined) {
+            lastClickedVisualIndex.current = (windowOffsetRef.current ?? 0) + localIdx;
+        }
+
         if (e.ctrlKey || e.metaKey) {
             setSelectedIds((prev) => {
                 const next = new Set(prev);
@@ -475,6 +499,10 @@ function RowsViewportInner<TData extends BaseRow>({
     }, [setSelectedIds]);
 
     const handleRowContextMenu = useCallback((rowId: number) => {
+        const localIdx = idIndexRef.current.get(rowId);
+        if (localIdx !== undefined) {
+            lastClickedVisualIndex.current = (windowOffsetRef.current ?? 0) + localIdx;
+        }
         setSelectedIds((prev) => {
             if (prev.has(rowId) && prev.size > 1) return prev;
             return new Set([rowId]);
@@ -488,44 +516,80 @@ function RowsViewportInner<TData extends BaseRow>({
         return [rowId];
     }, []);
 
-    // Arrow-key navigation across full totalRowCount
+    // Arrow-key navigation across visual rows in table order
     useEffect(() => {
-        let pendingIndex: number | null = null;
+        let pendingTargetIndex: number | null = null;
         let rafId: number | null = null;
 
         function flush() {
             rafId = null;
-            const idx = pendingIndex;
-            pendingIndex = null;
-            if (idx === null || idx < 0 || idx >= totalRowCountRef.current) return;
+            const targetIdx = pendingTargetIndex;
+            pendingTargetIndex = null;
+            if (targetIdx === null || targetIdx < 0 || targetIdx >= totalRowCountRef.current) return;
 
-            lastClickedId.current = idx;
+            lastClickedVisualIndex.current = targetIdx;
 
-            flushSync(() => {
-                setSelectedIds(new Set([idx]));
-            });
-            rowVirtualizerRef.current?.scrollToIndex(idx, { align: 'auto' });
+            const offset = windowOffsetRef.current ?? 0;
+            const sliceIndex = targetIdx - offset;
+            const targetRow = visibleRowsRef.current[sliceIndex];
+
+            if (targetRow) {
+                const rowId = targetRow.original.id;
+                lastClickedId.current = rowId;
+                pendingVisualIndex.current = null;
+                flushSync(() => {
+                    setSelectedIds(new Set([rowId]));
+                });
+            } else {
+                // Row not yet loaded in windowed slice; record pending and let virtualizer fetch
+                pendingVisualIndex.current = targetIdx;
+            }
+
+            rowVirtualizerRef.current?.scrollToIndex(targetIdx, { align: 'auto' });
         }
 
         function onKeyDown(e: KeyboardEvent) {
             if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
             const count = totalRowCountRef.current;
             if (count === 0) return;
+
+            const target = e.target as HTMLElement | null;
+            if (
+                target &&
+                (target.tagName === 'INPUT' ||
+                    target.tagName === 'TEXTAREA' ||
+                    target.isContentEditable ||
+                    target.closest('.cm-editor'))
+            ) {
+                return;
+            }
+
             e.preventDefault();
 
-            const baseIndex =
-                pendingIndex !== null
-                    ? pendingIndex
-                    : lastClickedId.current !== null
-                        ? lastClickedId.current
-                        : -1;
+            let baseVisualIndex: number;
+            if (pendingTargetIndex !== null) {
+                baseVisualIndex = pendingTargetIndex;
+            } else if (lastClickedVisualIndex.current !== null) {
+                baseVisualIndex = lastClickedVisualIndex.current;
+            } else if (selectedIdsRef.current.size > 0) {
+                const firstId = Array.from(selectedIdsRef.current)[0];
+                const localIdx = idIndexRef.current.get(firstId);
+                baseVisualIndex = localIdx !== undefined ? (windowOffsetRef.current ?? 0) + localIdx : -1;
+            } else {
+                baseVisualIndex = -1;
+            }
 
-            const nextIndex =
-                e.key === 'ArrowDown'
-                    ? Math.min(baseIndex + 1, count - 1)
-                    : Math.max(baseIndex - 1, 0);
+            let nextVisualIndex: number;
+            if (baseVisualIndex === -1) {
+                nextVisualIndex = e.key === 'ArrowDown' ? 0 : count - 1;
+            } else {
+                nextVisualIndex =
+                    e.key === 'ArrowDown'
+                        ? Math.min(baseVisualIndex + 1, count - 1)
+                        : Math.max(baseVisualIndex - 1, 0);
+            }
 
-            pendingIndex = Math.max(nextIndex, 0);
+            pendingTargetIndex = nextVisualIndex;
             if (rafId === null) {
                 rafId = requestAnimationFrame(flush);
             }

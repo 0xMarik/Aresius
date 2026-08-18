@@ -19,6 +19,7 @@ fn build_fuzz_requests(session: &FuzzerSession) -> Vec<FuzzTarget> {
                 requests.push(FuzzTarget {
                     id: format!("{}-{}", param_idx, value_idx),
                     request: modified_request,
+                    payload: Some(value.clone()),
                 });
             }
         }

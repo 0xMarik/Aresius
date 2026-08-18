@@ -25,9 +25,11 @@ fn build_zipped_fuzz_requests(session: &FuzzerSession) -> Vec<FuzzTarget> {
 
     for i in 0..min_length {
         let mut modified_request = session.fuzz_config.raw_request.clone();
+        let mut payload_parts = Vec::new();
 
         for param in &sorted_params {
             let value = &param.values[i];
+            payload_parts.push(value.clone());
             modified_request =
                 building_raw_request(&modified_request, value, &param.highlight_range);
         }
@@ -35,6 +37,7 @@ fn build_zipped_fuzz_requests(session: &FuzzerSession) -> Vec<FuzzTarget> {
         targets.push(FuzzTarget {
             id: format!("{}", i),
             request: modified_request,
+            payload: Some(payload_parts.join(", ")),
         });
     }
 

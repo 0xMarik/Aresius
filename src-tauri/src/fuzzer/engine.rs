@@ -13,13 +13,17 @@ use crate::types::ReqRes;
 pub struct FuzzTarget {
     pub id: String,
     pub request: String,
+    #[serde(default)]
+    pub payload: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FuzzerRequestRow {
+    pub id: usize,
     pub fuzz_request_id: String,
     pub raw_request: String,
+    pub payload: Option<String>,
     pub response: Option<ReqRes>,
     pub request_date: String,
     pub status: String,
@@ -56,8 +60,10 @@ pub async fn init_fuzz_store(session: u32, history: u32, targets: &[FuzzTarget],
         let worker_id = (idx / chunk_size) as u32;
         id_map.insert(target.id.clone(), idx);
         rows.push(FuzzerRequestRow {
+            id: idx,
             fuzz_request_id: target.id.clone(),
             raw_request: target.request.clone(),
+            payload: target.payload.clone(),
             response: None,
             request_date: now.clone(),
             status: "pending".to_string(),
@@ -229,6 +235,26 @@ pub async fn get_fuzzer_history_window(
                 });
                 indices[start..end].iter().map(|&i| run_data.rows[i].clone()).collect()
             }
+            Some("payload") | Some("payloadPreview") => {
+                let mut indices: Vec<usize> = (0..total).collect();
+                indices.sort_by(|&a, &b| {
+                    let p_a = run_data.rows[a].payload.as_deref().unwrap_or("");
+                    let p_b = run_data.rows[b].payload.as_deref().unwrap_or("");
+                    let cmp = p_a.cmp(p_b);
+                    if is_desc { cmp.reverse() } else { cmp }
+                });
+                indices[start..end].iter().map(|&i| run_data.rows[i].clone()).collect()
+            }
+            Some("requestDate") => {
+                let mut indices: Vec<usize> = (0..total).collect();
+                indices.sort_by(|&a, &b| {
+                    let d_a = &run_data.rows[a].request_date;
+                    let d_b = &run_data.rows[b].request_date;
+                    let cmp = d_a.cmp(d_b);
+                    if is_desc { cmp.reverse() } else { cmp }
+                });
+                indices[start..end].iter().map(|&i| run_data.rows[i].clone()).collect()
+            }
             Some("id") => {
                 let mut indices: Vec<usize> = (0..total).collect();
                 if is_desc {
@@ -264,8 +290,10 @@ pub async fn get_fuzzer_history_window(
                             None
                         };
                         FuzzerRequestRow {
+                            id: r.sort_order as usize,
                             fuzz_request_id: r.id,
                             raw_request: r.raw_request,
+                            payload: r.payload,
                             response,
                             request_date: chrono::DateTime::from_timestamp_millis(r.request_date)
                                 .map(|dt| dt.to_rfc3339())
@@ -303,13 +331,29 @@ pub async fn get_fuzzer_request_by_id(
     // Fallback to SQLite DB
     if let Some(db_state) = app.try_state::<crate::ares_utils::database::DbState>() {
         if let Ok(pool) = db_state.pool().await {
-            let row = sqlx::query_as::<_, crate::ares_utils::database::fuzzer::FuzzerRequestDb>(
-                "SELECT * FROM fuzzer_requests WHERE id = ?"
-            )
-            .bind(&request_id)
-            .fetch_optional(&pool)
-            .await
-            .unwrap_or(None);
+            let run_id = format!("{}-{}", selected_session, fuzz_history);
+            let row = if let Ok(idx) = request_id.parse::<i64>() {
+                sqlx::query_as::<_, crate::ares_utils::database::fuzzer::FuzzerRequestDb>(
+                    "SELECT * FROM fuzzer_requests WHERE (run_id = ? AND (id = ? OR sort_order = ?)) OR id = ?"
+                )
+                .bind(&run_id)
+                .bind(&request_id)
+                .bind(idx)
+                .bind(&request_id)
+                .fetch_optional(&pool)
+                .await
+                .unwrap_or(None)
+            } else {
+                sqlx::query_as::<_, crate::ares_utils::database::fuzzer::FuzzerRequestDb>(
+                    "SELECT * FROM fuzzer_requests WHERE (run_id = ? AND id = ?) OR id = ?"
+                )
+                .bind(&run_id)
+                .bind(&request_id)
+                .bind(&request_id)
+                .fetch_optional(&pool)
+                .await
+                .unwrap_or(None)
+            };
 
             if let Some(r) = row {
                 let response = if let Some(raw_resp) = r.raw_response {
@@ -322,8 +366,10 @@ pub async fn get_fuzzer_request_by_id(
                     None
                 };
                 return Ok(Some(FuzzerRequestRow {
+                    id: r.sort_order as usize,
                     fuzz_request_id: r.id,
                     raw_request: r.raw_request,
+                    payload: r.payload,
                     response,
                     request_date: chrono::DateTime::from_timestamp_millis(r.request_date)
                         .map(|dt| dt.to_rfc3339())
@@ -910,12 +956,12 @@ pub async fn run_fuzz_targets(app: AppHandle, config: FuzzRunConfig, targets: Ve
             .await;
         }
 
-        let target_tuples: Vec<(String, String, Option<u32>)> = targets
+        let target_tuples: Vec<(String, String, Option<u32>, Option<String>)> = targets
             .iter()
             .enumerate()
             .map(|(idx, t)| {
                 let w_id = (idx / chunk_size.max(1)) as u32;
-                (t.id.clone(), t.request.clone(), Some(w_id))
+                (t.id.clone(), t.request.clone(), Some(w_id), t.payload.clone())
             })
             .collect();
         let _ = crate::ares_utils::database::fuzzer::batch_insert_fuzzer_requests(pool, &run_id, &target_tuples).await;
@@ -1238,6 +1284,7 @@ async fn get_failed_worker_groups(session: u32, history: u32) -> Vec<FuzzWorkerR
                 entry.0.push(FuzzTarget {
                     id: row.fuzz_request_id.clone(),
                     request: row.raw_request.clone(),
+                    payload: row.payload.clone(),
                 });
             }
         }
@@ -1272,6 +1319,7 @@ async fn get_failed_worker_targets(session: u32, history: u32, worker_id: u32) -
                     targets.push(FuzzTarget {
                         id: row.fuzz_request_id.clone(),
                         request: row.raw_request.clone(),
+                        payload: row.payload.clone(),
                     });
                 }
             }
