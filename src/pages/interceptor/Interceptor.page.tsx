@@ -7,6 +7,13 @@ import { codeMirrorScrollTheme } from '@/components/codemirror-scroll.theme';
 import { http } from '@/components/http-parser.component';
 import { BaseRow } from '@/components/Table';
 import { Button } from '@/components/ui/button';
+import { ButtonGroup } from '@/components/ui/button-group';
+import {
+    DropdownMenu,
+    DropdownMenuTrigger,
+    DropdownMenuContent,
+    DropdownMenuItem,
+} from '@/components/ui/dropdown-menu';
 import { Badge } from '@/components/ui/badge';
 import MethodBadge from '@/components/MethodBadge';
 import { Switch } from '@/components/ui/switch';
@@ -18,15 +25,14 @@ import {
 } from '@/components/ui/resizable';
 import { ColumnDef } from '@tanstack/react-table';
 import {
-
-    Trash2,
     Shield,
     ShieldAlert,
     Globe,
     Wand2,
     Files,
     Inbox,
-    Send,
+    ChevronsRight,
+    ChevronDown,
     Antenna,
     Crosshair,
 } from 'lucide-react';
@@ -408,6 +414,26 @@ const InterceptorPage: React.FC = () => {
         }
     };
 
+    const handleForwardAll = async () => {
+        if (queue.length === 0) return;
+        setActionLoading(true);
+        try {
+            await Promise.all(
+                queue.map((item) =>
+                    invoke('forward_intercept_item', {
+                        payload: { id: item.id, modifiedMessage: null },
+                    }).then(() => {
+                        if (projectId) dispatch(removeQueueItem({ id: item.id, projectId }));
+                    })
+                )
+            );
+        } catch (err) {
+            console.error('Failed to forward all items:', err);
+        } finally {
+            setActionLoading(false);
+        }
+    };
+
     /* ---------------------------------------------------------------------- */
     /*  DataTable Data Adaptors & Column Definitions                          */
     /* ---------------------------------------------------------------------- */
@@ -654,16 +680,27 @@ const InterceptorPage: React.FC = () => {
                     </div>
 
                     {queue.length > 0 && (
-                        <Button
-                            variant="destructive"
-                            size="sm"
-                            className="h-7 text-xs gap-1"
-                            onClick={handleDropAll}
-                            disabled={actionLoading}
-                        >
-                            <Trash2 className="w-3.5 h-3.5" />
-                            Drop All ({queue.length})
-                        </Button>
+                        <div className="flex items-center gap-2">
+                            <Button
+                                variant="secondary"
+                                size="sm"
+                                className="h-7 px-3 text-xs"
+                                onClick={handleDropAll}
+                                disabled={actionLoading}
+                            >
+                                Drop All ({queue.length})
+                            </Button>
+                            <Button
+                                variant="default"
+                                size="sm"
+                                className="h-7 px-3 text-xs font-medium gap-1"
+                                onClick={handleForwardAll}
+                                disabled={actionLoading}
+                            >
+                                <ChevronsRight className="w-3.5 h-3.5" />
+                                Forward All ({queue.length})
+                            </Button>
+                        </div>
                     )}
                 </div>
             </div>
@@ -739,16 +776,44 @@ const InterceptorPage: React.FC = () => {
                                                         Drop
                                                     </Button>
 
-                                                    <Button
-                                                        variant="default"
-                                                        size="sm"
-                                                        className="h-7 px-3 text-xs font-medium gap-1"
-                                                        onClick={handleForwardRequest}
-                                                        disabled={actionLoading}
-                                                    >
-                                                        <Send className="w-3 h-3" />
-                                                        Forward
-                                                    </Button>
+                                                    <ButtonGroup>
+                                                        <Button
+                                                            variant="default"
+                                                            size="sm"
+                                                            className="h-7 px-3 text-xs font-medium gap-1"
+                                                            onClick={handleForwardRequest}
+                                                            disabled={actionLoading}
+                                                        >
+                                                            <ChevronsRight className="w-3.5 h-3.5" />
+                                                            Forward
+                                                        </Button>
+                                                        <DropdownMenu>
+                                                            <DropdownMenuTrigger asChild>
+                                                                <Button
+                                                                    variant="default"
+                                                                    size="sm"
+                                                                    className="h-7 px-1.5 !border-l !border-l-primary-foreground/25 hover:bg-primary/90 focus-visible:ring-0"
+                                                                    disabled={actionLoading}
+                                                                    aria-label="Forward options"
+                                                                >
+                                                                    <ChevronDown className="w-3.5 h-3.5" />
+                                                                </Button>
+                                                            </DropdownMenuTrigger>
+                                                            <DropdownMenuContent align="end" className="w-48 text-xs">
+                                                                <DropdownMenuItem
+                                                                    onClick={() => handleForwardAllOfType('request')}
+                                                                    disabled={actionLoading || requestItems.length === 0}
+                                                                    className="gap-2 cursor-pointer text-xs"
+                                                                >
+                                                                    <ChevronsRight className="w-3.5 h-3.5" />
+                                                                    <span>Forward All Requests</span>
+                                                                    <span className="ml-auto text-[10px] text-muted-foreground font-mono">
+                                                                        ({requestItems.length})
+                                                                    </span>
+                                                                </DropdownMenuItem>
+                                                            </DropdownMenuContent>
+                                                        </DropdownMenu>
+                                                    </ButtonGroup>
                                                 </div>
                                             </div>
 
@@ -850,16 +915,44 @@ const InterceptorPage: React.FC = () => {
                                                         Drop
                                                     </Button>
 
-                                                    <Button
-                                                        variant="default"
-                                                        size="sm"
-                                                        className="h-7 px-3 text-xs font-medium gap-1"
-                                                        onClick={handleForwardResponse}
-                                                        disabled={actionLoading}
-                                                    >
-                                                        <Send className="w-3 h-3" />
-                                                        Forward
-                                                    </Button>
+                                                    <ButtonGroup>
+                                                        <Button
+                                                            variant="default"
+                                                            size="sm"
+                                                            className="h-7 px-3 text-xs font-medium gap-1"
+                                                            onClick={handleForwardResponse}
+                                                            disabled={actionLoading}
+                                                        >
+                                                            <ChevronsRight className="w-3.5 h-3.5" />
+                                                            Forward
+                                                        </Button>
+                                                        <DropdownMenu>
+                                                            <DropdownMenuTrigger asChild>
+                                                                <Button
+                                                                    variant="default"
+                                                                    size="sm"
+                                                                    className="h-7 px-1.5 !border-l !border-l-primary-foreground/25 hover:bg-primary/90 focus-visible:ring-0"
+                                                                    disabled={actionLoading}
+                                                                    aria-label="Forward options"
+                                                                >
+                                                                    <ChevronDown className="w-3.5 h-3.5" />
+                                                                </Button>
+                                                            </DropdownMenuTrigger>
+                                                            <DropdownMenuContent align="end" className="w-48 text-xs">
+                                                                <DropdownMenuItem
+                                                                    onClick={() => handleForwardAllOfType('response')}
+                                                                    disabled={actionLoading || responseItems.length === 0}
+                                                                    className="gap-2 cursor-pointer text-xs"
+                                                                >
+                                                                    <ChevronsRight className="w-3.5 h-3.5" />
+                                                                    <span>Forward All Responses</span>
+                                                                    <span className="ml-auto text-[10px] text-muted-foreground font-mono">
+                                                                        ({responseItems.length})
+                                                                    </span>
+                                                                </DropdownMenuItem>
+                                                            </DropdownMenuContent>
+                                                        </DropdownMenu>
+                                                    </ButtonGroup>
                                                 </div>
                                             </div>
 
