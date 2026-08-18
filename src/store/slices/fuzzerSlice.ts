@@ -622,7 +622,7 @@ export const fetchFuzzerDataForProject = (projectId: string) => async (dispatch:
         return {
           name: s.name,
           fuzzConfig: {
-            numThreads: s.numThreads || 4,
+            numThreads: s.numThreads || 1,
             delayMs: s.delayMs || 0,
             fuzzingAttackType: (s.attackType as FuzzingAttackType) || FuzzingAttackType.ROTATOR,
             rawRequest: s.rawRequest || 'GET / HTTP/1.1\r\n\r\n',
@@ -674,7 +674,7 @@ export const fetchFuzzerDataForProject = (projectId: string) => async (dispatch:
 
             const fullConfigSnapshot = {
               ...configSnapshot,
-              numThreads: configSnapshot?.numThreads || s.numThreads || 4,
+              numThreads: configSnapshot?.numThreads || s.numThreads || 1,
               delayMs: configSnapshot?.delayMs !== undefined ? configSnapshot.delayMs : (s.delayMs || 0),
               fuzzingAttackType: configSnapshot?.fuzzingAttackType || s.attackType || 'rotator',
               rawRequest: hasValidRawRequest ? configSnapshot.rawRequest : (s.rawRequest || 'GET / HTTP/1.1\r\n\r\n'),
