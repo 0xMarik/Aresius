@@ -1,17 +1,27 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { HttpHistorySummaryRow, HttpTransaction, stateFromCode } from '@/types/http.type';
+import { SortingState } from '@tanstack/react-table';
+import {
+    HttpHistory,
+    HttpHistorySummaryRow,
+    HttpTransaction,
+    stateFromCode,
+} from '@/types/http.type';
+import { Scope } from '@/store/slices/scopeSlice';
 
 export interface UseVirtualHttpHistoryOptions {
     projectId: string | null;
     searchQuery?: string;
-    pageSize?: number;
+    initialLimit?: number;
+    activeScope?: Scope | null;
+    scopeFilter?: 'all' | 'in' | 'out';
 }
 
 export function adaptSummaryRow(item: HttpHistorySummaryRow): HttpTransaction {
     return {
         id: Number(item.id),
+        projectId: item.projectId,
         host: item.host,
         method: item.method,
         path: item.path,
@@ -23,128 +33,248 @@ export function adaptSummaryRow(item: HttpHistorySummaryRow): HttpTransaction {
         sentAtMs: Number(item.sentAtMs),
         state: stateFromCode(Number(item.statusCode)),
         isHttps: item.isHttps ?? false,
-        rawRequest: '', // Loaded lazily on selection
-        rawResponse: '', // Loaded lazily on selection
     };
 }
 
 export function useVirtualHttpHistory({
     projectId,
     searchQuery = '',
-    pageSize = 50,
+    initialLimit = 250,
+    activeScope = null,
+    scopeFilter = 'in',
 }: UseVirtualHttpHistoryOptions) {
-    const [totalCount, setTotalCount] = useState<number>(0);
-    const [rowMap, setRowMap] = useState<Map<number, HttpTransaction>>(new Map());
+    const BUFFER = 100;
+    const THRESHOLD = 30;
+
+    const [windowState, setWindowState] = useState<{
+        offset: number;
+        limit: number;
+        items: HttpTransaction[];
+        total: number;
+    }>({
+        offset: 0,
+        limit: initialLimit,
+        items: [],
+        total: 0,
+    });
+
+    const [sorting, setSorting] = useState<SortingState>([]);
     const [selectedRequest, setSelectedRequest] = useState<number | null>(null);
-    const [selectedEntity, setSelectedEntity] = useState<HttpTransaction | null>(null);
+    const [selectedEntity, setSelectedEntity] = useState<HttpHistory | null>(null);
+    const [isLoading, setIsLoading] = useState<boolean>(false);
     const [isLoadingDetails, setIsLoadingDetails] = useState<boolean>(false);
 
-    const pendingPagesRef = useRef<Set<number>>(new Set());
+    // In-memory cache for lazily fetched full payloads
+    const detailCacheRef = useRef<Map<number, HttpHistory>>(new Map());
 
-    // 1. Fetch total count whenever project or search query changes
-    const fetchTotalCount = useCallback(async () => {
-        if (!projectId) {
-            setTotalCount(0);
-            setRowMap(new Map());
-            return;
-        }
-        try {
-            const count = await invoke<number>('get_http_history_count', {
-                projectId,
-                search: searchQuery || null,
-            });
-            setTotalCount(count);
-            // Reset row map when query changes
-            setRowMap(new Map());
-            pendingPagesRef.current.clear();
-        } catch (err) {
-            console.error('Failed to fetch http history count:', err);
-        }
-    }, [projectId, searchQuery]);
+    // Refs to avoid stale closures in throttled live listeners
+    const windowStateRef = useRef(windowState);
+    windowStateRef.current = windowState;
+    const sortingRef = useRef(sorting);
+    sortingRef.current = sorting;
+    const liveUpdateTimerRef = useRef<number | null>(null);
+    const pendingLiveCountRef = useRef<number>(0);
 
-    useEffect(() => {
-        fetchTotalCount();
-    }, [fetchTotalCount]);
+    const handleSortingChange = useCallback((updater: any) => {
+        setSorting(updater);
+        setWindowState((prev) => ({ ...prev, offset: 0 }));
+    }, []);
 
-    // 2. Fetch page window from backend
-    const fetchPage = useCallback(
-        async (pageIndex: number) => {
-            if (!projectId || pendingPagesRef.current.has(pageIndex)) return;
-            pendingPagesRef.current.add(pageIndex);
+    const handleScrollWindowChange = useCallback((startIdx: number, count: number) => {
+        setWindowState((prev) => {
+            const currentOffset = prev.offset;
+            const currentLimit = prev.limit;
+            const currentEnd = currentOffset + currentLimit;
+            const visibleEnd = startIdx + count;
+
+            const distFromTop = startIdx - currentOffset;
+            const distFromBottom = currentEnd - visibleEnd;
+
+            if (prev.items.length > 0 && distFromTop >= THRESHOLD && distFromBottom >= THRESHOLD) {
+                return prev;
+            }
+
+            const newOffset = Math.max(0, startIdx - BUFFER);
+            const newTargetEnd = startIdx + count + BUFFER;
+            const newLimit = newTargetEnd - newOffset;
+
+            if (newOffset === prev.offset && newLimit === prev.limit && prev.items.length > 0) {
+                return prev;
+            }
+
+            return { ...prev, offset: newOffset, limit: newLimit };
+        });
+    }, []);
+
+    // Main fetcher function
+    const fetchWindow = useCallback(
+        async (
+            offset: number,
+            limit: number,
+            currentSorting: SortingState,
+            search: string,
+            currentScope: Scope | null,
+            currentFilter: 'all' | 'in' | 'out'
+        ) => {
+            if (!projectId) {
+                setWindowState({ offset: 0, limit, items: [], total: 0 });
+                return;
+            }
+
+            const sortBy = currentSorting[0]?.id ?? null;
+            const sortOrder = currentSorting[0]?.desc ? 'desc' : 'asc';
 
             try {
-                const offset = pageIndex * pageSize;
-                const summaries = await invoke<HttpHistorySummaryRow[]>('get_http_history_page', {
-                    projectId,
-                    offset,
-                    limit: pageSize,
-                    search: searchQuery || null,
-                });
+                const res = await invoke<{ total: number; items: HttpHistorySummaryRow[] }>(
+                    'get_http_history_window',
+                    {
+                        projectId,
+                        offset,
+                        limit,
+                        sortBy,
+                        sortOrder,
+                        search: search.trim() || null,
+                        scope: currentScope ? {
+                            id: currentScope.id,
+                            name: currentScope.name,
+                            color: currentScope.color,
+                            allow: currentScope.allow || [],
+                            deny: currentScope.deny || [],
+                        } : null,
+                        scopeFilter: currentFilter || 'all',
+                    }
+                );
 
-                setRowMap((prev) => {
-                    const next = new Map(prev);
-                    summaries.forEach((sum, idx) => {
-                        const index = offset + idx;
-                        next.set(index, adaptSummaryRow(sum));
+                if (res) {
+                    const adaptedItems = (res.items || []).map(adaptSummaryRow);
+                    setWindowState({
+                        offset,
+                        limit,
+                        items: adaptedItems,
+                        total: res.total,
                     });
-                    return next;
-                });
-            } catch (err) {
-                console.error(`Failed to fetch page ${pageIndex}:`, err);
-            } finally {
-                pendingPagesRef.current.delete(pageIndex);
-            }
-        },
-        [projectId, pageSize, searchQuery]
-    );
-
-    // 3. Callback for table view range
-    const ensureRange = useCallback(
-        (startIndex: number, stopIndex: number) => {
-            const startPage = Math.floor(startIndex / pageSize);
-            const stopPage = Math.floor(stopIndex / pageSize);
-
-            for (let page = startPage; page <= stopPage; page++) {
-                const firstRowInPage = page * pageSize;
-                if (!rowMap.has(firstRowInPage)) {
-                    fetchPage(page);
                 }
+            } catch (err) {
+                console.error('Failed to fetch http history window:', err);
             }
         },
-        [pageSize, rowMap, fetchPage]
+        [projectId]
     );
 
-    // 4. Lazy fetch full request/response payload when a row is selected
+    const prevScopeFilterRef = useRef(scopeFilter);
+    const prevActiveScopeIdRef = useRef(activeScope?.id);
+    const prevSearchQueryRef = useRef(searchQuery);
+
+    useEffect(() => {
+        if (
+            prevScopeFilterRef.current !== scopeFilter ||
+            prevActiveScopeIdRef.current !== activeScope?.id ||
+            prevSearchQueryRef.current !== searchQuery
+        ) {
+            prevScopeFilterRef.current = scopeFilter;
+            prevActiveScopeIdRef.current = activeScope?.id;
+            prevSearchQueryRef.current = searchQuery;
+            setWindowState((prev) => ({ ...prev, offset: 0 }));
+        }
+    }, [scopeFilter, activeScope?.id, searchQuery]);
+
+    // Trigger fetch on parameter change
+    useEffect(() => {
+        let isCancelled = false;
+        setIsLoading(true);
+
+        fetchWindow(
+            windowState.offset,
+            windowState.limit,
+            sorting,
+            searchQuery,
+            activeScope,
+            scopeFilter
+        ).finally(() => {
+            if (!isCancelled) setIsLoading(false);
+        });
+
+        return () => {
+            isCancelled = true;
+        };
+    }, [fetchWindow, windowState.offset, windowState.limit, sorting, searchQuery, activeScope, scopeFilter]);
+
+    // Live Proxy Traffic Listener with 100ms throttle
+    useEffect(() => {
+        if (!projectId) return;
+
+        const handleLiveTraffic = () => {
+            pendingLiveCountRef.current += 1;
+
+            if (liveUpdateTimerRef.current !== null) {
+                return;
+            }
+
+            liveUpdateTimerRef.current = window.setTimeout(() => {
+                liveUpdateTimerRef.current = null;
+                const newEventsCount = pendingLiveCountRef.current;
+                pendingLiveCountRef.current = 0;
+
+                const curOffset = windowStateRef.current.offset;
+                const curLimit = windowStateRef.current.limit;
+                const curSorting = sortingRef.current;
+                const curSortId = curSorting[0]?.id;
+                const isDesc = curSorting[0]?.desc;
+
+                // When user is viewing the live edge:
+                // Refresh visible window to show latest captured traffic in real time.
+                const isSortedDesc = isDesc && (curSortId === 'id' || curSortId === 'sentAtMs' || curSortId === 'sentAt');
+                const isAtTop = curOffset === 0;
+
+                if (isSortedDesc && isAtTop) {
+                    fetchWindow(0, curLimit, curSorting, searchQuery, activeScope, scopeFilter);
+                } else {
+                    // Otherwise update total count smoothly without disrupting scroll position
+                    setWindowState((prev) => ({
+                        ...prev,
+                        total: prev.total + newEventsCount,
+                    }));
+                }
+            }, 100);
+        };
+
+        const unlistenPromise = listen('http_history', () => {
+            handleLiveTraffic();
+        });
+
+        return () => {
+            if (liveUpdateTimerRef.current !== null) {
+                clearTimeout(liveUpdateTimerRef.current);
+                liveUpdateTimerRef.current = null;
+            }
+            unlistenPromise.then((unlisten) => unlisten());
+        };
+    }, [projectId, fetchWindow, searchQuery, activeScope, scopeFilter]);
+
+    // Lazy fetch full request/response payload when a row is selected
     useEffect(() => {
         if (selectedRequest === null) {
             setSelectedEntity(null);
             return;
         }
 
+        // Check cache first
+        const cached = detailCacheRef.current.get(selectedRequest);
+        if (cached) {
+            setSelectedEntity(cached);
+            return;
+        }
+
         let isCancelled = false;
         setIsLoadingDetails(true);
 
-        invoke<{
-            id: number;
-            host: string;
-            method: string;
-            path: string;
-            query: string | null;
-            extension: string | null;
-            statusCode: number;
-            responseLength: number;
-            responseTimeMs: number;
-            sentAtMs: number;
-            state: string;
-            isHttps: boolean;
-            rawRequest: string;
-            rawResponse: string;
-        } | null>('get_http_history_item', { id: selectedRequest })
+        invoke<HttpHistory | null>('get_http_history_item', { id: selectedRequest })
             .then((fullItem) => {
                 if (isCancelled) return;
                 if (fullItem) {
-                    setSelectedEntity({
+                    const normalized: HttpHistory = {
                         id: Number(fullItem.id),
+                        projectId: fullItem.projectId,
                         host: fullItem.host,
                         method: fullItem.method,
                         path: fullItem.path,
@@ -155,10 +285,13 @@ export function useVirtualHttpHistory({
                         responseTimeMs: Number(fullItem.responseTimeMs),
                         sentAtMs: Number(fullItem.sentAtMs),
                         state: stateFromCode(Number(fullItem.statusCode)),
-                        isHttps: (fullItem as any).isHttps ?? false,
-                        rawRequest: fullItem.rawRequest,
-                        rawResponse: fullItem.rawResponse,
-                    });
+                        isHttps: fullItem.isHttps ?? false,
+                        rawRequest: fullItem.rawRequest || '',
+                        rawResponse: fullItem.rawResponse || '',
+                    };
+
+                    detailCacheRef.current.set(selectedRequest, normalized);
+                    setSelectedEntity(normalized);
                 }
             })
             .catch((err) => {
@@ -173,28 +306,42 @@ export function useVirtualHttpHistory({
         };
     }, [selectedRequest]);
 
-    // 5. Listen for real-time live proxy updates
-    useEffect(() => {
-        if (!projectId) return;
-
-        const unlistenPromise = listen('http_history', () => {
-            // Increment count and trigger refresh if needed
-            setTotalCount((prev) => prev + 1);
-        });
-
-        return () => {
-            unlistenPromise.then((f) => f());
-        };
-    }, [projectId]);
+    // Remove rows helper
+    const removeRows = useCallback(
+        async (ids: number[]) => {
+            if (!ids.length) return;
+            try {
+                await invoke('delete_http_history_items', { ids });
+                // Evict deleted items from detail cache
+                ids.forEach((id) => detailCacheRef.current.delete(id));
+                // Refresh current window
+                fetchWindow(windowState.offset, windowState.limit, sorting, searchQuery, activeScope, scopeFilter);
+                if (selectedRequest && ids.includes(selectedRequest)) {
+                    setSelectedRequest(null);
+                    setSelectedEntity(null);
+                }
+            } catch (err) {
+                console.error('Failed to delete history items:', err);
+            }
+        },
+        [fetchWindow, windowState.offset, windowState.limit, sorting, searchQuery, activeScope, scopeFilter, selectedRequest]
+    );
 
     return {
-        totalCount,
-        rowMap,
-        ensureRange,
+        windowState,
+        items: windowState.items,
+        total: windowState.total,
+        offset: windowState.offset,
+        limit: windowState.limit,
+        sorting,
+        handleSortingChange,
+        handleScrollWindowChange,
         selectedRequest,
         setSelectedRequest,
         selectedEntity,
+        isLoading,
         isLoadingDetails,
-        refresh: fetchTotalCount,
+        removeRows,
+        refresh: () => fetchWindow(windowState.offset, windowState.limit, sorting, searchQuery, activeScope, scopeFilter),
     };
 }

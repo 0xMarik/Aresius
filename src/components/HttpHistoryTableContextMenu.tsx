@@ -6,10 +6,57 @@ import {
     ContextMenuSubContent,
     ContextMenuSubTrigger,
 } from '@/components/ui/context-menu';
-import { Copy, Braces, Trash2 } from 'lucide-react';
+import { Copy, Braces, Trash2, Send } from 'lucide-react';
 import { RowContextMenuContext } from './Table';
-import SendToFuzzer from './ContextMenu/SendToFuzzer';
-import SendToReplayer from './ContextMenu/SendToReplayer';
+import { useAppDispatch } from '@/hooks/redux';
+import { useProjectId } from '@/hooks/useProjectId';
+import { addFuzzSession } from '@/store/slices/fuzzerSlice';
+import { SendToRepeaterSubmenu } from './ContextMenu/SendToReplayer';
+import { invoke } from '@tauri-apps/api/core';
+import { HttpHistory } from '@/types/http.type';
+
+async function getFullItemPayload(row: any): Promise<{ rawRequest: string; rawResponse: string }> {
+    if (row.rawRequest && row.rawRequest.length > 0) {
+        return { rawRequest: row.rawRequest, rawResponse: row.rawResponse ?? '' };
+    }
+    try {
+        const item = await invoke<HttpHistory | null>('get_http_history_item', { id: row.id });
+        if (item) {
+            return { rawRequest: item.rawRequest || '', rawResponse: item.rawResponse || '' };
+        }
+    } catch (e) {
+        console.error('Failed to load item payload for context action:', e);
+    }
+    return { rawRequest: '', rawResponse: '' };
+}
+
+function ContextMenuSendToFuzzer({ row }: { row: any }) {
+    const dispatch = useAppDispatch();
+    const projectId = useProjectId();
+
+    const handleSend = async () => {
+        if (!projectId) return;
+        const { rawRequest } = await getFullItemPayload(row);
+        const host = row.host || '';
+        const targetUrl = host ? (host.includes('://') ? host : `https://${host}`) : 'https://';
+        dispatch(
+            addFuzzSession({
+                name: 'From history',
+                rawRequest: rawRequest || 'GET / HTTP/1.1\r\n\r\n',
+                targetUrl,
+                isItFuzzerPage: false,
+                projectId,
+            })
+        );
+    };
+
+    return (
+        <ContextMenuItem onSelect={handleSend}>
+            <Send className="mr-2 h-3.5 w-3.5" />
+            Send to Fuzzer
+        </ContextMenuItem>
+    );
+}
 
 export function renderHttpHistoryTableContextMenu(
     ctx: RowContextMenuContext<any>
@@ -21,12 +68,14 @@ export function renderHttpHistoryTableContextMenu(
         onRemove,
     } = ctx;
 
-    const copyRawRequest = () => {
-        navigator.clipboard.writeText(row.rawRequest ?? '');
+    const copyRawRequest = async () => {
+        const { rawRequest } = await getFullItemPayload(row);
+        navigator.clipboard.writeText(rawRequest);
     };
 
-    const copyRawResponse = () => {
-        navigator.clipboard.writeText(row.rawResponse ?? '');
+    const copyRawResponse = async () => {
+        const { rawResponse } = await getFullItemPayload(row);
+        navigator.clipboard.writeText(rawResponse);
     };
 
     return (
@@ -36,9 +85,9 @@ export function renderHttpHistoryTableContextMenu(
             </ContextMenuLabel>
             <ContextMenuSeparator />
 
-            <SendToFuzzer rawRequest={row.rawRequest} host={row.host} />
+            <ContextMenuSendToFuzzer row={row} />
 
-            <SendToReplayer rawRequest={row.rawRequest} isMultiple={isMultiple} />
+            <SendToRepeaterSubmenu rawRequest={row.rawRequest || ''} />
 
             <ContextMenuSub>
                 <ContextMenuSubTrigger>

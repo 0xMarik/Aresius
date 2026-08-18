@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useCallback, useRef } from 'react';
+import React, { useEffect, useMemo, useCallback, useRef, useState } from 'react';
 import { RsTree, HighlightedText } from 'rstree-ui';
 import type { ReactNode } from 'react';
 import {
@@ -23,8 +23,7 @@ import { useAppDispatch, useAppSelector } from '@/hooks/redux';
 import { useProjectId } from '@/hooks/useProjectId';
 import Table from '@/components/Table';
 import { renderHttpHistoryTableContextMenu } from '@/components/HttpHistoryTableContextMenu';
-import { adaptFromReqRes, httpColumns } from '@/pages/HttpHistory';
-import { getHistorySelectors } from '@/store/slices/http-historySlice';
+import { httpColumns } from '@/pages/HttpHistory';
 import {
     deleteSitemapNode,
     selectSitemap,
@@ -48,8 +47,7 @@ import {
     getNodeTargetInfo,
     rawRequestToCurl,
 } from './utils';
-import type { EntityId } from '@reduxjs/toolkit';
-import type { HttpHistory } from '@/types/http.type';
+import { HttpHistory, HttpTransaction, stateFromCode } from '@/types/http.type';
 import { EmptyState } from '@/components/ui/empty-state';
 import { isInScope } from '@/lib/scopeMatcher';
 import { cn } from '@/lib/utils';
@@ -66,10 +64,9 @@ import {
     ContextMenuSubTrigger,
     ContextMenuTrigger,
 } from '@/components/ui/context-menu';
-import SendToReplayer from '@/components/ContextMenu/SendToReplayer';
-import SendToFuzzer from '@/components/ContextMenu/SendToFuzzer';
 import MethodBadge from '@/components/MethodBadge';
 import HttpRequestViewerPane from '@/components/HttpRequestViewerPane';
+import { invoke } from '@tauri-apps/api/core';
 
 const kindIcon: Record<SitemapKind, ReactNode> = {
     domain: <Globe className="w-3.5 h-3.5 text-primary shrink-0" />,
@@ -79,11 +76,6 @@ const kindIcon: Record<SitemapKind, ReactNode> = {
     variant: <Braces className="w-3.5 h-3.5 text-muted-foreground/70 shrink-0" />,
 };
 
-function resolveEntityId(id: string): EntityId {
-    const asNumber = Number(id);
-    return Number.isNaN(asNumber) ? id : asNumber;
-}
-
 // ---------------------------------------------------------------------------
 // Tree Node Context Menu Component
 // ---------------------------------------------------------------------------
@@ -91,7 +83,7 @@ interface TreeNodeContextMenuProps {
     node: TreeNode;
     activeScope: Scope | null;
     projectId: string | null;
-    representativeItem?: HttpHistory;
+    repId?: string;
     children: React.ReactNode;
 }
 
@@ -99,7 +91,7 @@ const TreeNodeContextMenu: React.FC<TreeNodeContextMenuProps> = ({
     node,
     activeScope,
     projectId,
-    representativeItem,
+    repId,
     children,
 }) => {
     const dispatch = useAppDispatch();
@@ -137,10 +129,35 @@ const TreeNodeContextMenu: React.FC<TreeNodeContextMenuProps> = ({
         navigator.clipboard.writeText(targetInfo.path);
     };
 
-    const handleCopyCurl = () => {
-        if (!representativeItem?.rawRequest) return;
-        const curlCmd = rawRequestToCurl(representativeItem.rawRequest, targetInfo.host);
-        navigator.clipboard.writeText(curlCmd);
+    const handleCopyCurl = async () => {
+        if (!repId) return;
+        try {
+            const item = await invoke<HttpHistory | null>('get_http_history_item', { id: Number(repId) });
+            if (item?.rawRequest) {
+                const curlCmd = rawRequestToCurl(item.rawRequest, targetInfo.host);
+                navigator.clipboard.writeText(curlCmd);
+            }
+        } catch {}
+    };
+
+    const handleCopyRawRequest = async () => {
+        if (!repId) return;
+        try {
+            const item = await invoke<HttpHistory | null>('get_http_history_item', { id: Number(repId) });
+            if (item?.rawRequest) {
+                navigator.clipboard.writeText(item.rawRequest);
+            }
+        } catch {}
+    };
+
+    const handleCopyRawResponse = async () => {
+        if (!repId) return;
+        try {
+            const item = await invoke<HttpHistory | null>('get_http_history_item', { id: Number(repId) });
+            if (item?.rawResponse) {
+                navigator.clipboard.writeText(item.rawResponse);
+            }
+        } catch {}
     };
 
     const handleDeleteFromSitemap = () => {
@@ -172,15 +189,6 @@ const TreeNodeContextMenu: React.FC<TreeNodeContextMenuProps> = ({
                     </>
                 ) : null}
 
-                {/* Pentest Tools */}
-                {representativeItem?.rawRequest && (
-                    <>
-                        <SendToFuzzer rawRequest={representativeItem.rawRequest} host={targetInfo.host} />
-                        <SendToReplayer rawRequest={representativeItem.rawRequest} />
-                        <ContextMenuSeparator />
-                    </>
-                )}
-
                 {/* Copy Menu */}
                 <ContextMenuSub>
                     <ContextMenuSubTrigger>
@@ -194,28 +202,18 @@ const TreeNodeContextMenu: React.FC<TreeNodeContextMenuProps> = ({
                         <ContextMenuItem onSelect={handleCopyPath}>
                             Path
                         </ContextMenuItem>
-                        {representativeItem?.rawRequest && (
+                        {repId && (
                             <>
                                 <ContextMenuItem onSelect={handleCopyCurl}>
                                     <Terminal className="mr-2 h-3 w-3" />
                                     cURL Command
                                 </ContextMenuItem>
-                                <ContextMenuItem
-                                    onSelect={() => {
-                                        navigator.clipboard.writeText(representativeItem.rawRequest);
-                                    }}
-                                >
+                                <ContextMenuItem onSelect={handleCopyRawRequest}>
                                     Raw Request
                                 </ContextMenuItem>
-                                {representativeItem.rawResponse && (
-                                    <ContextMenuItem
-                                        onSelect={() => {
-                                            navigator.clipboard.writeText(representativeItem.rawResponse);
-                                        }}
-                                    >
-                                        Raw Response
-                                    </ContextMenuItem>
-                                )}
+                                <ContextMenuItem onSelect={handleCopyRawResponse}>
+                                    Raw Response
+                                </ContextMenuItem>
                             </>
                         )}
                     </ContextMenuSubContent>
@@ -243,7 +241,6 @@ function renderSitemapNode(
     node: TreeNode,
     activeScope: Scope | null,
     projectId: string | null,
-    entities: Record<string | number, HttpHistory>,
     searchMatches?: any[]
 ) {
     const d = node.data;
@@ -252,10 +249,9 @@ function renderSitemapNode(
     const targetInfo = getNodeTargetInfo(node);
     const inScope = activeScope ? isInScope(activeScope, targetInfo.host, targetInfo.path) : true;
 
-    // Find representative item for context menu
+    // Find representative item id for context menu
     const requestIds = d.kind === 'variant' ? d.requestIds : collectRequestIdsDeduped(node);
     const repId = requestIds?.[0];
-    const representativeItem = repId ? entities[resolveEntityId(repId)] : undefined;
 
     // Check if variant node (label format is e.g. "GET ?id" or "POST")
     const isVariant = d.kind === 'variant';
@@ -268,7 +264,7 @@ function renderSitemapNode(
             node={node}
             activeScope={activeScope}
             projectId={projectId}
-            representativeItem={representativeItem}
+            repId={repId}
         >
             <div
                 className={cn(
@@ -332,7 +328,6 @@ interface SitemapTreePaneProps {
     onExpand: (ids: string[]) => void;
     activeScope: Scope | null;
     projectId: string | null;
-    entities: Record<string | number, HttpHistory>;
     searchTerm: string;
 }
 
@@ -344,7 +339,6 @@ const SitemapTreePane = React.memo<SitemapTreePaneProps>(function SitemapTreePan
     onExpand,
     activeScope,
     projectId,
-    entities,
     searchTerm,
 }) {
     return (
@@ -371,7 +365,6 @@ const SitemapTreePane = React.memo<SitemapTreePaneProps>(function SitemapTreePan
                     node,
                     activeScope,
                     projectId,
-                    entities,
                     props?.searchMatches
                 ) as any
             }
@@ -396,25 +389,58 @@ const SitemapRequestTablePane = React.memo<SitemapRequestTablePaneProps>(functio
     selectedRequestId,
     onSelectRequest,
 }) {
-    const projectId = useProjectId();
-    const rows = useAppSelector(
-        (state) => {
-            const entities = getHistorySelectors(projectId).selectEntities(state);
-            const items: HttpHistory[] = [];
-            for (const idStr of requestIds) {
-                const item = (entities as Record<string | number, HttpHistory>)[resolveEntityId(idStr)];
-                if (item) items.push(item);
-            }
-            return adaptFromReqRes(items);
-        },
-        (prevRows, nextRows) => {
-            if (prevRows.length !== nextRows.length) return false;
-            for (let i = 0; i < prevRows.length; i++) {
-                if (prevRows[i].id !== nextRows[i].id) return false;
-            }
-            return true;
+    const [rows, setRows] = useState<HttpTransaction[]>([]);
+    const [isLoading, setIsLoading] = useState<boolean>(false);
+
+    useEffect(() => {
+        if (!requestIds || requestIds.length === 0) {
+            setRows([]);
+            return;
         }
-    );
+
+        let isCancelled = false;
+        setIsLoading(true);
+
+        const fetchRows = async () => {
+            const fetched: HttpTransaction[] = [];
+            for (const idStr of requestIds) {
+                const numId = Number(idStr);
+                if (!isNaN(numId)) {
+                    try {
+                        const item = await invoke<HttpHistory | null>('get_http_history_item', { id: numId });
+                        if (item) {
+                            fetched.push({
+                                id: Number(item.id),
+                                host: item.host,
+                                method: item.method,
+                                path: item.path,
+                                query: item.query ?? null,
+                                extension: item.extension ?? null,
+                                statusCode: Number(item.statusCode),
+                                responseLength: Number(item.responseLength),
+                                responseTimeMs: Number(item.responseTimeMs),
+                                sentAtMs: Number(item.sentAtMs),
+                                state: stateFromCode(Number(item.statusCode)),
+                                isHttps: item.isHttps ?? false,
+                                rawRequest: item.rawRequest,
+                                rawResponse: item.rawResponse,
+                            });
+                        }
+                    } catch {}
+                }
+            }
+            if (!isCancelled) {
+                setRows(fetched);
+                setIsLoading(false);
+            }
+        };
+
+        fetchRows();
+
+        return () => {
+            isCancelled = true;
+        };
+    }, [requestIds]);
 
     return (
         <div className="flex h-full min-h-0 flex-col overflow-hidden">
@@ -441,7 +467,7 @@ const SitemapRequestTablePane = React.memo<SitemapRequestTablePaneProps>(functio
                     fillHeight
                     data={rows}
                     columns={httpColumns}
-                    emptyLabel={selectedNode ? 'No requests for this node' : 'Select a node in the tree'}
+                    emptyLabel={isLoading ? 'Loading requests…' : selectedNode ? 'No requests for this node' : 'Select a node in the tree'}
                     emptyHint={
                         selectedNode
                             ? 'Captured traffic matching this endpoint will appear here'
@@ -456,8 +482,6 @@ const SitemapRequestTablePane = React.memo<SitemapRequestTablePaneProps>(functio
     );
 });
 
-
-
 // ---------------------------------------------------------------------------
 // Main Sitemap Page Component
 // ---------------------------------------------------------------------------
@@ -465,13 +489,11 @@ export default function SitemapTree() {
     const dispatch = useAppDispatch();
     const projectId = useProjectId();
 
-    const historySelectors = useMemo(() => getHistorySelectors(projectId), [projectId]);
-    const history = useAppSelector(historySelectors.selectAll);
-    const historyEntities = useAppSelector((state) => historySelectors.selectEntities(state) as Record<string | number, HttpHistory>);
-
     const sitemap = useAppSelector(selectSitemap(projectId));
     const sitemapState = useAppSelector(selectSitemapState(projectId));
     const activeScope = useAppSelector(selectActiveScope(projectId));
+
+    const [selectedViewerEntity, setSelectedViewerEntity] = useState<HttpHistory | null>(null);
 
     const sitemapStateRef = useRef(sitemapState);
     useEffect(() => {
@@ -487,12 +509,49 @@ export default function SitemapTree() {
     const reqViewMode = sitemapState.reqViewMode;
     const resViewMode = sitemapState.resViewMode;
 
-    // Load latest sitemap tree and view state directly from backend SQLite DB on mount / visit, updating Redux cache
+    // Load latest sitemap tree and view state directly from backend SQLite DB on mount
     useEffect(() => {
         if (projectId) {
             dispatch(loadSitemapFromBackend(projectId) as any);
         }
     }, [projectId, dispatch]);
+
+    // Lazy load selected request details for the viewer pane
+    useEffect(() => {
+        if (selectedRequest === null) {
+            setSelectedViewerEntity(null);
+            return;
+        }
+
+        let isCancelled = false;
+        invoke<HttpHistory | null>('get_http_history_item', { id: selectedRequest })
+            .then((item) => {
+                if (!isCancelled && item) {
+                    setSelectedViewerEntity({
+                        id: Number(item.id),
+                        projectId: item.projectId,
+                        host: item.host,
+                        method: item.method,
+                        path: item.path,
+                        query: item.query ?? null,
+                        extension: item.extension ?? null,
+                        statusCode: Number(item.statusCode),
+                        responseLength: Number(item.responseLength),
+                        responseTimeMs: Number(item.responseTimeMs),
+                        sentAtMs: Number(item.sentAtMs),
+                        state: stateFromCode(Number(item.statusCode)),
+                        isHttps: item.isHttps ?? false,
+                        rawRequest: item.rawRequest || '',
+                        rawResponse: item.rawResponse || '',
+                    });
+                }
+            })
+            .catch(() => {});
+
+        return () => {
+            isCancelled = true;
+        };
+    }, [selectedRequest]);
 
     const nodeIndex = useMemo(() => buildSitemapNodeIndex(sitemap), [sitemap]);
     const selectedNode = selectedNodeId ? nodeIndex.get(selectedNodeId) ?? null : null;
@@ -593,7 +652,7 @@ export default function SitemapTree() {
         });
     }, [projectId, dispatch]);
 
-    if (sitemap.length === 0 && history.length === 0) {
+    if (sitemap.length === 0) {
         return (
             <div className="flex h-full min-h-0 flex-col items-center justify-center">
                 <EmptyState
@@ -616,7 +675,7 @@ export default function SitemapTree() {
 
             {/* Main Resizable Panes */}
             <ResizablePanelGroup direction="horizontal" autoSaveId="aresius-sitemap-layout" className="flex-1 min-h-0">
-                {/* Left Side: Tree Pane & Caido-like Search Bar */}
+                {/* Left Side: Tree Pane & Search Bar */}
                 <ResizablePanel defaultSize={30} minSize={18} className="min-h-0 flex flex-col border-r border-border/50 overflow-hidden">
                     {/* Tree Search & Controls Header */}
                     <div className="p-2 border-b border-border/50 bg-card/20 space-y-1.5 shrink-0">
@@ -638,8 +697,6 @@ export default function SitemapTree() {
                                 </button>
                             )}
                         </div>
-
-
                     </div>
 
                     {/* Tree Node Content */}
@@ -657,7 +714,6 @@ export default function SitemapTree() {
                                 onExpand={handleExpandTree}
                                 activeScope={activeScope}
                                 projectId={projectId}
-                                entities={historyEntities}
                                 searchTerm={searchTerm}
                             />
                         )}
@@ -684,7 +740,7 @@ export default function SitemapTree() {
                         {/* Lower: Request/Response Split View */}
                         <ResizablePanel defaultSize={50} minSize={15} className="min-h-0 overflow-hidden">
                             <HttpRequestViewerPane
-                                request={selectedRequest !== null ? historyEntities[selectedRequest] : undefined}
+                                request={selectedViewerEntity}
                                 reqViewMode={reqViewMode}
                                 resViewMode={resViewMode}
                                 onReqViewModeChange={handleReqViewModeChange}
@@ -698,4 +754,3 @@ export default function SitemapTree() {
         </div>
     );
 }
-

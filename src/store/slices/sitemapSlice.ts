@@ -1,9 +1,8 @@
 import { buildSitemap, insertHttpHistoryEntry, removeNodeFromTree } from "@/pages/sitemap/utils";
-import { HttpHistory } from "@/types/http.type";
+import { HttpHistory, HttpHistorySummaryRow } from "@/types/http.type";
 import { TreeNode } from "@/types/sitemap.type";
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 import { deleteProject } from "./projectSlice";
-import { setHistoryBulk } from "./http-historySlice";
 import type { AppDispatch, RootState } from "@/store";
 import { invoke } from "@tauri-apps/api/core";
 
@@ -39,12 +38,12 @@ const SiteMapSlice = createSlice({
   name: 'sitemap',
   initialState,
   reducers: {
-    updateSiteMap: (state, action: PayloadAction<{ historyItem: HttpHistory; projectId: string }>) => {
+    updateSiteMap: (state, action: PayloadAction<{ historyItem: HttpHistorySummaryRow | HttpHistory; projectId: string }>) => {
       const { historyItem, projectId } = action.payload;
       if (!state[projectId]) state[projectId] = defaultProjectState();
       insertHttpHistoryEntry(state[projectId].tree, historyItem);
     },
-    setSiteMapBulk: (state, action: PayloadAction<{ items: HttpHistory[]; projectId: string }>) => {
+    setSiteMapBulk: (state, action: PayloadAction<{ items: (HttpHistorySummaryRow | HttpHistory)[]; projectId: string }>) => {
       const { items, projectId } = action.payload;
       if (!state[projectId]) state[projectId] = defaultProjectState();
       state[projectId].tree = buildSitemap(items);
@@ -206,7 +205,7 @@ export const fetchSitemapStateForProject = (projectId: string) => async (dispatc
   }
 };
 
-/** Thunk: Loads HTTP history and sitemap state from backend SQLite DB if not already cached in Redux */
+/** Thunk: Loads HTTP history summaries and sitemap state from backend SQLite DB if not already cached in Redux */
 export const loadSitemapFromBackend = (projectId: string, force = false) => async (
   dispatch: AppDispatch,
   getState: () => RootState
@@ -223,14 +222,13 @@ export const loadSitemapFromBackend = (projectId: string, force = false) => asyn
   }
 
   try {
-    const [historyRows, sitemapData] = await Promise.all([
-      invoke<HttpHistory[]>('get_http_history'),
+    const [historySummaries, sitemapData] = await Promise.all([
+      invoke<HttpHistorySummaryRow[]>('get_http_history_summaries', { projectId }),
       invoke<any>('get_sitemap_state_db', { projectId }),
     ]);
 
-    if (historyRows && Array.isArray(historyRows)) {
-      dispatch(setHistoryBulk({ items: historyRows, projectId }));
-      dispatch(setSiteMapBulk({ items: historyRows, projectId }));
+    if (historySummaries && Array.isArray(historySummaries)) {
+      dispatch(setSiteMapBulk({ items: historySummaries, projectId }));
     }
 
     if (sitemapData) {
@@ -241,7 +239,7 @@ export const loadSitemapFromBackend = (projectId: string, force = false) => asyn
             selectedNodeId: sitemapData.selectedNodeId ?? null,
             selectedRequestId: sitemapData.selectedRequestId ?? null,
             expandedIds: Array.isArray(sitemapData.expandedIds) ? sitemapData.expandedIds : [],
-            searchTerm: sitemapData.searchTerm ?? '',
+            searchTerm: data_sanitize_string(sitemapData.searchTerm),
             scopeFilter: (sitemapData.scopeFilter as 'all' | 'in' | 'out') ?? 'in',
             reqViewMode: (sitemapData.reqViewMode as 'raw' | 'pretty') ?? 'raw',
             resViewMode: (sitemapData.resViewMode as 'raw' | 'pretty') ?? 'raw',
@@ -261,6 +259,10 @@ export const loadSitemapFromBackend = (projectId: string, force = false) => asyn
     console.warn('Failed to load sitemap from backend DB:', err);
   }
 };
+
+function data_sanitize_string(str: any): string {
+  return typeof str === 'string' ? str : '';
+}
 
 /** Helper to persist current sitemap state to SQLite DB */
 export const persistSitemapStateToDb = async (

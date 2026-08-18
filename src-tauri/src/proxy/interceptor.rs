@@ -73,20 +73,40 @@ pub fn is_regex_pattern(pattern: &str) -> bool {
     false
 }
 
-pub fn pattern_to_regex_str(pattern: &str) -> String {
+pub fn strip_protocol(pattern: &str) -> &str {
     let p = pattern.trim();
+    if let Some(rest) = p.strip_prefix("https://") {
+        return rest;
+    }
+    if let Some(rest) = p.strip_prefix("http://") {
+        return rest;
+    }
+    if let Some(rest) = p.strip_prefix("*://") {
+        return rest;
+    }
+    if let Some(rest) = p.strip_prefix("://") {
+        return rest;
+    }
+    if let Some(idx) = p.find("://") {
+        return &p[idx + 3..];
+    }
+    p
+}
+
+pub fn host_pattern_to_regex_str(pattern_host: &str) -> String {
+    let p = pattern_host.trim();
     if p == "*" || p == "*:*" {
         return "(?i)^.*$".to_string();
     }
 
     if let Some(base) = p.strip_prefix("*.") {
         let escaped = regex::escape(base);
-        return format!("(?i)^(?:[a-zA-Z0-9_.-]+\\.)+{}$", escaped);
+        return format!("(?i)^(?:(?:[a-zA-Z0-9_.-]+\\.)+)?{}$", escaped);
     }
 
     if let Some(base) = p.strip_prefix('.') {
         let escaped = regex::escape(base);
-        return format!("(?i)^(?:[a-zA-Z0-9_.-]+\\.)+{}$", escaped);
+        return format!("(?i)^(?:(?:[a-zA-Z0-9_.-]+\\.)+)?{}$", escaped);
     }
 
     let mut regex = String::from("(?i)^");
@@ -104,36 +124,128 @@ pub fn pattern_to_regex_str(pattern: &str) -> String {
     regex
 }
 
-pub fn url_matches_pattern(pattern: &str, host: &str, path: &str) -> bool {
-    let trimmed = pattern.trim();
-    if trimmed.is_empty() {
-        return false;
+pub fn path_pattern_to_regex_str(pattern_path: &str) -> String {
+    let p = pattern_path.trim();
+    if p.is_empty() || p == "/" || p == "/*" {
+        return "(?i)^.*$".to_string();
     }
 
-    let path_to_test = if path.is_empty() { "/" } else { path };
-    let bare_host = match host.rfind(':') {
-        Some(idx) => &host[..idx],
-        None => host,
-    };
-    let host_with_path = format!("{}{}", host, path_to_test);
-    let bare_host_with_path = format!("{}{}", bare_host, path_to_test);
-    let https_url = format!("https://{}{}", host, path_to_test);
-    let http_url = format!("http://{}{}", host, path_to_test);
+    let mut regex = String::from("(?i)^");
+    for c in p.chars() {
+        match c {
+            '*' => regex.push_str(".*"),
+            '.' | '+' | '^' | '$' | '(' | ')' | '[' | ']' | '{' | '}' | '|' | '\\' | '?' => {
+                regex.push('\\');
+                regex.push(c);
+            }
+            _ => regex.push(c),
+        }
+    }
+    regex.push_str("(?:/.*)?$");
+    regex
+}
 
-    // 1. If it's a regex pattern
-    if is_regex_pattern(trimmed) {
-        let regex_src = if let Some(stripped) = trimmed.strip_prefix("regex:") {
-            stripped.trim()
+#[derive(Debug, Clone)]
+pub struct CompiledScopeRule {
+    pub regex: Option<regex::Regex>,
+    pub prefix_url: Option<String>,
+    pub host_regex: Option<regex::Regex>,
+    pub path_regex: Option<regex::Regex>,
+    pub has_port: bool,
+}
+
+impl CompiledScopeRule {
+    pub fn compile(pattern: &str) -> Self {
+        let trimmed = pattern.trim();
+        if trimmed.is_empty() {
+            return Self {
+                regex: None,
+                prefix_url: None,
+                host_regex: None,
+                path_regex: None,
+                has_port: false,
+            };
+        }
+
+        // 1. Regex
+        if is_regex_pattern(trimmed) {
+            let regex_src = if let Some(stripped) = trimmed.strip_prefix("regex:") {
+                stripped.trim()
+            } else {
+                trimmed
+            };
+            let regex_pattern = if regex_src.starts_with("(?i)") {
+                regex_src.to_string()
+            } else {
+                format!("(?i){}", regex_src)
+            };
+
+            return Self {
+                regex: regex::Regex::new(&regex_pattern).ok(),
+                prefix_url: None,
+                host_regex: None,
+                path_regex: None,
+                has_port: false,
+            };
+        }
+
+        // 2. Prefix URL
+        let prefix_url = if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+            Some(trimmed.to_string())
         } else {
-            trimmed
-        };
-        let regex_pattern = if regex_src.starts_with("(?i)") {
-            regex_src.to_string()
-        } else {
-            format!("(?i){}", regex_src)
+            None
         };
 
-        if let Ok(re) = regex::Regex::new(&regex_pattern) {
+        // 3. Glob host / path
+        let cleaned = strip_protocol(trimmed);
+        let (pattern_host, pattern_path) = match cleaned.find('/') {
+            Some(idx) => (&cleaned[..idx], Some(&cleaned[idx..])),
+            None => (cleaned, None),
+        };
+
+        let (host_regex, has_port) = if !pattern_host.is_empty() {
+            let has_port = if pattern_host.starts_with('[') {
+                pattern_host.contains("]:")
+            } else {
+                pattern_host.contains(':')
+            };
+            let host_regex_str = host_pattern_to_regex_str(pattern_host);
+            (regex::Regex::new(&host_regex_str).ok(), has_port)
+        } else {
+            (None, false)
+        };
+
+        let path_regex = match pattern_path {
+            Some(p) => {
+                let path_regex_str = path_pattern_to_regex_str(p);
+                regex::Regex::new(&path_regex_str).ok()
+            }
+            None => None,
+        };
+
+        Self {
+            regex: None,
+            prefix_url,
+            host_regex,
+            path_regex,
+            has_port,
+        }
+    }
+
+    pub fn matches(&self, host: &str, path: &str) -> bool {
+        let path_to_test = if path.is_empty() { "/" } else { path };
+        let bare_host = match host.rfind(':') {
+            Some(idx) => &host[..idx],
+            None => host,
+        };
+
+        // 1. Regex match
+        if let Some(ref re) = self.regex {
+            let host_with_path = format!("{}{}", host, path_to_test);
+            let bare_host_with_path = format!("{}{}", bare_host, path_to_test);
+            let https_url = format!("https://{}{}", host, path_to_test);
+            let http_url = format!("http://{}{}", host, path_to_test);
+
             return re.is_match(host)
                 || re.is_match(bare_host)
                 || re.is_match(&host_with_path)
@@ -142,45 +254,83 @@ pub fn url_matches_pattern(pattern: &str, host: &str, path: &str) -> bool {
                 || re.is_match(&https_url)
                 || re.is_match(&http_url);
         }
-    }
 
-    // 2. Prefix URL matching (e.g. "https://example.com/api")
-    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
-        if https_url.starts_with(trimmed)
-            || http_url.starts_with(trimmed)
-            || format!("https://{}{}", bare_host, path_to_test).starts_with(trimmed)
-            || format!("http://{}{}", bare_host, path_to_test).starts_with(trimmed)
-        {
-            return true;
+        // 2. Prefix URL match
+        if let Some(ref prefix) = self.prefix_url {
+            let https_url = format!("https://{}{}", host, path_to_test);
+            let http_url = format!("http://{}{}", host, path_to_test);
+            if https_url.starts_with(prefix)
+                || http_url.starts_with(prefix)
+                || format!("https://{}{}", bare_host, path_to_test).starts_with(prefix)
+                || format!("http://{}{}", bare_host, path_to_test).starts_with(prefix)
+            {
+                return true;
+            }
         }
-    }
 
-    // 3. Glob matching
-    let (pattern_host, pattern_path) = match trimmed.find('/') {
-        Some(idx) => (&trimmed[..idx], Some(&trimmed[idx..])),
-        None => (trimmed, None),
-    };
-
-    let host_regex_str = pattern_to_regex_str(pattern_host);
-    if let Ok(re) = regex::Regex::new(&host_regex_str) {
-        if !re.is_match(host) && !re.is_match(bare_host) {
+        // 3. Host glob match
+        if let Some(ref re) = self.host_regex {
+            let target_host = if self.has_port { host } else { bare_host };
+            if !re.is_match(target_host) && !re.is_match(host) && !re.is_match(bare_host) {
+                return false;
+            }
+        } else {
             return false;
         }
-    } else {
-        return false;
+
+        // 4. Path glob match
+        if let Some(ref re) = self.path_regex {
+            if !re.is_match(path_to_test) {
+                return false;
+            }
+        }
+
+        true
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CompiledScope {
+    pub allow: Vec<CompiledScopeRule>,
+    pub deny: Vec<CompiledScopeRule>,
+}
+
+impl CompiledScope {
+    pub fn compile(scope: &ActiveScope) -> Self {
+        Self {
+            allow: scope
+                .allow
+                .iter()
+                .map(|r| CompiledScopeRule::compile(&r.pattern))
+                .collect(),
+            deny: scope
+                .deny
+                .iter()
+                .map(|r| CompiledScopeRule::compile(&r.pattern))
+                .collect(),
+        }
     }
 
-    let pattern_path = match pattern_path {
-        Some(p) => p,
-        None => return true,
-    };
+    pub fn is_in_scope(&self, host: &str, path: &str) -> bool {
+        if self.allow.is_empty() {
+            return false;
+        }
 
-    let path_regex_str = pattern_to_regex_str(pattern_path);
-    if let Ok(re) = regex::Regex::new(&path_regex_str) {
-        re.is_match(path_to_test)
-    } else {
-        false
+        let path = if path.is_empty() { "/" } else { path };
+
+        let allowed = self.allow.iter().any(|rule| rule.matches(host, path));
+        if !allowed {
+            return false;
+        }
+
+        let denied = self.deny.iter().any(|rule| rule.matches(host, path));
+        !denied
     }
+}
+
+pub fn url_matches_pattern(pattern: &str, host: &str, path: &str) -> bool {
+    let rule = CompiledScopeRule::compile(pattern);
+    rule.matches(host, path)
 }
 
 pub fn is_in_scope(scope: Option<&ActiveScope>, host: &str, path: &str) -> bool {
@@ -188,27 +338,8 @@ pub fn is_in_scope(scope: Option<&ActiveScope>, host: &str, path: &str) -> bool 
         Some(s) => s,
         None => return true,
     };
-
-    if scope.allow.is_empty() {
-        return false;
-    }
-
-    let path = if path.is_empty() { "/" } else { path };
-
-    let allowed = scope
-        .allow
-        .iter()
-        .any(|rule| url_matches_pattern(&rule.pattern, host, path));
-    if !allowed {
-        return false;
-    }
-
-    let denied = scope
-        .deny
-        .iter()
-        .any(|rule| url_matches_pattern(&rule.pattern, host, path));
-
-    !denied
+    let compiled = CompiledScope::compile(scope);
+    compiled.is_in_scope(host, path)
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

@@ -29,7 +29,7 @@ function splitOnce(str: string, sep: string): [string, string?] {
     return [str.slice(0, idx), str.slice(idx + 1)];
 }
 
-function parseParamNames(queryString: string): string[] {
+export function parseParamNames(queryString: string): string[] {
     if (!queryString) return [];
     const names = new Set<string>();
     for (const pair of queryString.split('&')) {

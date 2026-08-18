@@ -1,67 +1,16 @@
 import Table, { isRowSelected } from '@/components/Table';
 import { useAppSelector } from '@/hooks/redux';
 import { ColumnDef, createColumnHelper } from '@tanstack/react-table';
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { renderHttpHistoryTableContextMenu } from '@/components/HttpHistoryTableContextMenu';
-import { HttpHistory, RequestState } from '@/types/http.type';
-import { getHistorySelectors } from '@/store/slices/http-historySlice';
+import { HttpTransaction } from '@/types/http.type';
 import MethodBadge from '@/components/MethodBadge';
 import { selectActiveScope } from '@/store/slices/scopeSlice';
-import { isInScope } from '@/lib/scopeMatcher';
 import { useProjectId } from '@/hooks/useProjectId';
 import { ScopeFilterBar, ScopeFilterOption } from '@/components/ScopeFilterBar';
 import HttpRequestViewerPane from '@/components/HttpRequestViewerPane';
-
-// Flat, at the same level as rawRequest/rawResponse -- no nested metadata
-// object. Every field except `state` is now populated straight from the
-// backend's HttpHistoryPayload; nothing here is parsed from raw bytes on
-// the frontend anymore.
-export type HttpTransaction = {
-    id: number;
-    host: string;
-    method: string;
-    path: string;
-    query: string | null;
-    extension: string | null;
-    statusCode: number;
-    responseLength: number;
-    responseTimeMs: number;
-    sentAtMs: number;
-    state: RequestState;
-    rawRequest: string;
-    rawResponse: string;
-};
-
-function stateFromCode(code: number): RequestState {
-    // 0 is our backend's "couldn't parse a status line" sentinel -- treat
-    // it like the old `null` case rather than falling through to Failed.
-    if (!code) return 'Pending';
-    if (code >= 100 && code < 200) return 'Info';
-    if (code >= 200 && code < 300) return 'Success';
-    if (code >= 300 && code < 400) return 'Redirect';
-    if (code >= 400 && code < 500) return 'Client Error';
-    if (code >= 500 && code < 600) return 'Server Error';
-    return 'Failed';
-}
-
-export function adaptFromReqRes(items: HttpHistory[]): HttpTransaction[] {
-    return items.map((item) => ({
-        id: Number(item.id),
-        host: item.host,
-        method: item.method,
-        path: item.path,
-        query: item.query ?? null,
-        extension: item.extension ?? null,
-        statusCode: item.statusCode,
-        responseLength: item.responseLength,
-        responseTimeMs: item.responseTimeMs,
-        sentAtMs: item.sentAtMs,
-        state: stateFromCode(item.statusCode),
-        rawRequest: item.rawRequest,
-        rawResponse: item.rawResponse,
-    }));
-}
+import { useVirtualHttpHistory } from '@/hooks/useVirtualHttpHistory';
 
 function codeColor(code: number, selected: boolean) {
     if (selected) return 'text-primary-foreground';
@@ -181,7 +130,6 @@ export const httpColumns: ColumnDef<HttpTransaction, any>[] = [
         header: 'Sent at',
         size: 130,
         minSize: 130,
-
         cell: (info) => {
             const selected = isRowSelected(info);
             return (
@@ -199,41 +147,49 @@ export const httpColumns: ColumnDef<HttpTransaction, any>[] = [
 
 const HTTPHistory = () => {
     const projectId = useProjectId();
-    const historySelectors = useMemo(() => getHistorySelectors(projectId), [projectId]);
-    const history = useAppSelector(historySelectors.selectAll);
     const activeScope = useAppSelector(selectActiveScope(projectId));
-    const [selectedRequest, setSelectedRequest] = useState<number | null>(null);
     const [scopeFilter, setScopeFilter] = useState<ScopeFilterOption>('in');
 
-    const selectedEntity = useAppSelector((state) =>
-        selectedRequest !== null ? historySelectors.selectById(state, selectedRequest) : undefined,
-    );
-
-    const allRows = useMemo(() => adaptFromReqRes(history), [history]);
-
-    const rows = useMemo(() => {
-        if (scopeFilter === 'all' || !activeScope) return allRows;
-        return allRows.filter((row) => {
-            const inScope = isInScope(activeScope, row.host, row.path || '/');
-            return scopeFilter === 'in' ? inScope : !inScope;
-        });
-    }, [allRows, activeScope, scopeFilter]);
+    const {
+        items,
+        total,
+        offset,
+        sorting,
+        handleSortingChange,
+        handleScrollWindowChange,
+        selectedRequest,
+        setSelectedRequest,
+        selectedEntity,
+        isLoading,
+    } = useVirtualHttpHistory({
+        projectId,
+        activeScope,
+        scopeFilter,
+    });
 
     return (
-        <div className='overflow-hidden h-screen'>
-            <ResizablePanelGroup direction='vertical' autoSaveId="http-history-table" >
+        <div className="overflow-hidden h-screen">
+            <ResizablePanelGroup direction="vertical" autoSaveId="http-history-table">
                 <ResizablePanel defaultSize={50} minSize={15}>
-                    <div className='h-full flex flex-col'>
+                    <div className="h-full flex flex-col">
                         {/* Scope filter bar (rendered only when activeScope is set) */}
                         <ScopeFilterBar
                             activeScope={activeScope}
                             value={scopeFilter}
                             onChange={setScopeFilter}
                         />
-                        <Table data={rows}
+                        <Table
+                            data={items}
                             columns={httpColumns}
-                            emptyLabel="No requests captured yet"
-                            emptyHint="Start your proxy to begin capturing HTTP traffic"
+                            totalCount={total}
+                            windowOffset={offset}
+                            onScrollWindowChange={handleScrollWindowChange}
+                            sorting={sorting}
+                            onSortingChange={handleSortingChange}
+                            manualSorting={true}
+                            emptyLabel={isLoading ? 'Loading requests…' : 'No requests captured yet'}
+                            emptyHint={isLoading ? undefined : 'Start your proxy to begin capturing HTTP traffic'}
+                            selectedRequestId={selectedRequest}
                             setSelectedRequest={setSelectedRequest}
                             renderRowContextMenu={renderHttpHistoryTableContextMenu}
                             fillHeight
@@ -242,7 +198,7 @@ const HTTPHistory = () => {
                 </ResizablePanel>
                 <ResizableHandle withHandle />
                 <ResizablePanel defaultSize={50} minSize={15}>
-                    <div className='h-full'>
+                    <div className="h-full">
                         <HttpRequestViewerPane
                             request={selectedEntity}
                             autoSaveId="http-history-req-res"

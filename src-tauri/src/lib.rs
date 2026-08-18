@@ -7,7 +7,10 @@ mod types;
 
 use crate::ares_utils::certs::certification_installation::install_cert;
 use crate::ares_utils::certs::check_cert_installed::check_cert_installed;
-use crate::ares_utils::database::http_history::get_http_history;
+use crate::ares_utils::database::http_history::{
+    delete_http_history_items, get_http_history, get_http_history_item,
+    get_http_history_summaries, get_http_history_window,
+};
 use crate::ares_utils::database::projects::create_project;
 use crate::ares_utils::database::projects_catalog::{
     delete_project, get_default_project_dir, list_projects, select_project,
@@ -124,6 +127,10 @@ pub fn run() {
             get_default_project_dir,
             // HTTP History
             get_http_history,
+            get_http_history_window,
+            get_http_history_item,
+            get_http_history_summaries,
+            delete_http_history_items,
             // Scopes
             get_scope_project_data,
             create_scope_db,

@@ -29,9 +29,8 @@ import { Badge } from "@/components/ui/badge"
 import { IconGripVertical } from "@tabler/icons-react"
 import { useAppDispatch, useAppSelector } from "@/hooks/redux"
 import { Project } from "@/types/project.type"
-import { HttpHistory } from "@/types/http.type"
+import { HttpHistorySummaryRow } from "@/types/http.type"
 import { setcurrentProjectId, setProjects, deleteProject, updateProject } from "@/store/slices/projectSlice"
-import { setHistoryBulk } from "@/store/slices/http-historySlice"
 import { setSiteMapBulk, fetchSitemapStateForProject } from "@/store/slices/sitemapSlice"
 import { fetchScopeDataForProject } from "@/store/slices/scopeSlice"
 import AddProjectDialog from "@/components/add-project-dialog.component"
@@ -129,13 +128,12 @@ export default function Projects() {
       dispatch(setcurrentProjectId(id))
       dispatch(updateProject(updatedProject))
 
-      // Pre-populate history and scopes from the project's persisted DB rows.
+      // Pre-populate sitemap summaries from the project's persisted DB rows.
       try {
-        const rows = await invoke<HttpHistory[]>("get_http_history")
-        dispatch(setHistoryBulk({ items: rows, projectId: id }))
-        dispatch(setSiteMapBulk({ items: rows, projectId: id }))
+        const summaries = await invoke<HttpHistorySummaryRow[]>("get_http_history_summaries", { projectId: id })
+        dispatch(setSiteMapBulk({ items: summaries, projectId: id }))
       } catch (err) {
-        console.warn("Could not load persisted HTTP history:", err)
+        console.warn("Could not load persisted HTTP history summaries:", err)
       }
 
       try {

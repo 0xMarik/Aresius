@@ -1,7 +1,7 @@
 import { getDomainLabel, getRegistrableDomain } from './publicSuffix';
 import { splitPathSegments, templatePathSegments } from './pathTemplating';
-import { parseRequestLine, parseBodyFieldNames, parseHostname } from './requestParsing';
-import type { HttpHistory } from '@/types/http.type';
+import { parseRequestLine, parseBodyFieldNames, parseHostname, parseParamNames } from './requestParsing';
+import type { HttpHistory, HttpHistorySummaryRow } from '@/types/http.type';
 import type { SitemapKind, SitemapNodeData, TreeNode } from '@/types/sitemap.type';
 
 export type { SitemapKind, SitemapNodeData, TreeNode };
@@ -41,6 +41,23 @@ function getOrCreateChild(parent: MutableNode, key: string, id: string, label: s
     return child;
 }
 
+function extractEntryRequestLine(entry: HttpHistorySummaryRow | HttpHistory): {
+    method: string;
+    path: string;
+    queryParams: string[];
+    bodyFields: string[];
+} {
+    if ((entry as HttpHistory).rawRequest) {
+        const { method, path, queryParams } = parseRequestLine((entry as HttpHistory).rawRequest);
+        const bodyFields = parseBodyFieldNames((entry as HttpHistory).rawRequest, method);
+        return { method, path, queryParams, bodyFields };
+    }
+    const method = (entry.method || 'GET').toUpperCase();
+    const path = entry.path || '/';
+    const queryParams = entry.query ? parseParamNames(entry.query) : [];
+    return { method, path, queryParams, bodyFields: [] };
+}
+
 /**
  * Builds (or merges into) a sitemap TreeNode[] from a list of HTTP history
  * entries.
@@ -59,7 +76,7 @@ function getOrCreateChild(parent: MutableNode, key: string, id: string, label: s
  * Existing entries with the same path/host merge (hit counts increment)
  * rather than duplicating nodes.
  */
-export function buildSitemap(entries: HttpHistory[], options: BuildSitemapOptions = {}): TreeNode[] {
+export function buildSitemap(entries: (HttpHistorySummaryRow | HttpHistory)[], options: BuildSitemapOptions = {}): TreeNode[] {
     const root = createNode('root', 'root', 'domain'); // synthetic root, discarded at the end
     root.kind = 'domain'; // placeholder, never emitted
 
@@ -77,10 +94,9 @@ export function buildSitemap(entries: HttpHistory[], options: BuildSitemapOption
         .sort(byLabel);
 }
 
-function mergeEntry(root: MutableNode, entry: HttpHistory, options: BuildSitemapOptions): void {
+function mergeEntry(root: MutableNode, entry: HttpHistorySummaryRow | HttpHistory, options: BuildSitemapOptions): void {
     const hostname = parseHostname(entry.host);
-    const { method, path, queryParams } = parseRequestLine(entry.rawRequest);
-    const bodyFields = parseBodyFieldNames(entry.rawRequest, method);
+    const { method, path, queryParams, bodyFields } = extractEntryRequestLine(entry);
 
     // ---- domain node ----
     const registrableDomain = getRegistrableDomain(hostname);
@@ -255,12 +271,11 @@ function byLabel(a: TreeNode, b: TreeNode): number {
  */
 export function insertHttpHistoryEntry(
     tree: TreeNode[],
-    entry: HttpHistory,
+    entry: HttpHistorySummaryRow | HttpHistory,
     options: BuildSitemapOptions = {},
 ): TreeNode[] {
     const hostname = parseHostname(entry.host);
-    const { method, path, queryParams } = parseRequestLine(entry.rawRequest);
-    const bodyFields = parseBodyFieldNames(entry.rawRequest, method);
+    const { method, path, queryParams, bodyFields } = extractEntryRequestLine(entry);
 
     // ---- domain node ----
     const registrableDomain = getRegistrableDomain(hostname);
