@@ -270,7 +270,12 @@ pub async fn get_fuzzer_history_window(
         // Fallback to SQLite DB
         if let Some(db_state) = app.try_state::<crate::ares_utils::database::DbState>() {
             if let Ok(pool) = db_state.pool().await {
-                let run_id = format!("{}-{}", selected_session, fuzz_history);
+                let run_id = crate::ares_utils::database::fuzzer::resolve_fuzzer_run_id(
+                    &pool,
+                    selected_session as usize,
+                    fuzz_history as usize,
+                )
+                .await;
                 if let Ok((total, db_rows)) = crate::ares_utils::database::fuzzer::query_fuzzer_requests_window(
                     &pool,
                     &run_id,
@@ -331,7 +336,12 @@ pub async fn get_fuzzer_request_by_id(
     // Fallback to SQLite DB
     if let Some(db_state) = app.try_state::<crate::ares_utils::database::DbState>() {
         if let Ok(pool) = db_state.pool().await {
-            let run_id = format!("{}-{}", selected_session, fuzz_history);
+            let run_id = crate::ares_utils::database::fuzzer::resolve_fuzzer_run_id(
+                &pool,
+                selected_session as usize,
+                fuzz_history as usize,
+            )
+            .await;
             let row = if let Ok(idx) = request_id.parse::<i64>() {
                 sqlx::query_as::<_, crate::ares_utils::database::fuzzer::FuzzerRequestDb>(
                     "SELECT * FROM fuzzer_requests WHERE (run_id = ? AND (id = ? OR sort_order = ?)) OR id = ?"
@@ -1173,6 +1183,27 @@ pub async fn run_fuzz_targets(app: AppHandle, config: FuzzRunConfig, targets: Ve
         .bind(&run_id)
         .execute(pool)
         .await;
+
+        if cancelled {
+            let _ = crate::ares_utils::database::fuzzer::cancel_pending_fuzzer_requests(pool, &run_id).await;
+        }
+
+        let worker_telemetry: Vec<(u32, String, u32, u32, Option<String>)> = worker_infos
+            .iter()
+            .map(|w| {
+                let w_done = w.completed.load(Ordering::Relaxed);
+                let w_dropped = w.dropped.load(Ordering::Relaxed);
+                let w_status = if w_dropped {
+                    "dropped".to_string()
+                } else if w_done >= w.total || cancelled {
+                    "completed".to_string()
+                } else {
+                    "running".to_string()
+                };
+                (w.worker_id, w_status, w_done, w.total, None)
+            })
+            .collect();
+        let _ = crate::ares_utils::database::fuzzer::update_fuzzer_workers_batch(pool, &run_id, &worker_telemetry).await;
     }
 
     emit_progress(
@@ -1214,6 +1245,27 @@ pub async fn cancel_fuzzing(
                 (0, 0)
             }
         };
+
+        if let Some(db_state) = app.try_state::<crate::ares_utils::database::DbState>() {
+            if let Ok(pool) = db_state.pool().await {
+                let run_id = crate::ares_utils::database::fuzzer::resolve_fuzzer_run_id(
+                    &pool,
+                    selected_session as usize,
+                    fuzz_history as usize,
+                )
+                .await;
+                let _ = crate::ares_utils::database::fuzzer::cancel_pending_fuzzer_requests(&pool, &run_id).await;
+                let now = chrono::Utc::now().timestamp_millis();
+                let _ = sqlx::query(
+                    "UPDATE fuzzer_runs SET status = 'cancelled', completed = ?, finished_at = ? WHERE id = ?"
+                )
+                .bind(completed as i64)
+                .bind(now)
+                .bind(&run_id)
+                .execute(&pool)
+                .await;
+            }
+        }
 
         emit_progress(
             &app,
@@ -1268,9 +1320,9 @@ pub struct FuzzWorkerResumeGroup {
     pub worker_original_total: u32,
 }
 
-async fn get_failed_worker_groups(session: u32, history: u32) -> Vec<FuzzWorkerResumeGroup> {
+async fn get_failed_worker_groups(app: &AppHandle, session: u32, history: u32) -> Vec<FuzzWorkerResumeGroup> {
     let key = run_key(session, history);
-    let store = fuzz_store().lock().await;
+    let mut store = fuzz_store().lock().await;
     let mut map: HashMap<u32, (Vec<FuzzTarget>, u32, u32)> = HashMap::new();
 
     if let Some(run_data) = store.get(&key) {
@@ -1288,6 +1340,58 @@ async fn get_failed_worker_groups(session: u32, history: u32) -> Vec<FuzzWorkerR
                 });
             }
         }
+    } else if let Some(db_state) = app.try_state::<crate::ares_utils::database::DbState>() {
+        if let Ok(pool) = db_state.pool().await {
+            let run_id = crate::ares_utils::database::fuzzer::resolve_fuzzer_run_id(&pool, session as usize, history as usize).await;
+            if let Ok(rows) = crate::ares_utils::database::fuzzer::load_all_fuzzer_requests(&pool, &run_id).await {
+                let mut id_map = HashMap::with_capacity(rows.len());
+                let mut store_rows = Vec::with_capacity(rows.len());
+                for r in &rows {
+                    let w_id = r.worker_id.map(|w| w as u32).unwrap_or(0);
+                    let entry = map.entry(w_id).or_insert_with(|| (Vec::new(), 0, 0));
+                    entry.2 += 1; // total
+                    if r.status == "completed" {
+                        entry.1 += 1; // completed
+                    } else {
+                        entry.0.push(FuzzTarget {
+                            id: r.id.clone(),
+                            request: r.raw_request.clone(),
+                            payload: r.payload.clone(),
+                        });
+                    }
+
+                    let response = if let Some(raw_resp) = &r.raw_response {
+                        Some(crate::types::ReqRes {
+                            request: r.raw_request.clone(),
+                            response: raw_resp.clone(),
+                            response_time: r.response_time_ms.unwrap_or(0) as u128,
+                        })
+                    } else {
+                        None
+                    };
+
+                    let idx = store_rows.len();
+                    id_map.insert(r.id.clone(), idx);
+                    store_rows.push(FuzzerRequestRow {
+                        id: r.sort_order as usize,
+                        fuzz_request_id: r.id.clone(),
+                        raw_request: r.raw_request.clone(),
+                        payload: r.payload.clone(),
+                        response,
+                        request_date: chrono::DateTime::from_timestamp_millis(r.request_date)
+                            .map(|dt| dt.to_rfc3339())
+                            .unwrap_or_default(),
+                        status: r.status.clone(),
+                        error_message: r.error_message.clone(),
+                        connection_dropped: r.connection_dropped,
+                        worker_id: r.worker_id.map(|w| w as u32),
+                    });
+                }
+                if !store_rows.is_empty() {
+                    store.insert(key, FuzzerRunData { rows: store_rows, id_map });
+                }
+            }
+        }
     }
 
     map.into_iter()
@@ -1302,9 +1406,9 @@ async fn get_failed_worker_groups(session: u32, history: u32) -> Vec<FuzzWorkerR
         .collect()
 }
 
-async fn get_failed_worker_targets(session: u32, history: u32, worker_id: u32) -> (Vec<FuzzTarget>, u32, u32) {
+async fn get_failed_worker_targets(app: &AppHandle, session: u32, history: u32, worker_id: u32) -> (Vec<FuzzTarget>, u32, u32) {
     let key = run_key(session, history);
-    let store = fuzz_store().lock().await;
+    let mut store = fuzz_store().lock().await;
     let mut targets = Vec::new();
     let mut already_completed = 0;
     let mut original_total = 0;
@@ -1324,6 +1428,59 @@ async fn get_failed_worker_targets(session: u32, history: u32, worker_id: u32) -
                 }
             }
         }
+    } else if let Some(db_state) = app.try_state::<crate::ares_utils::database::DbState>() {
+        if let Ok(pool) = db_state.pool().await {
+            let run_id = crate::ares_utils::database::fuzzer::resolve_fuzzer_run_id(&pool, session as usize, history as usize).await;
+            if let Ok(rows) = crate::ares_utils::database::fuzzer::load_all_fuzzer_requests(&pool, &run_id).await {
+                let mut id_map = HashMap::with_capacity(rows.len());
+                let mut store_rows = Vec::with_capacity(rows.len());
+                for r in &rows {
+                    let w_id = r.worker_id.map(|w| w as u32).unwrap_or(0);
+                    if w_id == worker_id {
+                        original_total += 1;
+                        if r.status == "completed" {
+                            already_completed += 1;
+                        } else {
+                            targets.push(FuzzTarget {
+                                id: r.id.clone(),
+                                request: r.raw_request.clone(),
+                                payload: r.payload.clone(),
+                            });
+                        }
+                    }
+
+                    let response = if let Some(raw_resp) = &r.raw_response {
+                        Some(crate::types::ReqRes {
+                            request: r.raw_request.clone(),
+                            response: raw_resp.clone(),
+                            response_time: r.response_time_ms.unwrap_or(0) as u128,
+                        })
+                    } else {
+                        None
+                    };
+
+                    let idx = store_rows.len();
+                    id_map.insert(r.id.clone(), idx);
+                    store_rows.push(FuzzerRequestRow {
+                        id: r.sort_order as usize,
+                        fuzz_request_id: r.id.clone(),
+                        raw_request: r.raw_request.clone(),
+                        payload: r.payload.clone(),
+                        response,
+                        request_date: chrono::DateTime::from_timestamp_millis(r.request_date)
+                            .map(|dt| dt.to_rfc3339())
+                            .unwrap_or_default(),
+                        status: r.status.clone(),
+                        error_message: r.error_message.clone(),
+                        connection_dropped: r.connection_dropped,
+                        worker_id: r.worker_id.map(|w| w as u32),
+                    });
+                }
+                if !store_rows.is_empty() {
+                    store.insert(key, FuzzerRunData { rows: store_rows, id_map });
+                }
+            }
+        }
     }
 
     (targets, already_completed, original_total)
@@ -1339,7 +1496,7 @@ pub async fn resend_failed_fuzz_requests(
     already_completed: u32,
     overall_total: u32,
 ) -> Result<(), String> {
-    let worker_groups = get_failed_worker_groups(selected_session, fuzz_history).await;
+    let worker_groups = get_failed_worker_groups(&app, selected_session, fuzz_history).await;
 
     let worker_groups: Vec<_> = worker_groups
         .into_iter()
@@ -1508,7 +1665,12 @@ pub async fn resend_failed_fuzz_requests(
         };
 
         if let Some(ref pool) = db_pool_for_task {
-            let run_id = format!("{}-{}", selected_session, fuzz_history);
+            let run_id = crate::ares_utils::database::fuzzer::resolve_fuzzer_run_id(
+                pool,
+                selected_session as usize,
+                fuzz_history as usize,
+            )
+            .await;
             let now = chrono::Utc::now().timestamp_millis();
             let _ = sqlx::query(
                 "UPDATE fuzzer_runs SET status = ?, completed = ?, connection_dropped = ?, finished_at = ? WHERE id = ?"
@@ -1520,6 +1682,27 @@ pub async fn resend_failed_fuzz_requests(
             .bind(&run_id)
             .execute(pool)
             .await;
+
+            if cancelled {
+                let _ = crate::ares_utils::database::fuzzer::cancel_pending_fuzzer_requests(pool, &run_id).await;
+            }
+
+            let worker_telemetry: Vec<(u32, String, u32, u32, Option<String>)> = worker_infos
+                .iter()
+                .map(|w| {
+                    let w_done = w.completed.load(Ordering::Relaxed);
+                    let w_dropped = w.dropped.load(Ordering::Relaxed);
+                    let w_status = if w_dropped {
+                        "dropped".to_string()
+                    } else if w_done >= w.total || cancelled {
+                        "completed".to_string()
+                    } else {
+                        "running".to_string()
+                    };
+                    (w.worker_id, w_status, w_done, w.total, None)
+                })
+                .collect();
+            let _ = crate::ares_utils::database::fuzzer::update_fuzzer_workers_batch(pool, &run_id, &worker_telemetry).await;
         }
 
         emit_progress(
@@ -1548,7 +1731,7 @@ pub async fn resend_worker_fuzz_requests(
     overall_total: u32,
 ) -> Result<(), String> {
     let (targets, worker_already_completed, worker_original_total) =
-        get_failed_worker_targets(selected_session, fuzz_history, worker_id).await;
+        get_failed_worker_targets(&app, selected_session, fuzz_history, worker_id).await;
 
     if targets.is_empty() {
         return Err("No targets to resend for this worker".to_string());
@@ -1663,7 +1846,7 @@ pub async fn resend_worker_fuzz_requests(
             cancel.clone(),
             Arc::clone(&completed),
             Arc::clone(&worker_dropped),
-            worker_completed_counter,
+            worker_completed_counter.clone(),
             worker_already_completed,
             Some(worker_original_total),
             db_pool_for_task.clone(),
@@ -1688,7 +1871,12 @@ pub async fn resend_worker_fuzz_requests(
         };
 
         if let Some(ref pool) = db_pool_for_task {
-            let run_id = format!("{}-{}", selected_session, fuzz_history);
+            let run_id = crate::ares_utils::database::fuzzer::resolve_fuzzer_run_id(
+                pool,
+                selected_session as usize,
+                fuzz_history as usize,
+            )
+            .await;
             let now = chrono::Utc::now().timestamp_millis();
             let _ = sqlx::query(
                 "UPDATE fuzzer_runs SET status = ?, completed = ?, connection_dropped = ?, finished_at = ? WHERE id = ?"
@@ -1700,6 +1888,22 @@ pub async fn resend_worker_fuzz_requests(
             .bind(&run_id)
             .execute(pool)
             .await;
+
+            if cancelled {
+                let _ = crate::ares_utils::database::fuzzer::cancel_pending_fuzzer_requests(pool, &run_id).await;
+            }
+
+            let w_done = worker_completed_counter.load(Ordering::Relaxed);
+            let w_dropped = worker_dropped.load(Ordering::Relaxed);
+            let w_status = if w_dropped {
+                "dropped".to_string()
+            } else if w_done >= worker_original_total || cancelled {
+                "completed".to_string()
+            } else {
+                "running".to_string()
+            };
+            let worker_telemetry = vec![(worker_id, w_status, w_done, worker_original_total, None)];
+            let _ = crate::ares_utils::database::fuzzer::update_fuzzer_workers_batch(pool, &run_id, &worker_telemetry).await;
         }
 
         emit_progress(
@@ -1715,3 +1919,4 @@ pub async fn resend_worker_fuzz_requests(
 
     Ok(())
 }
+

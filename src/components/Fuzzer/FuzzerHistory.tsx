@@ -620,6 +620,37 @@ function FuzzerHistoryBody({
                                                         </Button>
                                                     )}
                                                 </div>
+                                            ) : focusedResult.status === 'cancelled' ? (
+                                                <div className="flex h-full flex-col gap-3 p-4 bg-card">
+                                                    <div className="rounded-md border border-muted-foreground/30 bg-muted/40 p-3">
+                                                        <p className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                                                            <AlertTriangle className="w-4 h-4 shrink-0 text-amber-500" />
+                                                            Request Cancelled
+                                                        </p>
+                                                        <p className="mt-1 font-mono text-[11px] leading-relaxed text-muted-foreground whitespace-pre-wrap">
+                                                            This request was not sent because the fuzz run was stopped. Click "Resend request" below to send this request or use "Resume" on the toolbar to continue all pending requests.
+                                                        </p>
+                                                    </div>
+                                                    {canResendFocused && (
+                                                        <Button
+                                                            variant="outline"
+                                                            size="sm"
+                                                            className="w-fit h-7 gap-1.5 text-xs font-medium"
+                                                            onClick={() => resendSingleFuzzRequest(
+                                                                dispatch,
+                                                                sessionIndex,
+                                                                historyIndex,
+                                                                focusedResult.fuzzRequestId,
+                                                                focusedResult.rawRequest,
+                                                                fuzzConfigSnapshot?.metadata?.targetUrl ?? '',
+                                                                projectId,
+                                                            )}
+                                                        >
+                                                            <RotateCcw className="w-3.5 h-3.5" />
+                                                            Resend request
+                                                        </Button>
+                                                    )}
+                                                </div>
                                             ) : (
                                                 <CodeMirrorEditor value={focusedResult.response?.rawResponse || 'No response available'} />
                                             )}

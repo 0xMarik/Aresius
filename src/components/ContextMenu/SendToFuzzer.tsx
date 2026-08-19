@@ -3,15 +3,26 @@ import { Send } from 'lucide-react'
 import { addFuzzSession } from '@/store/slices/fuzzerSlice';
 import { useAppDispatch } from '@/hooks/redux';
 import { useProjectId } from '@/hooks/useProjectId';
+import { invoke } from '@tauri-apps/api/core';
 
 const SendToFuzzer = ({ rawRequest, host }: { rawRequest: string, host: string }) => {
     const dispatch = useAppDispatch();
     const projectId = useProjectId();
 
-    const sendToFuzzer = () => {
+    const sendToFuzzer = async () => {
         if (!projectId) return;
         const targetUrl = host ? (host.includes('://') ? host : `https://${host}`) : 'https://';
         dispatch(addFuzzSession({ name: "From history", rawRequest: rawRequest, targetUrl, isItFuzzerPage: false, projectId }));
+        try {
+            await invoke('create_fuzzer_session_db', {
+                projectId,
+                name: "From history",
+                targetUrl,
+                rawRequest: rawRequest || 'GET / HTTP/1.1\r\n\r\n',
+            });
+        } catch (e) {
+            console.error('Failed to create fuzzer session in DB:', e);
+        }
     };
     return (
         <ContextMenuItem onSelect={sendToFuzzer}>

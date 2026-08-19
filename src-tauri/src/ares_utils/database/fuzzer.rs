@@ -867,3 +867,103 @@ pub async fn update_fuzzer_request_error(
 
     Ok(())
 }
+
+/// Resolve the actual run_id from session_index and history_index offset in DB
+pub async fn resolve_fuzzer_run_id(
+    pool: &SqlitePool,
+    session_index: usize,
+    history_index: usize,
+) -> String {
+    let session_id: Option<String> = sqlx::query_scalar(
+        "SELECT id FROM fuzzer_sessions ORDER BY sort_order ASC, created_at ASC LIMIT 1 OFFSET ?"
+    )
+    .bind(session_index as i64)
+    .fetch_optional(pool)
+    .await
+    .unwrap_or(None);
+
+    if let Some(s_id) = session_id {
+        let run_id: Option<String> = sqlx::query_scalar(
+            "SELECT id FROM fuzzer_runs WHERE session_id = ? ORDER BY started_at ASC LIMIT 1 OFFSET ?"
+        )
+        .bind(&s_id)
+        .bind(history_index as i64)
+        .fetch_optional(pool)
+        .await
+        .unwrap_or(None);
+
+        if let Some(r_id) = run_id {
+            return r_id;
+        }
+    }
+
+    format!("{}-{}", session_index, history_index)
+}
+
+/// Update pending fuzzer requests to 'cancelled' in SQLite
+pub async fn cancel_pending_fuzzer_requests(
+    pool: &SqlitePool,
+    run_id: &str,
+) -> Result<(), String> {
+    sqlx::query(
+        "UPDATE fuzzer_requests SET status = 'cancelled' WHERE run_id = ? AND status = 'pending'"
+    )
+    .bind(run_id)
+    .execute(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+/// Batch update fuzzer workers telemetry in SQLite
+pub async fn update_fuzzer_workers_batch(
+    pool: &SqlitePool,
+    run_id: &str,
+    workers: &[(u32, String, u32, u32, Option<String>)], // (worker_id, status, completed, total, error_message)
+) -> Result<(), String> {
+    for (w_id, status, completed, total, err_msg) in workers {
+        let updated = sqlx::query(
+            "UPDATE fuzzer_workers SET status = ?, completed = ?, total = ?, error_message = ? WHERE run_id = ? AND worker_id = ?"
+        )
+        .bind(status)
+        .bind(*completed as i64)
+        .bind(*total as i64)
+        .bind(err_msg.as_deref())
+        .bind(run_id)
+        .bind(*w_id as i64)
+        .execute(pool)
+        .await;
+
+        if let Ok(res) = updated {
+            if res.rows_affected() == 0 {
+                let _ = sqlx::query(
+                    "INSERT INTO fuzzer_workers (run_id, worker_id, status, total, completed, error_message) VALUES (?, ?, ?, ?, ?, ?)"
+                )
+                .bind(run_id)
+                .bind(*w_id as i64)
+                .bind(status)
+                .bind(*total as i64)
+                .bind(*completed as i64)
+                .bind(err_msg.as_deref())
+                .execute(pool)
+                .await;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Load all fuzzer requests for a run from SQLite
+pub async fn load_all_fuzzer_requests(
+    pool: &SqlitePool,
+    run_id: &str,
+) -> Result<Vec<FuzzerRequestDb>, String> {
+    sqlx::query_as::<_, FuzzerRequestDb>(
+        "SELECT * FROM fuzzer_requests WHERE run_id = ? ORDER BY sort_order ASC"
+    )
+    .bind(run_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| e.to_string())
+}
