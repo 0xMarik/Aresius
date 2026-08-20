@@ -14,6 +14,28 @@ pub struct FuzzerSession {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct PreprocessingRule {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub rule_type: String,
+    #[serde(default)]
+    pub case_option: Option<String>,
+    #[serde(default)]
+    pub encode_option: Option<String>,
+    #[serde(default)]
+    pub decode_option: Option<String>,
+    #[serde(default)]
+    pub value: Option<String>,
+    #[serde(default)]
+    pub pattern: Option<String>,
+    #[serde(default)]
+    pub replacement: Option<String>,
+    #[serde(default)]
+    pub is_regex: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SessionPayload {
     pub raw_request: String,
     pub parameters: Vec<FuzzerParameter>,
@@ -23,6 +45,10 @@ pub struct SessionPayload {
     pub fuzzing_attack_type: Option<String>,
     #[serde(default)]
     pub num_threads: Option<usize>,
+    #[serde(default)]
+    pub pipeline_scope: Option<String>,
+    #[serde(default)]
+    pub pipeline_rules: Option<Vec<PreprocessingRule>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,6 +65,8 @@ pub struct FuzzerParameter {
     pub payload_source: String,
     pub values: Vec<String>,
     pub highlight_range: HighlightRange,
+    #[serde(default)]
+    pub pipeline_rules: Option<Vec<PreprocessingRule>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

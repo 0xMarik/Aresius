@@ -6,11 +6,13 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@
 import { useAppDispatch, useAppSelector } from "@/hooks/redux";
 import { useProjectId } from "@/hooks/useProjectId";
 import { PayloadCodeEditor } from "./PayloadCodeEditor";
-import { loadValuesParam, setDelayMs, setNumThreads, setSelectedParameter, selectFuzzerState, persistFuzzerSession } from "@/store/slices/fuzzerSlice";
-import { FuzzingAttackType } from "@/types/fuzzer.type";
+import { loadValuesParam, setDelayMs, setNumThreads, setSelectedParameter, selectFuzzerState, persistFuzzerSession, setPipelineScope, addPipelineRule, updatePipelineRule, removePipelineRule, reorderPipelineRules } from "@/store/slices/fuzzerSlice";
+import { FuzzingAttackType, PreprocessingRule } from "@/types/fuzzer.type";
 import { IconUpload } from "@tabler/icons-react";
 import { EmptyState } from "../ui/empty-state";
 import { ArrowRight, MousePointerClick } from "lucide-react";
+import { PipelineProcessorTable } from "./PipelineProcessorTable";
+import { cn } from "@/lib/utils";
 
 export default function PayloadConfigurator() {
     const projectId = useProjectId();
@@ -188,8 +190,117 @@ export default function PayloadConfigurator() {
                 </div>
             </TabsContent>
 
-            <TabsContent value="pipline-processing">
-                <p>Defining a traitement on payload before they are sent</p>
+            <TabsContent value="pipline-processing" className="space-y-4 mt-4 h-full">
+                {/* Scope Selection Controls */}
+                <div className="flex flex-col gap-2 p-3 bg-muted/20 border rounded-lg">
+                    <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                        Processing Scope
+                    </Label>
+                    <div className="grid grid-cols-2 gap-1.5 p-1 bg-muted/60 rounded-md border text-xs">
+                        <button
+                            type="button"
+                            onClick={() => {
+                                if (projectId) {
+                                    dispatch(setPipelineScope({ scope: 'all', projectId }));
+                                    dispatch(persistFuzzerSession(projectId, activeSessionIndex));
+                                }
+                            }}
+                            className={cn(
+                                "flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-md transition-all font-medium text-xs cursor-pointer",
+                                (session.fuzzConfig.pipelineScope ?? 'all') === 'all'
+                                    ? "bg-background text-foreground shadow-xs"
+                                    : "text-muted-foreground hover:text-foreground"
+                            )}
+                        >
+                            <span>All Parameters</span>
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                if (projectId) {
+                                    dispatch(setPipelineScope({ scope: 'per_parameter', projectId }));
+                                    dispatch(persistFuzzerSession(projectId, activeSessionIndex));
+                                }
+                            }}
+                            className={cn(
+                                "flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-md transition-all font-medium text-xs cursor-pointer",
+                                session.fuzzConfig.pipelineScope === 'per_parameter'
+                                    ? "bg-background text-foreground shadow-xs"
+                                    : "text-muted-foreground hover:text-foreground"
+                            )}
+                        >
+                            <span>Per Parameter</span>
+                        </button>
+                    </div>
+
+                    <p className="text-[11px] text-muted-foreground">
+                        {session.fuzzConfig.pipelineScope === 'per_parameter'
+                            ? "Configure independent preprocessing rules for each individual payload parameter."
+                            : "A single global pipeline is applied to every payload parameter before sending."}
+                    </p>
+
+                    {/* Parameter selector if in Per-Parameter mode */}
+                    {session.fuzzConfig.pipelineScope === 'per_parameter' && (
+                        <div className="pt-2 border-t mt-1 flex items-center justify-between gap-2">
+                            <Label className="text-xs text-muted-foreground shrink-0">Configure for Parameter:</Label>
+                            <Select
+                                value={selectedParam.highlightRange.id}
+                                onValueChange={(value) => {
+                                    if (projectId) dispatch(setSelectedParameter({ parameterId: value, projectId }));
+                                }}
+                            >
+                                <SelectTrigger className="w-[180px] h-8 text-xs font-mono">
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {parameters.map((param, index) => {
+                                        const text = param.highlightRange.originalText;
+                                        const displayName = text.trim() === '' ? '§ [space]' : `§ ${text}`;
+                                        return (
+                                            <SelectItem key={index} value={param.highlightRange.id} className="text-xs font-mono">
+                                                {`${displayName} (§${index + 1})`}
+                                            </SelectItem>
+                                        );
+                                    })}
+                                </SelectContent>
+                            </Select>
+                        </div>
+                    )}
+                </div>
+
+                {/* Pipeline Rules Table */}
+                <PipelineProcessorTable
+                    rules={
+                        session.fuzzConfig.pipelineScope === 'per_parameter'
+                            ? selectedParam.pipelineRules ?? []
+                            : session.fuzzConfig.pipelineRules ?? []
+                    }
+                    onAddRule={(rule: PreprocessingRule) => {
+                        if (!projectId) return;
+                        const paramId = session.fuzzConfig.pipelineScope === 'per_parameter' ? selectedParam.highlightRange.id : undefined;
+                        dispatch(addPipelineRule({ rule, projectId, paramId }));
+                        dispatch(persistFuzzerSession(projectId, activeSessionIndex));
+                    }}
+                    onUpdateRule={(rule: PreprocessingRule) => {
+                        if (!projectId) return;
+                        const paramId = session.fuzzConfig.pipelineScope === 'per_parameter' ? selectedParam.highlightRange.id : undefined;
+                        dispatch(updatePipelineRule({ rule, projectId, paramId }));
+                        dispatch(persistFuzzerSession(projectId, activeSessionIndex));
+                    }}
+                    onRemoveRule={(ruleId: string) => {
+                        if (!projectId) return;
+                        const paramId = session.fuzzConfig.pipelineScope === 'per_parameter' ? selectedParam.highlightRange.id : undefined;
+                        dispatch(removePipelineRule({ ruleId, projectId, paramId }));
+                        dispatch(persistFuzzerSession(projectId, activeSessionIndex));
+                    }}
+                    onReorderRules={(fromIndex: number, toIndex: number) => {
+                        if (!projectId) return;
+                        const paramId = session.fuzzConfig.pipelineScope === 'per_parameter' ? selectedParam.highlightRange.id : undefined;
+                        dispatch(reorderPipelineRules({ fromIndex, toIndex, projectId, paramId }));
+                        dispatch(persistFuzzerSession(projectId, activeSessionIndex));
+                    }}
+                    sampleDefaultValue={selectedParam.values?.[0] || 'admin_test123'}
+                />
             </TabsContent>
 
             <TabsContent value="settings">

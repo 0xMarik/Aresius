@@ -2,6 +2,7 @@ use tauri::AppHandle;
 
 use crate::ares_utils::http_connection::HttpConnection;
 use crate::fuzzer::engine::{run_fuzz_targets, FuzzRunConfig, FuzzTarget};
+use crate::fuzzer::preprocessing::{apply_pipeline, get_active_rules};
 use crate::fuzzer::utils::building_raw_request;
 use crate::types::FuzzerSession;
 
@@ -29,9 +30,11 @@ fn build_zipped_fuzz_requests(session: &FuzzerSession) -> Vec<FuzzTarget> {
 
         for param in &sorted_params {
             let value = &param.values[i];
-            payload_parts.push(value.clone());
+            let rules = get_active_rules(session, param);
+            let transformed_value = apply_pipeline(value, rules);
+            payload_parts.push(transformed_value.clone());
             modified_request =
-                building_raw_request(&modified_request, value, &param.highlight_range);
+                building_raw_request(&modified_request, &transformed_value, &param.highlight_range);
         }
 
         targets.push(FuzzTarget {

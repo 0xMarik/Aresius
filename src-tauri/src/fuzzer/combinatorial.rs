@@ -2,6 +2,7 @@ use tauri::AppHandle;
 
 use crate::ares_utils::http_connection::HttpConnection;
 use crate::fuzzer::engine::{run_fuzz_targets, FuzzRunConfig, FuzzTarget};
+use crate::fuzzer::preprocessing::{apply_pipeline, get_active_rules};
 use crate::fuzzer::utils::building_raw_request;
 use crate::types::{FuzzerParameter, FuzzerSession};
 
@@ -43,17 +44,24 @@ fn build_combinatorial_fuzz_requests(session: &FuzzerSession) -> Vec<FuzzTarget>
 
     for (combo_idx, combination) in combinations.iter().enumerate() {
         let mut modified_request = session.fuzz_config.raw_request.clone();
+        let mut transformed_combo = Vec::with_capacity(combination.len());
+
+        for (idx, value) in combination.iter().enumerate() {
+            let param = &session.fuzz_config.parameters[idx];
+            let rules = get_active_rules(session, param);
+            transformed_combo.push(apply_pipeline(value, rules));
+        }
 
         for (param_idx, param) in &sorted_params {
-            let value = &combination[*param_idx];
+            let transformed_value = &transformed_combo[*param_idx];
             modified_request =
-                building_raw_request(&modified_request, value, &param.highlight_range);
+                building_raw_request(&modified_request, transformed_value, &param.highlight_range);
         }
 
         targets.push(FuzzTarget {
             id: format!("{}", combo_idx),
             request: modified_request,
-            payload: Some(combination.join(", ")),
+            payload: Some(transformed_combo.join(", ")),
         });
     }
 

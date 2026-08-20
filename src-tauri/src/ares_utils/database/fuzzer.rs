@@ -19,6 +19,10 @@ pub struct FuzzerSessionDb {
     pub is_selected: bool,
     pub selected_history_index: Option<i64>,
     pub created_at: i64,
+    #[sqlx(default)]
+    pub pipeline_scope: Option<String>,
+    #[sqlx(default)]
+    pub pipeline_rules: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
@@ -35,6 +39,8 @@ pub struct FuzzerParameterDb {
     pub is_active: bool,
     pub range_id: String,
     pub sort_order: i64,
+    #[sqlx(default)]
+    pub pipeline_rules: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
@@ -443,6 +449,8 @@ pub async fn save_fuzzer_session_draft(
     attack_type: Option<String>,
     num_threads: Option<i64>,
     delay_ms: Option<i64>,
+    pipeline_scope: Option<String>,
+    pipeline_rules: Option<String>,
 ) -> Result<String, String> {
     let pool = db.pool().await?;
     let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
@@ -510,14 +518,28 @@ pub async fn save_fuzzer_session_draft(
                     .execute(&mut *tx)
                     .await;
             }
+            if let Some(ps) = pipeline_scope {
+                let _ = sqlx::query("UPDATE fuzzer_sessions SET pipeline_scope = ? WHERE id = ?")
+                    .bind(ps)
+                    .bind(&id)
+                    .execute(&mut *tx)
+                    .await;
+            }
+            if let Some(pr) = pipeline_rules {
+                let _ = sqlx::query("UPDATE fuzzer_sessions SET pipeline_rules = ? WHERE id = ?")
+                    .bind(pr)
+                    .bind(&id)
+                    .execute(&mut *tx)
+                    .await;
+            }
             id
         }
         None => {
             let new_id = uuid::Uuid::new_v4().to_string();
             let now = chrono::Utc::now().timestamp_millis();
             sqlx::query(
-                "INSERT INTO fuzzer_sessions (id, project_id, name, raw_request, target_url, attack_type, num_threads, delay_ms, sort_order, is_selected, is_expanded, created_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?)"
+                "INSERT INTO fuzzer_sessions (id, project_id, name, raw_request, target_url, attack_type, num_threads, delay_ms, pipeline_scope, pipeline_rules, sort_order, is_selected, is_expanded, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?)"
             )
             .bind(&new_id)
             .bind(&real_project_id)
@@ -527,6 +549,8 @@ pub async fn save_fuzzer_session_draft(
             .bind(attack_type.unwrap_or_else(|| "rotator".to_string()))
             .bind(num_threads.unwrap_or(4))
             .bind(delay_ms.unwrap_or(0))
+            .bind(pipeline_scope.unwrap_or_else(|| "all".to_string()))
+            .bind(pipeline_rules.unwrap_or_else(|| "[]".to_string()))
             .bind(session_index as i64)
             .bind(now)
             .execute(&mut *tx)
@@ -546,6 +570,8 @@ pub struct FuzzerParamPayload {
     pub payload_source: String,
     pub values: Vec<String>,
     pub highlight_range: FuzzerHighlightRangePayload,
+    #[serde(default)]
+    pub pipeline_rules: Option<Vec<crate::types::PreprocessingRule>>,
 }
 
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
@@ -619,10 +645,14 @@ pub async fn save_fuzzer_parameters_db(
 
     for (idx, param) in parameters.iter().enumerate() {
         let param_db_id = uuid::Uuid::new_v4().to_string();
+        let rules_json = match &param.pipeline_rules {
+            Some(r) => serde_json::to_string(r).unwrap_or_else(|_| "[]".into()),
+            None => "[]".into(),
+        };
         sqlx::query(
             "INSERT INTO fuzzer_parameters
-                (id, session_id, payload_source, range_from, range_to, byte_from, byte_to, original_text, is_active, range_id, sort_order)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                (id, session_id, payload_source, range_from, range_to, byte_from, byte_to, original_text, is_active, range_id, sort_order, pipeline_rules)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         )
         .bind(&param_db_id)
         .bind(&s_id)
@@ -635,6 +665,7 @@ pub async fn save_fuzzer_parameters_db(
         .bind(param.highlight_range.is_active)
         .bind(&param.highlight_range.id)
         .bind(idx as i64)
+        .bind(&rules_json)
         .execute(&mut *tx)
         .await
         .map_err(|e| e.to_string())?;

@@ -1,5 +1,5 @@
 import { FuzzProgressUpdate } from '@/App';
-import { FuzzingHistory, FuzzerParameter, FuzzerSession, FuzzerState, HighlightRange, FuzzingAttackType } from '@/types/fuzzer.type';
+import { FuzzingHistory, FuzzerParameter, FuzzerSession, FuzzerState, HighlightRange, FuzzingAttackType, PipelineScope, PreprocessingRule } from '@/types/fuzzer.type';
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 import type { RootState } from '@/store';
 import { deleteProject, setcurrentProjectId } from './projectSlice';
@@ -71,7 +71,9 @@ export const fuzzerSlice = createSlice({
             targetUrl: url,
             urlIsValid,
           },
-          parameters: []
+          parameters: [],
+          pipelineScope: 'all',
+          pipelineRules: [],
         },
         selectedHighlightId: null,
       });
@@ -406,7 +408,98 @@ export const fuzzerSlice = createSlice({
       } else {
         console.error("There is no active session!!");
       }
-    }
+    },
+
+    setPipelineScope: (state, action: PayloadAction<{ scope: PipelineScope; projectId: string }>) => {
+      const bucket = getBucket(state, action.payload.projectId);
+      if (bucket.activeSessionIndex !== null && bucket.fuzzerSessions[bucket.activeSessionIndex]) {
+        bucket.fuzzerSessions[bucket.activeSessionIndex].fuzzConfig.pipelineScope = action.payload.scope;
+      }
+    },
+
+    setPipelineRules: (state, action: PayloadAction<{ rules: PreprocessingRule[]; projectId: string; paramId?: string }>) => {
+      const { rules, projectId, paramId } = action.payload;
+      const bucket = getBucket(state, projectId);
+      if (bucket.activeSessionIndex !== null && bucket.fuzzerSessions[bucket.activeSessionIndex]) {
+        const session = bucket.fuzzerSessions[bucket.activeSessionIndex];
+        if (paramId) {
+          const param = session.fuzzConfig.parameters.find(p => p.highlightRange.id === paramId);
+          if (param) {
+            param.pipelineRules = rules;
+          }
+        } else {
+          session.fuzzConfig.pipelineRules = rules;
+        }
+      }
+    },
+
+    addPipelineRule: (state, action: PayloadAction<{ rule: PreprocessingRule; projectId: string; paramId?: string }>) => {
+      const { rule, projectId, paramId } = action.payload;
+      const bucket = getBucket(state, projectId);
+      if (bucket.activeSessionIndex !== null && bucket.fuzzerSessions[bucket.activeSessionIndex]) {
+        const session = bucket.fuzzerSessions[bucket.activeSessionIndex];
+        if (paramId) {
+          const param = session.fuzzConfig.parameters.find(p => p.highlightRange.id === paramId);
+          if (param) {
+            if (!param.pipelineRules) param.pipelineRules = [];
+            param.pipelineRules.push(rule);
+          }
+        } else {
+          if (!session.fuzzConfig.pipelineRules) session.fuzzConfig.pipelineRules = [];
+          session.fuzzConfig.pipelineRules.push(rule);
+        }
+      }
+    },
+
+    updatePipelineRule: (state, action: PayloadAction<{ rule: PreprocessingRule; projectId: string; paramId?: string }>) => {
+      const { rule, projectId, paramId } = action.payload;
+      const bucket = getBucket(state, projectId);
+      if (bucket.activeSessionIndex !== null && bucket.fuzzerSessions[bucket.activeSessionIndex]) {
+        const session = bucket.fuzzerSessions[bucket.activeSessionIndex];
+        const targetRules = paramId
+          ? session.fuzzConfig.parameters.find(p => p.highlightRange.id === paramId)?.pipelineRules
+          : session.fuzzConfig.pipelineRules;
+        if (targetRules) {
+          const idx = targetRules.findIndex(r => r.id === rule.id);
+          if (idx !== -1) {
+            targetRules[idx] = rule;
+          }
+        }
+      }
+    },
+
+    removePipelineRule: (state, action: PayloadAction<{ ruleId: string; projectId: string; paramId?: string }>) => {
+      const { ruleId, projectId, paramId } = action.payload;
+      const bucket = getBucket(state, projectId);
+      if (bucket.activeSessionIndex !== null && bucket.fuzzerSessions[bucket.activeSessionIndex]) {
+        const session = bucket.fuzzerSessions[bucket.activeSessionIndex];
+        if (paramId) {
+          const param = session.fuzzConfig.parameters.find(p => p.highlightRange.id === paramId);
+          if (param && param.pipelineRules) {
+            param.pipelineRules = param.pipelineRules.filter(r => r.id !== ruleId);
+          }
+        } else {
+          if (session.fuzzConfig.pipelineRules) {
+            session.fuzzConfig.pipelineRules = session.fuzzConfig.pipelineRules.filter(r => r.id !== ruleId);
+          }
+        }
+      }
+    },
+
+    reorderPipelineRules: (state, action: PayloadAction<{ fromIndex: number; toIndex: number; projectId: string; paramId?: string }>) => {
+      const { fromIndex, toIndex, projectId, paramId } = action.payload;
+      const bucket = getBucket(state, projectId);
+      if (bucket.activeSessionIndex !== null && bucket.fuzzerSessions[bucket.activeSessionIndex]) {
+        const session = bucket.fuzzerSessions[bucket.activeSessionIndex];
+        const targetRules = paramId
+          ? session.fuzzConfig.parameters.find(p => p.highlightRange.id === paramId)?.pipelineRules
+          : session.fuzzConfig.pipelineRules;
+        if (targetRules && fromIndex >= 0 && fromIndex < targetRules.length && toIndex >= 0 && toIndex < targetRules.length) {
+          const [moved] = targetRules.splice(fromIndex, 1);
+          targetRules.splice(toIndex, 0, moved);
+        }
+      }
+    },
   },
   extraReducers: (builder) => {
     builder
@@ -458,6 +551,12 @@ export const {
   setTargerUrl,
   setSelectedFuzz,
   setFuzzingAttackType,
+  setPipelineScope,
+  setPipelineRules,
+  addPipelineRule,
+  updatePipelineRule,
+  removePipelineRule,
+  reorderPipelineRules,
 } = fuzzerSlice.actions;
 
 const DEFAULT_FUZZER_STATE = defaultFuzzerState();
@@ -558,6 +657,15 @@ export const fetchFuzzerDataForProject = (projectId: string) => async (dispatch:
     if (data && data.sessions && data.sessions.length > 0) {
       const mappedSessions: FuzzerSession[] = data.sessions.map((fullSess: any) => {
         const s = fullSess.session;
+        let sessionPipelineRules: PreprocessingRule[] = [];
+        try {
+          if (s.pipelineRules) {
+            sessionPipelineRules = typeof s.pipelineRules === 'string' ? JSON.parse(s.pipelineRules) : s.pipelineRules;
+          }
+        } catch {
+          sessionPipelineRules = [];
+        }
+
         return {
           name: s.name,
           fuzzConfig: {
@@ -565,19 +673,32 @@ export const fetchFuzzerDataForProject = (projectId: string) => async (dispatch:
             delayMs: s.delayMs || 0,
             fuzzingAttackType: (s.attackType as FuzzingAttackType) || FuzzingAttackType.ROTATOR,
             rawRequest: s.rawRequest || 'GET / HTTP/1.1\r\n\r\n',
-            parameters: (fullSess.parameters || []).map((p: any) => ({
-              payloadSource: p.parameter.payloadSource,
-              values: p.values || [],
-              highlightRange: {
-                id: p.parameter.rangeId,
-                from: p.parameter.rangeFrom,
-                to: p.parameter.rangeTo,
-                byteFrom: p.parameter.byteFrom,
-                byteTo: p.parameter.byteTo,
-                originalText: p.parameter.originalText,
-                isActive: Boolean(p.parameter.isActive),
-              },
-            })),
+            pipelineScope: (s.pipelineScope as PipelineScope) || 'all',
+            pipelineRules: sessionPipelineRules,
+            parameters: (fullSess.parameters || []).map((p: any) => {
+              let paramRules: PreprocessingRule[] = [];
+              try {
+                if (p.parameter.pipelineRules) {
+                  paramRules = typeof p.parameter.pipelineRules === 'string' ? JSON.parse(p.parameter.pipelineRules) : p.parameter.pipelineRules;
+                }
+              } catch {
+                paramRules = [];
+              }
+              return {
+                payloadSource: p.parameter.payloadSource,
+                values: p.values || [],
+                pipelineRules: paramRules,
+                highlightRange: {
+                  id: p.parameter.rangeId,
+                  from: p.parameter.rangeFrom,
+                  to: p.parameter.rangeTo,
+                  byteFrom: p.parameter.byteFrom,
+                  byteTo: p.parameter.byteTo,
+                  originalText: p.parameter.originalText,
+                  isActive: Boolean(p.parameter.isActive),
+                },
+              };
+            }),
             metadata: {
               targetUrl: s.targetUrl || '',
               urlIsValid: Boolean(s.targetUrl && s.targetUrl.trim() && s.targetUrl !== 'https://' && !validateUrl(s.targetUrl)),
@@ -598,19 +719,30 @@ export const fetchFuzzerDataForProject = (projectId: string) => async (dispatch:
             const hasValidParameters = Array.isArray(configSnapshot?.parameters) && configSnapshot.parameters.length > 0;
             const hasValidRawRequest = typeof configSnapshot?.rawRequest === 'string' && configSnapshot.rawRequest.trim().length > 0;
 
-            const fallbackParameters = (fullSess.parameters || []).map((p: any) => ({
-              payloadSource: p.parameter.payloadSource,
-              values: p.values || [],
-              highlightRange: {
-                id: p.parameter.rangeId,
-                from: p.parameter.rangeFrom,
-                to: p.parameter.rangeTo,
-                byteFrom: p.parameter.byteFrom,
-                byteTo: p.parameter.byteTo,
-                originalText: p.parameter.originalText,
-                isActive: Boolean(p.parameter.isActive),
-              },
-            }));
+            const fallbackParameters = (fullSess.parameters || []).map((p: any) => {
+              let paramRules: PreprocessingRule[] = [];
+              try {
+                if (p.parameter.pipelineRules) {
+                  paramRules = typeof p.parameter.pipelineRules === 'string' ? JSON.parse(p.parameter.pipelineRules) : p.parameter.pipelineRules;
+                }
+              } catch {
+                paramRules = [];
+              }
+              return {
+                payloadSource: p.parameter.payloadSource,
+                values: p.values || [],
+                pipelineRules: paramRules,
+                highlightRange: {
+                  id: p.parameter.rangeId,
+                  from: p.parameter.rangeFrom,
+                  to: p.parameter.rangeTo,
+                  byteFrom: p.parameter.byteFrom,
+                  byteTo: p.parameter.byteTo,
+                  originalText: p.parameter.originalText,
+                  isActive: Boolean(p.parameter.isActive),
+                },
+              };
+            });
 
             const fullConfigSnapshot = {
               ...configSnapshot,
@@ -618,6 +750,8 @@ export const fetchFuzzerDataForProject = (projectId: string) => async (dispatch:
               delayMs: configSnapshot?.delayMs !== undefined ? configSnapshot.delayMs : (s.delayMs || 0),
               fuzzingAttackType: configSnapshot?.fuzzingAttackType || s.attackType || 'rotator',
               rawRequest: hasValidRawRequest ? configSnapshot.rawRequest : (s.rawRequest || 'GET / HTTP/1.1\r\n\r\n'),
+              pipelineScope: configSnapshot?.pipelineScope || s.pipelineScope || 'all',
+              pipelineRules: configSnapshot?.pipelineRules || sessionPipelineRules,
               parameters: hasValidParameters ? configSnapshot.parameters : fallbackParameters,
               metadata: {
                 targetUrl: configSnapshot?.metadata?.targetUrl || s.targetUrl || '',
@@ -685,6 +819,8 @@ export const persistFuzzerSession = (projectId: string, sessionIndex: number) =>
       attackType: session.fuzzConfig.fuzzingAttackType,
       numThreads: session.fuzzConfig.numThreads,
       delayMs: session.fuzzConfig.delayMs,
+      pipelineScope: session.fuzzConfig.pipelineScope || 'all',
+      pipelineRules: JSON.stringify(session.fuzzConfig.pipelineRules || []),
     });
 
     await invoke('save_fuzzer_parameters_db', {

@@ -54,10 +54,37 @@ export interface HighlightRange {
     id: string;
 }
 
+export type PreprocessingType =
+    | 'modify_case'
+    | 'encode'
+    | 'decode'
+    | 'prefix'
+    | 'suffix'
+    | 'match_replace';
+
+export type CaseOption = 'lowercase' | 'uppercase';
+export type EncodingOption = 'url_key' | 'url_all' | 'base64';
+export type DecodingOption = 'url' | 'base64';
+
+export interface PreprocessingRule {
+    id: string;
+    type: PreprocessingType;
+    caseOption?: CaseOption;
+    encodeOption?: EncodingOption;
+    decodeOption?: DecodingOption;
+    value?: string;
+    pattern?: string;
+    replacement?: string;
+    isRegex?: boolean;
+}
+
+export type PipelineScope = 'all' | 'per_parameter';
+
 export interface FuzzerParameter {
     payloadSource: 'manual' | 'wordlist' | 'generator';
     values: string[];
     highlightRange: HighlightRange;
+    pipelineRules?: PreprocessingRule[];
 }
 
 export interface FuzzConfig {
@@ -70,6 +97,8 @@ export interface FuzzConfig {
         targetUrl: string;
         urlIsValid: boolean;
     };
+    pipelineScope?: PipelineScope;
+    pipelineRules?: PreprocessingRule[];
 }
 
 export interface FuzzingHistory {
