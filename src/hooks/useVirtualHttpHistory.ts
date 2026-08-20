@@ -33,6 +33,12 @@ export function adaptSummaryRow(item: HttpHistorySummaryRow): HttpTransaction {
         sentAtMs: Number(item.sentAtMs),
         state: stateFromCode(Number(item.statusCode)),
         isHttps: item.isHttps ?? false,
+        requestAutoPatch: item.requestAutoPatch ?? null,
+        requestManualPatch: item.requestManualPatch ?? null,
+        responseAutoPatch: item.responseAutoPatch ?? null,
+        responseManualPatch: item.responseManualPatch ?? null,
+        requestEditType: item.requestEditType ?? null,
+        responseEditType: item.responseEditType ?? null,
     };
 }
 
@@ -288,8 +294,12 @@ export function useVirtualHttpHistory({
                         isHttps: fullItem.isHttps ?? false,
                         rawRequest: fullItem.rawRequest || '',
                         rawResponse: fullItem.rawResponse || '',
-                        originalRawRequest: fullItem.originalRawRequest ?? null,
-                        originalRawResponse: fullItem.originalRawResponse ?? null,
+                        requestAutoPatch: fullItem.requestAutoPatch ?? null,
+                        requestManualPatch: fullItem.requestManualPatch ?? null,
+                        responseAutoPatch: fullItem.responseAutoPatch ?? null,
+                        responseManualPatch: fullItem.responseManualPatch ?? null,
+                        requestEditType: fullItem.requestEditType ?? null,
+                        responseEditType: fullItem.responseEditType ?? null,
                     };
 
                     detailCacheRef.current.set(selectedRequest, normalized);

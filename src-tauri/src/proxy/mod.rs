@@ -43,8 +43,12 @@ struct HttpHistoryPayload {
     id: u32,
     raw_request: String,
     raw_response: String,
-    original_raw_request: Option<String>,
-    original_raw_response: Option<String>,
+    request_auto_patch: Option<String>,
+    request_manual_patch: Option<String>,
+    response_auto_patch: Option<String>,
+    response_manual_patch: Option<String>,
+    request_edit_type: Option<String>,
+    response_edit_type: Option<String>,
     host: String,
     method: String,
     path: String,
@@ -284,7 +288,8 @@ async fn handle_connect(
         // `outgoing_request_bytes` below for the byte-exact copy that is.
         let decrypted_request = String::from_utf8_lossy(&raw_request).to_string();
         let original_raw_request_str = decrypted_request.clone();
-        let mut req_was_modified = false;
+        let mut req_automated = false;
+        let mut req_manual = false;
         let sent_at_ms = now_ms();
         let request_id = Uuid::new_v4().to_string();
 
@@ -295,6 +300,7 @@ async fn handle_connect(
         let mut outgoing_request_bytes = raw_request.clone();
         let req_meta_init = parse_request_line(&raw_request);
         let is_req_in_scope = intercept_state.is_url_in_scope(&target, &req_meta_init.path).await;
+        let mut automated_raw_request_str: Option<String> = None;
 
         let match_replace_engine: tauri::State<MatchReplaceEngine> = app_handle.state();
         if match_replace_engine.has_request_rules(is_req_in_scope).await {
@@ -303,7 +309,8 @@ async fn handle_connect(
                 .await;
             if did_modify {
                 outgoing_request_bytes = mr_bytes;
-                req_was_modified = true;
+                req_automated = true;
+                automated_raw_request_str = Some(String::from_utf8_lossy(&outgoing_request_bytes).to_string());
             }
         }
 
@@ -333,7 +340,7 @@ async fn handle_connect(
                         // truncate/hang the request or desync the next
                         // request on this same keep-alive connection.
                         outgoing_request_bytes = resync_edited_message(&mod_msg);
-                        req_was_modified = true;
+                        req_manual = true;
                     }
                     // else: untouched by the user -- forward the original
                     // bytes unchanged.
@@ -348,11 +355,31 @@ async fn handle_connect(
             }
         }
 
-        let original_raw_request = if req_was_modified {
-            Some(original_raw_request_str)
-        } else {
-            None
+        let request_edit_type = match (req_automated, req_manual) {
+            (true, true) => Some("both".to_string()),
+            (true, false) => Some("automated".to_string()),
+            (false, true) => Some("manual".to_string()),
+            (false, false) => None,
         };
+
+        let mut request_auto_patch: Option<String> = None;
+        let mut request_manual_patch: Option<String> = None;
+
+        if req_automated {
+            if let Some(ref auto_str) = automated_raw_request_str {
+                request_auto_patch = Some(diffy::create_patch(&original_raw_request_str, auto_str).to_string());
+            }
+        }
+
+        if req_manual {
+            let manual_req_str = String::from_utf8_lossy(&outgoing_request_bytes).to_string();
+            let base_for_manual = if req_automated {
+                automated_raw_request_str.as_ref().unwrap_or(&original_raw_request_str)
+            } else {
+                &original_raw_request_str
+            };
+            request_manual_patch = Some(diffy::create_patch(base_for_manual, &manual_req_str).to_string());
+        }
 
         let response = match upstream.as_mut() {
             Some(conn) => {
@@ -406,14 +433,16 @@ async fn handle_connect(
         let mut outgoing_response_bytes = response.headers.clone().into_bytes();
         outgoing_response_bytes.extend_from_slice(&response.body);
 
-        let req_meta = parse_request_line(&outgoing_request_bytes);
+        let req_meta = parse_request_line(&outgoing_response_bytes);
         let is_res_in_scope = intercept_state.is_url_in_scope(&target, &req_meta.path).await;
 
         let has_body_mr = match_replace_engine.has_response_body_rules(is_res_in_scope).await;
         let has_header_mr = match_replace_engine.has_response_header_rules(is_res_in_scope).await;
         let mut pre_decoded_response_text: Option<String> = None;
-        let mut res_was_modified = false;
+        let mut res_automated = false;
+        let mut res_manual = false;
         let mut original_raw_response_str: Option<String> = None;
+        let mut automated_raw_response_str: Option<String> = None;
 
         if has_body_mr {
             // Decode body, apply replacements, and forward uncompressed to browser
@@ -424,7 +453,7 @@ async fn handle_connect(
                 &limits,
             );
             original_raw_response_str = Some(format!("{}{}", decoded.headers, String::from_utf8_lossy(&decoded.body)));
-            res_was_modified = true;
+            res_automated = true;
 
             let body_str = String::from_utf8_lossy(&decoded.body);
             let (mod_body_str, _) = match_replace_engine
@@ -448,7 +477,9 @@ async fn handle_connect(
             let mut final_wire_bytes = final_headers.as_bytes().to_vec();
             final_wire_bytes.extend_from_slice(mod_body_str.as_bytes());
             outgoing_response_bytes = final_wire_bytes;
-            pre_decoded_response_text = Some(format!("{}{}", final_headers, mod_body_str));
+            let auto_text = format!("{}{}", final_headers, mod_body_str);
+            automated_raw_response_str = Some(auto_text.clone());
+            pre_decoded_response_text = Some(auto_text);
         } else if has_header_mr {
             // Keep body compressed, modify only header block
             let (mod_headers, did_mod) = match_replace_engine
@@ -459,8 +490,10 @@ async fn handle_connect(
                 final_wire_bytes.extend_from_slice(&response.body);
                 outgoing_response_bytes = final_wire_bytes;
                 original_raw_response_str = Some(decode_for_display(&response.headers, &response.body, &connection_options));
-                pre_decoded_response_text = Some(decode_for_display(&mod_headers, &response.body, &connection_options));
-                res_was_modified = true;
+                let auto_text = decode_for_display(&mod_headers, &response.body, &connection_options);
+                automated_raw_response_str = Some(auto_text.clone());
+                pre_decoded_response_text = Some(auto_text);
+                res_automated = true;
             }
         }
 
@@ -498,7 +531,7 @@ async fn handle_connect(
                         outgoing_response_bytes = resync_edited_message(&mod_msg);
                         final_response_text =
                             String::from_utf8_lossy(&outgoing_response_bytes).to_string();
-                        res_was_modified = true;
+                        res_manual = true;
                     }
                 }
                 Some(InterceptDecision::Drop) | None => {
@@ -512,6 +545,40 @@ async fn handle_connect(
                 break;
             }
 
+            let res_was_modified = res_automated || res_manual;
+            let response_edit_type = match (res_automated, res_manual) {
+                (true, true) => Some("both".to_string()),
+                (true, false) => Some("automated".to_string()),
+                (false, true) => Some("manual".to_string()),
+                (false, false) => None,
+            };
+
+            let mut response_auto_patch: Option<String> = None;
+            let mut response_manual_patch: Option<String> = None;
+
+            if res_automated {
+                if let (Some(ref orig_res), Some(ref auto_res)) = (&original_raw_response_str, &automated_raw_response_str) {
+                    response_auto_patch = Some(diffy::create_patch(orig_res, auto_res).to_string());
+                }
+            }
+
+            if res_manual {
+                let base_for_manual = if res_automated {
+                    automated_raw_response_str.as_ref().or(original_raw_response_str.as_ref())
+                } else {
+                    original_raw_response_str.as_ref()
+                };
+                if let Some(base) = base_for_manual {
+                    response_manual_patch = Some(diffy::create_patch(base, &final_response_text).to_string());
+                }
+            }
+
+            let raw_response_to_store = if res_was_modified {
+                original_raw_response_str.unwrap_or(final_response_text.clone())
+            } else {
+                final_response_text.clone()
+            };
+
             let (response_head, response_body) = split_message(&final_response_text);
             let status = parse_status_code(response_head);
             let response_length = response_body.as_bytes().len();
@@ -519,10 +586,14 @@ async fn handle_connect(
             let history_counter: tauri::State<HistoryIdCounter> = app_handle.state();
             let payload = HttpHistoryPayload {
                 id: history_counter.next(),
-                raw_request: String::from_utf8_lossy(&outgoing_request_bytes).to_string(),
-                raw_response: final_response_text,
-                original_raw_request: original_raw_request.clone(),
-                original_raw_response: if res_was_modified { original_raw_response_str } else { None },
+                raw_request: original_raw_request_str.clone(),
+                raw_response: raw_response_to_store,
+                request_auto_patch: request_auto_patch.clone(),
+                request_manual_patch: request_manual_patch.clone(),
+                response_auto_patch: response_auto_patch.clone(),
+                response_manual_patch: response_manual_patch.clone(),
+                request_edit_type: request_edit_type.clone(),
+                response_edit_type: response_edit_type.clone(),
                 host: target.clone(),
                 method: req_meta.method,
                 path: req_meta.path,
@@ -554,8 +625,12 @@ async fn handle_connect(
                         payload.is_https,
                         payload.raw_request,
                         payload.raw_response,
-                        payload.original_raw_request,
-                        payload.original_raw_response,
+                        payload.request_auto_patch,
+                        payload.request_manual_patch,
+                        payload.response_auto_patch,
+                        payload.response_manual_patch,
+                        payload.request_edit_type,
+                        payload.response_edit_type,
                     ));
                 }
             }
@@ -566,18 +641,31 @@ async fn handle_connect(
                 break;
             }
 
+            let res_was_modified = res_automated || res_manual;
+            let response_edit_type = match (res_automated, res_manual) {
+                (true, true) => Some("both".to_string()),
+                (true, false) => Some("automated".to_string()),
+                (false, true) => Some("manual".to_string()),
+                (false, false) => None,
+            };
+
             // Decompress, emit history, and save to DB in background
             let app_handle_bg = app_handle.clone();
             let target_bg = target.clone();
             let connection_options_bg = connection_options.clone();
             let req_meta_bg = req_meta;
-            let outgoing_request_bytes_bg = outgoing_request_bytes;
             let response_elapsed = response.elapsed;
             let response_headers_bg = response.headers;
             let response_body_bg = response.body;
-            let original_raw_request_bg = original_raw_request;
-            let original_raw_response_bg = original_raw_response_str;
+            let original_raw_request_str_bg = original_raw_request_str;
+            let original_raw_response_str_bg = original_raw_response_str;
+            let automated_raw_response_str_bg = automated_raw_response_str;
             let res_was_modified_bg = res_was_modified;
+            let request_auto_patch_bg = request_auto_patch;
+            let request_manual_patch_bg = request_manual_patch;
+            let request_edit_type_bg = request_edit_type;
+            let response_edit_type_bg = response_edit_type;
+            let res_automated_bg = res_automated;
 
             tokio::spawn(async move {
                 let final_response_text = if let Some(pre) = pre_decoded_response_text {
@@ -590,6 +678,19 @@ async fn handle_connect(
                     .unwrap_or_default()
                 };
 
+                let mut response_auto_patch: Option<String> = None;
+                if res_automated_bg {
+                    if let (Some(ref orig_res), Some(ref auto_res)) = (&original_raw_response_str_bg, &automated_raw_response_str_bg) {
+                        response_auto_patch = Some(diffy::create_patch(orig_res, auto_res).to_string());
+                    }
+                }
+
+                let raw_response_to_store = if res_was_modified_bg {
+                    original_raw_response_str_bg.unwrap_or(final_response_text.clone())
+                } else {
+                    final_response_text.clone()
+                };
+
                 let (response_head, response_body) = split_message(&final_response_text);
                 let status = parse_status_code(response_head);
                 let response_length = response_body.as_bytes().len();
@@ -597,10 +698,14 @@ async fn handle_connect(
                 let history_counter: tauri::State<HistoryIdCounter> = app_handle_bg.state();
                 let payload = HttpHistoryPayload {
                     id: history_counter.next(),
-                    raw_request: String::from_utf8_lossy(&outgoing_request_bytes_bg).to_string(),
-                    raw_response: final_response_text,
-                    original_raw_request: original_raw_request_bg,
-                    original_raw_response: if res_was_modified_bg { original_raw_response_bg } else { None },
+                    raw_request: original_raw_request_str_bg,
+                    raw_response: raw_response_to_store,
+                    request_auto_patch: request_auto_patch_bg,
+                    request_manual_patch: request_manual_patch_bg,
+                    response_auto_patch,
+                    response_manual_patch: None,
+                    request_edit_type: request_edit_type_bg,
+                    response_edit_type: response_edit_type_bg,
                     host: target_bg,
                     method: req_meta_bg.method,
                     path: req_meta_bg.path,
@@ -632,8 +737,12 @@ async fn handle_connect(
                             payload.is_https,
                             payload.raw_request,
                             payload.raw_response,
-                            payload.original_raw_request,
-                            payload.original_raw_response,
+                            payload.request_auto_patch,
+                            payload.request_manual_patch,
+                            payload.response_auto_patch,
+                            payload.response_manual_patch,
+                            payload.request_edit_type,
+                            payload.response_edit_type,
                         )
                         .await
                         .ok();
@@ -724,7 +833,8 @@ async fn handle_http_request(
         // Display/UI copy ONLY -- see identical note in `handle_connect`.
         let decrypted_request = String::from_utf8_lossy(&raw_request).to_string();
         let original_raw_request_str = decrypted_request.clone();
-        let mut req_was_modified = false;
+        let mut req_automated = false;
+        let mut req_manual = false;
         let sent_at_ms = now_ms();
         let request_id = Uuid::new_v4().to_string();
 
@@ -733,6 +843,7 @@ async fn handle_http_request(
         let mut outgoing_request_bytes = raw_request.clone();
         let req_meta_init = parse_request_line(&raw_request);
         let is_req_in_scope = intercept_state.is_url_in_scope(&target, &req_meta_init.path).await;
+        let mut automated_raw_request_str: Option<String> = None;
 
         let match_replace_engine: tauri::State<MatchReplaceEngine> = app_handle.state();
         if match_replace_engine.has_request_rules(is_req_in_scope).await {
@@ -741,7 +852,8 @@ async fn handle_http_request(
                 .await;
             if did_modify {
                 outgoing_request_bytes = mr_bytes;
-                req_was_modified = true;
+                req_automated = true;
+                automated_raw_request_str = Some(String::from_utf8_lossy(&outgoing_request_bytes).to_string());
             }
         }
 
@@ -766,7 +878,7 @@ async fn handle_http_request(
                         // See identical note in `handle_connect` -- resync
                         // Content-Length to the edited body.
                         outgoing_request_bytes = resync_edited_message(&mod_msg);
-                        req_was_modified = true;
+                        req_manual = true;
                     }
                 }
                 Some(InterceptDecision::Drop) | None => {
@@ -779,11 +891,31 @@ async fn handle_http_request(
             }
         }
 
-        let original_raw_request = if req_was_modified {
-            Some(original_raw_request_str)
-        } else {
-            None
+        let request_edit_type = match (req_automated, req_manual) {
+            (true, true) => Some("both".to_string()),
+            (true, false) => Some("automated".to_string()),
+            (false, true) => Some("manual".to_string()),
+            (false, false) => None,
         };
+
+        let mut request_auto_patch: Option<String> = None;
+        let mut request_manual_patch: Option<String> = None;
+
+        if req_automated {
+            if let Some(ref auto_str) = automated_raw_request_str {
+                request_auto_patch = Some(diffy::create_patch(&original_raw_request_str, auto_str).to_string());
+            }
+        }
+
+        if req_manual {
+            let manual_req_str = String::from_utf8_lossy(&outgoing_request_bytes).to_string();
+            let base_for_manual = if req_automated {
+                automated_raw_request_str.as_ref().unwrap_or(&original_raw_request_str)
+            } else {
+                &original_raw_request_str
+            };
+            request_manual_patch = Some(diffy::create_patch(base_for_manual, &manual_req_str).to_string());
+        }
 
         let response = match upstream.as_mut() {
             Some(conn) => {
@@ -832,14 +964,16 @@ async fn handle_http_request(
         let mut outgoing_response_bytes = response.headers.clone().into_bytes();
         outgoing_response_bytes.extend_from_slice(&response.body);
 
-        let req_meta = parse_request_line(&outgoing_request_bytes);
+        let req_meta = parse_request_line(&outgoing_response_bytes);
         let is_res_in_scope = intercept_state.is_url_in_scope(&target, &req_meta.path).await;
 
         let has_body_mr = match_replace_engine.has_response_body_rules(is_res_in_scope).await;
         let has_header_mr = match_replace_engine.has_response_header_rules(is_res_in_scope).await;
         let mut pre_decoded_response_text: Option<String> = None;
-        let mut res_was_modified = false;
+        let mut res_automated = false;
+        let mut res_manual = false;
         let mut original_raw_response_str: Option<String> = None;
+        let mut automated_raw_response_str: Option<String> = None;
 
         if has_body_mr {
             // Decode body, apply replacements, and forward uncompressed to browser
@@ -850,7 +984,7 @@ async fn handle_http_request(
                 &limits,
             );
             original_raw_response_str = Some(format!("{}{}", decoded.headers, String::from_utf8_lossy(&decoded.body)));
-            res_was_modified = true;
+            res_automated = true;
 
             let body_str = String::from_utf8_lossy(&decoded.body);
             let (mod_body_str, _) = match_replace_engine
@@ -874,7 +1008,9 @@ async fn handle_http_request(
             let mut final_wire_bytes = final_headers.as_bytes().to_vec();
             final_wire_bytes.extend_from_slice(mod_body_str.as_bytes());
             outgoing_response_bytes = final_wire_bytes;
-            pre_decoded_response_text = Some(format!("{}{}", final_headers, mod_body_str));
+            let auto_text = format!("{}{}", final_headers, mod_body_str);
+            automated_raw_response_str = Some(auto_text.clone());
+            pre_decoded_response_text = Some(auto_text);
         } else if has_header_mr {
             // Keep body compressed, modify only header block
             let (mod_headers, did_mod) = match_replace_engine
@@ -885,8 +1021,10 @@ async fn handle_http_request(
                 final_wire_bytes.extend_from_slice(&response.body);
                 outgoing_response_bytes = final_wire_bytes;
                 original_raw_response_str = Some(decode_for_display(&response.headers, &response.body, &connection_options));
-                pre_decoded_response_text = Some(decode_for_display(&mod_headers, &response.body, &connection_options));
-                res_was_modified = true;
+                let auto_text = decode_for_display(&mod_headers, &response.body, &connection_options);
+                automated_raw_response_str = Some(auto_text.clone());
+                pre_decoded_response_text = Some(auto_text);
+                res_automated = true;
             }
         }
 
@@ -921,7 +1059,7 @@ async fn handle_http_request(
                         outgoing_response_bytes = resync_edited_message(&mod_msg);
                         final_response_text =
                             String::from_utf8_lossy(&outgoing_response_bytes).to_string();
-                        res_was_modified = true;
+                        res_manual = true;
                     }
                 }
                 Some(InterceptDecision::Drop) | None => {
@@ -938,6 +1076,40 @@ async fn handle_http_request(
                 break;
             }
 
+            let res_was_modified = res_automated || res_manual;
+            let response_edit_type = match (res_automated, res_manual) {
+                (true, true) => Some("both".to_string()),
+                (true, false) => Some("automated".to_string()),
+                (false, true) => Some("manual".to_string()),
+                (false, false) => None,
+            };
+
+            let mut response_auto_patch: Option<String> = None;
+            let mut response_manual_patch: Option<String> = None;
+
+            if res_automated {
+                if let (Some(ref orig_res), Some(ref auto_res)) = (&original_raw_response_str, &automated_raw_response_str) {
+                    response_auto_patch = Some(diffy::create_patch(orig_res, auto_res).to_string());
+                }
+            }
+
+            if res_manual {
+                let base_for_manual = if res_automated {
+                    automated_raw_response_str.as_ref().or(original_raw_response_str.as_ref())
+                } else {
+                    original_raw_response_str.as_ref()
+                };
+                if let Some(base) = base_for_manual {
+                    response_manual_patch = Some(diffy::create_patch(base, &final_response_text).to_string());
+                }
+            }
+
+            let raw_response_to_store = if res_was_modified {
+                original_raw_response_str.unwrap_or(final_response_text.clone())
+            } else {
+                final_response_text.clone()
+            };
+
             let (response_head, response_body) = split_message(&final_response_text);
             let status_code = parse_status_code(response_head);
             let response_length = response_body.as_bytes().len();
@@ -945,10 +1117,14 @@ async fn handle_http_request(
             let history_counter: tauri::State<HistoryIdCounter> = app_handle.state();
             let payload = HttpHistoryPayload {
                 id: history_counter.next(),
-                raw_request: String::from_utf8_lossy(&outgoing_request_bytes).to_string(),
-                raw_response: final_response_text,
-                original_raw_request: original_raw_request.clone(),
-                original_raw_response: if res_was_modified { original_raw_response_str } else { None },
+                raw_request: original_raw_request_str.clone(),
+                raw_response: raw_response_to_store,
+                request_auto_patch: request_auto_patch.clone(),
+                request_manual_patch: request_manual_patch.clone(),
+                response_auto_patch: response_auto_patch.clone(),
+                response_manual_patch: response_manual_patch.clone(),
+                request_edit_type: request_edit_type.clone(),
+                response_edit_type: response_edit_type.clone(),
                 host: target.clone(),
                 method: req_meta.method,
                 path: req_meta.path,
@@ -980,8 +1156,12 @@ async fn handle_http_request(
                         payload.is_https,
                         payload.raw_request,
                         payload.raw_response,
-                        payload.original_raw_request,
-                        payload.original_raw_response,
+                        payload.request_auto_patch,
+                        payload.request_manual_patch,
+                        payload.response_auto_patch,
+                        payload.response_manual_patch,
+                        payload.request_edit_type,
+                        payload.response_edit_type,
                     ));
                 }
             }
@@ -995,18 +1175,31 @@ async fn handle_http_request(
                 break;
             }
 
+            let res_was_modified = res_automated || res_manual;
+            let response_edit_type = match (res_automated, res_manual) {
+                (true, true) => Some("both".to_string()),
+                (true, false) => Some("automated".to_string()),
+                (false, true) => Some("manual".to_string()),
+                (false, false) => None,
+            };
+
             // Decompress, emit history, and save to DB in background
             let app_handle_bg = app_handle.clone();
             let target_bg = target.clone();
             let connection_options_bg = connection_options.clone();
             let req_meta_bg = req_meta;
-            let outgoing_request_bytes_bg = outgoing_request_bytes;
             let response_elapsed = response.elapsed;
             let response_headers_bg = response.headers;
             let response_body_bg = response.body;
-            let original_raw_request_bg = original_raw_request;
-            let original_raw_response_bg = original_raw_response_str;
+            let original_raw_request_str_bg = original_raw_request_str;
+            let original_raw_response_str_bg = original_raw_response_str;
+            let automated_raw_response_str_bg = automated_raw_response_str;
             let res_was_modified_bg = res_was_modified;
+            let request_auto_patch_bg = request_auto_patch;
+            let request_manual_patch_bg = request_manual_patch;
+            let request_edit_type_bg = request_edit_type;
+            let response_edit_type_bg = response_edit_type;
+            let res_automated_bg = res_automated;
 
             tokio::spawn(async move {
                 let final_response_text = if let Some(pre) = pre_decoded_response_text {
@@ -1019,6 +1212,19 @@ async fn handle_http_request(
                     .unwrap_or_default()
                 };
 
+                let mut response_auto_patch: Option<String> = None;
+                if res_automated_bg {
+                    if let (Some(ref orig_res), Some(ref auto_res)) = (&original_raw_response_str_bg, &automated_raw_response_str_bg) {
+                        response_auto_patch = Some(diffy::create_patch(orig_res, auto_res).to_string());
+                    }
+                }
+
+                let raw_response_to_store = if res_was_modified_bg {
+                    original_raw_response_str_bg.unwrap_or(final_response_text.clone())
+                } else {
+                    final_response_text.clone()
+                };
+
                 let (response_head, response_body) = split_message(&final_response_text);
                 let status_code = parse_status_code(response_head);
                 let response_length = response_body.as_bytes().len();
@@ -1026,10 +1232,14 @@ async fn handle_http_request(
                 let history_counter: tauri::State<HistoryIdCounter> = app_handle_bg.state();
                 let payload = HttpHistoryPayload {
                     id: history_counter.next(),
-                    raw_request: String::from_utf8_lossy(&outgoing_request_bytes_bg).to_string(),
-                    raw_response: final_response_text,
-                    original_raw_request: original_raw_request_bg,
-                    original_raw_response: if res_was_modified_bg { original_raw_response_bg } else { None },
+                    raw_request: original_raw_request_str_bg,
+                    raw_response: raw_response_to_store,
+                    request_auto_patch: request_auto_patch_bg,
+                    request_manual_patch: request_manual_patch_bg,
+                    response_auto_patch,
+                    response_manual_patch: None,
+                    request_edit_type: request_edit_type_bg,
+                    response_edit_type: response_edit_type_bg,
                     host: target_bg,
                     method: req_meta_bg.method,
                     path: req_meta_bg.path,
@@ -1061,8 +1271,12 @@ async fn handle_http_request(
                             payload.is_https,
                             payload.raw_request,
                             payload.raw_response,
-                            payload.original_raw_request,
-                            payload.original_raw_response,
+                            payload.request_auto_patch,
+                            payload.request_manual_patch,
+                            payload.response_auto_patch,
+                            payload.response_manual_patch,
+                            payload.request_edit_type,
+                            payload.response_edit_type,
                         )
                         .await
                         .ok();

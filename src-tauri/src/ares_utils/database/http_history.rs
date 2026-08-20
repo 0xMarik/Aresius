@@ -22,8 +22,12 @@ pub struct HttpHistoryRow {
     pub is_https: bool,
     pub raw_request: String,
     pub raw_response: String,
-    pub original_raw_request: Option<String>,
-    pub original_raw_response: Option<String>,
+    pub request_auto_patch: Option<String>,
+    pub request_manual_patch: Option<String>,
+    pub response_auto_patch: Option<String>,
+    pub response_manual_patch: Option<String>,
+    pub request_edit_type: Option<String>,
+    pub response_edit_type: Option<String>,
 }
 
 /// Lightweight summary row for table views and sitemap tree building.
@@ -44,6 +48,12 @@ pub struct HttpHistorySummaryRowDb {
     pub sent_at_ms: i64,
     pub state: String,
     pub is_https: bool,
+    pub request_auto_patch: Option<String>,
+    pub request_manual_patch: Option<String>,
+    pub response_auto_patch: Option<String>,
+    pub response_manual_patch: Option<String>,
+    pub request_edit_type: Option<String>,
+    pub response_edit_type: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -87,8 +97,12 @@ pub async fn save_http_history(
     is_https: bool,
     raw_request: String,
     raw_response: String,
-    original_raw_request: Option<String>,
-    original_raw_response: Option<String>,
+    request_auto_patch: Option<String>,
+    request_manual_patch: Option<String>,
+    response_auto_patch: Option<String>,
+    response_manual_patch: Option<String>,
+    request_edit_type: Option<String>,
+    response_edit_type: Option<String>,
 ) -> Result<(), String> {
     let state = state_from_code(status_code);
 
@@ -97,8 +111,10 @@ pub async fn save_http_history(
             (project_id, host, method, path, query, extension,
              status_code, response_length, response_time_ms,
              sent_at_ms, state, is_https, raw_request, raw_response,
-             original_raw_request, original_raw_response)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             request_auto_patch, request_manual_patch,
+             response_auto_patch, response_manual_patch,
+             request_edit_type, response_edit_type)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&project_id)
     .bind(&host)
@@ -114,8 +130,12 @@ pub async fn save_http_history(
     .bind(is_https)
     .bind(&raw_request)
     .bind(&raw_response)
-    .bind(&original_raw_request)
-    .bind(&original_raw_response)
+    .bind(&request_auto_patch)
+    .bind(&request_manual_patch)
+    .bind(&response_auto_patch)
+    .bind(&response_manual_patch)
+    .bind(&request_edit_type)
+    .bind(&response_edit_type)
     .execute(&pool)
     .await
     .map_err(|e| e.to_string())?;
@@ -152,7 +172,7 @@ pub async fn get_http_history_summaries(
 
     let rows = if let Some(pid) = project_id {
         sqlx::query_as::<_, HttpHistorySummaryRowDb>(
-            "SELECT id, project_id, host, method, path, query, extension, status_code, response_length, response_time_ms, sent_at_ms, state, is_https
+            "SELECT id, project_id, host, method, path, query, extension, status_code, response_length, response_time_ms, sent_at_ms, state, is_https, request_auto_patch, request_manual_patch, response_auto_patch, response_manual_patch, request_edit_type, response_edit_type
              FROM http_history
              WHERE project_id = ?
              ORDER BY id ASC",
@@ -162,7 +182,7 @@ pub async fn get_http_history_summaries(
         .await
     } else {
         sqlx::query_as::<_, HttpHistorySummaryRowDb>(
-            "SELECT id, project_id, host, method, path, query, extension, status_code, response_length, response_time_ms, sent_at_ms, state, is_https
+            "SELECT id, project_id, host, method, path, query, extension, status_code, response_length, response_time_ms, sent_at_ms, state, is_https, request_auto_patch, request_manual_patch, response_auto_patch, response_manual_patch, request_edit_type, response_edit_type
              FROM http_history
              ORDER BY id ASC",
         )
@@ -222,7 +242,7 @@ pub async fn get_http_history_window(
     let needs_scope_filter = scope.is_some() && (filter_mode == "in" || filter_mode == "out");
 
     let mut query_builder = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
-        "SELECT id, project_id, host, method, path, query, extension, status_code, response_length, response_time_ms, sent_at_ms, state, is_https FROM http_history WHERE 1=1"
+        "SELECT id, project_id, host, method, path, query, extension, status_code, response_length, response_time_ms, sent_at_ms, state, is_https, request_auto_patch, request_manual_patch, response_auto_patch, response_manual_patch, request_edit_type, response_edit_type FROM http_history WHERE 1=1"
     );
     if let Some(ref pid) = project_id {
         query_builder.push(" AND project_id = ");

@@ -42,3 +42,5 @@ regex = "1"
 sqlx = { version = "0.9.0", features = ["chrono", "runtime-tokio", "sqlite"] }
 chrono = { version = "0.4", features = ["serde"] }
 base64 = "0.22"
+diffy = "0.4"
+similar = "2.6"

@@ -30,6 +30,8 @@ export type RequestState =
   | 'Server Error'
   | 'Failed';
 
+export type EditType = 'automated' | 'manual' | 'both';
+
 export type HttpHistory = {
   id: number;
   projectId?: string;
@@ -46,8 +48,12 @@ export type HttpHistory = {
   isHttps: boolean;
   rawRequest: string;
   rawResponse: string;
-  originalRawRequest?: string | null;
-  originalRawResponse?: string | null;
+  requestAutoPatch?: string | null;
+  requestManualPatch?: string | null;
+  responseAutoPatch?: string | null;
+  responseManualPatch?: string | null;
+  requestEditType?: EditType | null;
+  responseEditType?: EditType | null;
 };
 
 export type HttpTransaction = {
@@ -66,8 +72,12 @@ export type HttpTransaction = {
   isHttps: boolean;
   rawRequest?: string;
   rawResponse?: string;
-  originalRawRequest?: string | null;
-  originalRawResponse?: string | null;
+  requestAutoPatch?: string | null;
+  requestManualPatch?: string | null;
+  responseAutoPatch?: string | null;
+  responseManualPatch?: string | null;
+  requestEditType?: EditType | null;
+  responseEditType?: EditType | null;
 };
 
 export type HttpHistorySummaryRow = {
@@ -84,6 +94,12 @@ export type HttpHistorySummaryRow = {
   sentAtMs: number;
   state?: string;
   isHttps: boolean;
+  requestAutoPatch?: string | null;
+  requestManualPatch?: string | null;
+  responseAutoPatch?: string | null;
+  responseManualPatch?: string | null;
+  requestEditType?: EditType | null;
+  responseEditType?: EditType | null;
 };
 
 export function stateFromCode(code: number): RequestState {
