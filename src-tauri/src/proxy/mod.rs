@@ -8,7 +8,7 @@ use crate::ares_utils::http_connection::HttpConnection;
 use crate::ares_utils::parse::parse_request_line;
 use crate::ares_utils::parse::parse_status_code;
 use crate::ares_utils::parse::split_message;
-use crate::proxy::utils::build_error_response;
+use crate::proxy::utils::{build_dropped_response, build_error_response};
 use crate::proxy::utils::HistoryIdCounter;
 use rcgen::KeyPair;
 use std::collections::HashMap;
@@ -350,7 +350,9 @@ async fn handle_connect(
                         "Request dropped by user or state shutdown for {}",
                         request_id
                     );
-                    continue;
+                    let drop_response = build_dropped_response(&target, true);
+                    client_tls.write_all(&drop_response).await.ok();
+                    break;
                 }
             }
         }
@@ -433,7 +435,7 @@ async fn handle_connect(
         let mut outgoing_response_bytes = response.headers.clone().into_bytes();
         outgoing_response_bytes.extend_from_slice(&response.body);
 
-        let req_meta = parse_request_line(&outgoing_response_bytes);
+        let req_meta = parse_request_line(&outgoing_request_bytes);
         let is_res_in_scope = intercept_state.is_url_in_scope(&target, &req_meta.path).await;
 
         let has_body_mr = match_replace_engine.has_response_body_rules(is_res_in_scope).await;
@@ -536,7 +538,9 @@ async fn handle_connect(
                 }
                 Some(InterceptDecision::Drop) | None => {
                     tracing::info!("Response dropped by user for {}", res_id);
-                    continue;
+                    let drop_response = build_dropped_response(&target, false);
+                    client_tls.write_all(&drop_response).await.ok();
+                    break;
                 }
             }
 
@@ -886,7 +890,9 @@ async fn handle_http_request(
                         "Request dropped by user or state shutdown for {}",
                         request_id
                     );
-                    continue;
+                    let drop_response = build_dropped_response(&target, true);
+                    client_stream.write_all(&drop_response).await.ok();
+                    break;
                 }
             }
         }
@@ -964,7 +970,7 @@ async fn handle_http_request(
         let mut outgoing_response_bytes = response.headers.clone().into_bytes();
         outgoing_response_bytes.extend_from_slice(&response.body);
 
-        let req_meta = parse_request_line(&outgoing_response_bytes);
+        let req_meta = parse_request_line(&outgoing_request_bytes);
         let is_res_in_scope = intercept_state.is_url_in_scope(&target, &req_meta.path).await;
 
         let has_body_mr = match_replace_engine.has_response_body_rules(is_res_in_scope).await;
@@ -1064,7 +1070,9 @@ async fn handle_http_request(
                 }
                 Some(InterceptDecision::Drop) | None => {
                     tracing::info!("Response dropped by user for {}", res_id);
-                    continue;
+                    let drop_response = build_dropped_response(&target, false);
+                    client_stream.write_all(&drop_response).await.ok();
+                    break;
                 }
             }
 

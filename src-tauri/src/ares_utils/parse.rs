@@ -68,3 +68,39 @@ pub fn parse_request_line(outgoing_request_bytes: &[u8]) -> RequestLineMeta {
         extension,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_request_line_with_query_and_extension() {
+        let req = b"GET /api/v1/users.json?page=2&limit=50 HTTP/1.1\r\nHost: example.com\r\n\r\n";
+        let meta = parse_request_line(req);
+        assert_eq!(meta.method, "GET");
+        assert_eq!(meta.path, "/api/v1/users.json");
+        assert_eq!(meta.query, Some("page=2&limit=50".to_string()));
+        assert_eq!(meta.extension, Some("json".to_string()));
+    }
+
+    #[test]
+    fn test_parse_request_line_absolute_form() {
+        let req = b"POST http://example.com/login.php?redirect=home HTTP/1.1\r\nHost: example.com\r\n\r\n";
+        let meta = parse_request_line(req);
+        assert_eq!(meta.method, "POST");
+        assert_eq!(meta.path, "/login.php");
+        assert_eq!(meta.query, Some("redirect=home".to_string()));
+        assert_eq!(meta.extension, Some("php".to_string()));
+    }
+
+    #[test]
+    fn test_parse_request_line_no_query_no_extension() {
+        let req = b"GET /users/profile HTTP/1.1\r\nHost: example.com\r\n\r\n";
+        let meta = parse_request_line(req);
+        assert_eq!(meta.method, "GET");
+        assert_eq!(meta.path, "/users/profile");
+        assert_eq!(meta.query, None);
+        assert_eq!(meta.extension, None);
+    }
+}
+
