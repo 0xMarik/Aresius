@@ -43,6 +43,8 @@ struct HttpHistoryPayload {
     id: u32,
     raw_request: String,
     raw_response: String,
+    original_raw_request: Option<String>,
+    original_raw_response: Option<String>,
     host: String,
     method: String,
     path: String,
@@ -281,6 +283,8 @@ async fn handle_connect(
         // must never be what's actually put on the wire. See
         // `outgoing_request_bytes` below for the byte-exact copy that is.
         let decrypted_request = String::from_utf8_lossy(&raw_request).to_string();
+        let original_raw_request_str = decrypted_request.clone();
+        let mut req_was_modified = false;
         let sent_at_ms = now_ms();
         let request_id = Uuid::new_v4().to_string();
 
@@ -299,6 +303,7 @@ async fn handle_connect(
                 .await;
             if did_modify {
                 outgoing_request_bytes = mr_bytes;
+                req_was_modified = true;
             }
         }
 
@@ -306,12 +311,13 @@ async fn handle_connect(
             .should_intercept(InterceptItemType::Request, &target, &req_meta_init.path)
             .await
         {
+            let current_req_str = String::from_utf8_lossy(&outgoing_request_bytes).to_string();
             let item = InterceptItem {
                 id: request_id.clone(),
                 item_type: InterceptItemType::Request,
                 host: target.clone(),
-                method_or_status: extract_method_or_status(&decrypted_request, true),
-                raw_message: decrypted_request.clone(),
+                method_or_status: extract_method_or_status(&current_req_str, true),
+                raw_message: current_req_str,
                 timestamp: sent_at_ms,
                 is_https: true,
             };
@@ -327,6 +333,7 @@ async fn handle_connect(
                         // truncate/hang the request or desync the next
                         // request on this same keep-alive connection.
                         outgoing_request_bytes = resync_edited_message(&mod_msg);
+                        req_was_modified = true;
                     }
                     // else: untouched by the user -- forward the original
                     // bytes unchanged.
@@ -340,6 +347,12 @@ async fn handle_connect(
                 }
             }
         }
+
+        let original_raw_request = if req_was_modified {
+            Some(original_raw_request_str)
+        } else {
+            None
+        };
 
         let response = match upstream.as_mut() {
             Some(conn) => {
@@ -399,6 +412,8 @@ async fn handle_connect(
         let has_body_mr = match_replace_engine.has_response_body_rules(is_res_in_scope).await;
         let has_header_mr = match_replace_engine.has_response_header_rules(is_res_in_scope).await;
         let mut pre_decoded_response_text: Option<String> = None;
+        let mut res_was_modified = false;
+        let mut original_raw_response_str: Option<String> = None;
 
         if has_body_mr {
             // Decode body, apply replacements, and forward uncompressed to browser
@@ -408,6 +423,9 @@ async fn handle_connect(
                 response.body.clone(),
                 &limits,
             );
+            original_raw_response_str = Some(format!("{}{}", decoded.headers, String::from_utf8_lossy(&decoded.body)));
+            res_was_modified = true;
+
             let body_str = String::from_utf8_lossy(&decoded.body);
             let (mod_body_str, _) = match_replace_engine
                 .apply_response_body_transformations(&body_str, is_res_in_scope)
@@ -440,6 +458,9 @@ async fn handle_connect(
                 let mut final_wire_bytes = mod_headers.as_bytes().to_vec();
                 final_wire_bytes.extend_from_slice(&response.body);
                 outgoing_response_bytes = final_wire_bytes;
+                original_raw_response_str = Some(decode_for_display(&response.headers, &response.body, &connection_options));
+                pre_decoded_response_text = Some(decode_for_display(&mod_headers, &response.body, &connection_options));
+                res_was_modified = true;
             }
         }
 
@@ -466,6 +487,9 @@ async fn handle_connect(
             match intercept_state.add_and_await(item).await {
                 Some(InterceptDecision::Forward { modified_message }) => {
                     if let Some(mod_msg) = modified_message {
+                        if original_raw_response_str.is_none() {
+                            original_raw_response_str = Some(final_response_text.clone());
+                        }
                         // The displayed body was decoded for readability,
                         // so the original Content-Encoding/Content-Length
                         // no longer describe it once edited. Resync both
@@ -474,6 +498,7 @@ async fn handle_connect(
                         outgoing_response_bytes = resync_edited_message(&mod_msg);
                         final_response_text =
                             String::from_utf8_lossy(&outgoing_response_bytes).to_string();
+                        res_was_modified = true;
                     }
                 }
                 Some(InterceptDecision::Drop) | None => {
@@ -496,6 +521,8 @@ async fn handle_connect(
                 id: history_counter.next(),
                 raw_request: String::from_utf8_lossy(&outgoing_request_bytes).to_string(),
                 raw_response: final_response_text,
+                original_raw_request: original_raw_request.clone(),
+                original_raw_response: if res_was_modified { original_raw_response_str } else { None },
                 host: target.clone(),
                 method: req_meta.method,
                 path: req_meta.path,
@@ -527,6 +554,8 @@ async fn handle_connect(
                         payload.is_https,
                         payload.raw_request,
                         payload.raw_response,
+                        payload.original_raw_request,
+                        payload.original_raw_response,
                     ));
                 }
             }
@@ -546,6 +575,9 @@ async fn handle_connect(
             let response_elapsed = response.elapsed;
             let response_headers_bg = response.headers;
             let response_body_bg = response.body;
+            let original_raw_request_bg = original_raw_request;
+            let original_raw_response_bg = original_raw_response_str;
+            let res_was_modified_bg = res_was_modified;
 
             tokio::spawn(async move {
                 let final_response_text = if let Some(pre) = pre_decoded_response_text {
@@ -567,6 +599,8 @@ async fn handle_connect(
                     id: history_counter.next(),
                     raw_request: String::from_utf8_lossy(&outgoing_request_bytes_bg).to_string(),
                     raw_response: final_response_text,
+                    original_raw_request: original_raw_request_bg,
+                    original_raw_response: if res_was_modified_bg { original_raw_response_bg } else { None },
                     host: target_bg,
                     method: req_meta_bg.method,
                     path: req_meta_bg.path,
@@ -598,6 +632,8 @@ async fn handle_connect(
                             payload.is_https,
                             payload.raw_request,
                             payload.raw_response,
+                            payload.original_raw_request,
+                            payload.original_raw_response,
                         )
                         .await
                         .ok();
@@ -687,6 +723,8 @@ async fn handle_http_request(
 
         // Display/UI copy ONLY -- see identical note in `handle_connect`.
         let decrypted_request = String::from_utf8_lossy(&raw_request).to_string();
+        let original_raw_request_str = decrypted_request.clone();
+        let mut req_was_modified = false;
         let sent_at_ms = now_ms();
         let request_id = Uuid::new_v4().to_string();
 
@@ -703,6 +741,7 @@ async fn handle_http_request(
                 .await;
             if did_modify {
                 outgoing_request_bytes = mr_bytes;
+                req_was_modified = true;
             }
         }
 
@@ -710,12 +749,13 @@ async fn handle_http_request(
             .should_intercept(InterceptItemType::Request, &target, &req_meta_init.path)
             .await
         {
+            let current_req_str = String::from_utf8_lossy(&outgoing_request_bytes).to_string();
             let item = InterceptItem {
                 id: request_id.clone(),
                 item_type: InterceptItemType::Request,
                 host: target.clone(),
-                method_or_status: extract_method_or_status(&decrypted_request, true),
-                raw_message: decrypted_request.clone(),
+                method_or_status: extract_method_or_status(&current_req_str, true),
+                raw_message: current_req_str,
                 timestamp: sent_at_ms,
                 is_https: false,
             };
@@ -726,6 +766,7 @@ async fn handle_http_request(
                         // See identical note in `handle_connect` -- resync
                         // Content-Length to the edited body.
                         outgoing_request_bytes = resync_edited_message(&mod_msg);
+                        req_was_modified = true;
                     }
                 }
                 Some(InterceptDecision::Drop) | None => {
@@ -737,6 +778,12 @@ async fn handle_http_request(
                 }
             }
         }
+
+        let original_raw_request = if req_was_modified {
+            Some(original_raw_request_str)
+        } else {
+            None
+        };
 
         let response = match upstream.as_mut() {
             Some(conn) => {
@@ -791,6 +838,8 @@ async fn handle_http_request(
         let has_body_mr = match_replace_engine.has_response_body_rules(is_res_in_scope).await;
         let has_header_mr = match_replace_engine.has_response_header_rules(is_res_in_scope).await;
         let mut pre_decoded_response_text: Option<String> = None;
+        let mut res_was_modified = false;
+        let mut original_raw_response_str: Option<String> = None;
 
         if has_body_mr {
             // Decode body, apply replacements, and forward uncompressed to browser
@@ -800,6 +849,9 @@ async fn handle_http_request(
                 response.body.clone(),
                 &limits,
             );
+            original_raw_response_str = Some(format!("{}{}", decoded.headers, String::from_utf8_lossy(&decoded.body)));
+            res_was_modified = true;
+
             let body_str = String::from_utf8_lossy(&decoded.body);
             let (mod_body_str, _) = match_replace_engine
                 .apply_response_body_transformations(&body_str, is_res_in_scope)
@@ -832,6 +884,9 @@ async fn handle_http_request(
                 let mut final_wire_bytes = mod_headers.as_bytes().to_vec();
                 final_wire_bytes.extend_from_slice(&response.body);
                 outgoing_response_bytes = final_wire_bytes;
+                original_raw_response_str = Some(decode_for_display(&response.headers, &response.body, &connection_options));
+                pre_decoded_response_text = Some(decode_for_display(&mod_headers, &response.body, &connection_options));
+                res_was_modified = true;
             }
         }
 
@@ -858,11 +913,15 @@ async fn handle_http_request(
             match intercept_state.add_and_await(item).await {
                 Some(InterceptDecision::Forward { modified_message }) => {
                     if let Some(mod_msg) = modified_message {
+                        if original_raw_response_str.is_none() {
+                            original_raw_response_str = Some(final_response_text.clone());
+                        }
                         // See identical note in `handle_connect` -- resync
                         // both the wire bytes and the history/UI copy.
                         outgoing_response_bytes = resync_edited_message(&mod_msg);
                         final_response_text =
                             String::from_utf8_lossy(&outgoing_response_bytes).to_string();
+                        res_was_modified = true;
                     }
                 }
                 Some(InterceptDecision::Drop) | None => {
@@ -888,6 +947,8 @@ async fn handle_http_request(
                 id: history_counter.next(),
                 raw_request: String::from_utf8_lossy(&outgoing_request_bytes).to_string(),
                 raw_response: final_response_text,
+                original_raw_request: original_raw_request.clone(),
+                original_raw_response: if res_was_modified { original_raw_response_str } else { None },
                 host: target.clone(),
                 method: req_meta.method,
                 path: req_meta.path,
@@ -919,6 +980,8 @@ async fn handle_http_request(
                         payload.is_https,
                         payload.raw_request,
                         payload.raw_response,
+                        payload.original_raw_request,
+                        payload.original_raw_response,
                     ));
                 }
             }
@@ -941,6 +1004,9 @@ async fn handle_http_request(
             let response_elapsed = response.elapsed;
             let response_headers_bg = response.headers;
             let response_body_bg = response.body;
+            let original_raw_request_bg = original_raw_request;
+            let original_raw_response_bg = original_raw_response_str;
+            let res_was_modified_bg = res_was_modified;
 
             tokio::spawn(async move {
                 let final_response_text = if let Some(pre) = pre_decoded_response_text {
@@ -962,6 +1028,8 @@ async fn handle_http_request(
                     id: history_counter.next(),
                     raw_request: String::from_utf8_lossy(&outgoing_request_bytes_bg).to_string(),
                     raw_response: final_response_text,
+                    original_raw_request: original_raw_request_bg,
+                    original_raw_response: if res_was_modified_bg { original_raw_response_bg } else { None },
                     host: target_bg,
                     method: req_meta_bg.method,
                     path: req_meta_bg.path,
@@ -993,6 +1061,8 @@ async fn handle_http_request(
                             payload.is_https,
                             payload.raw_request,
                             payload.raw_response,
+                            payload.original_raw_request,
+                            payload.original_raw_response,
                         )
                         .await
                         .ok();

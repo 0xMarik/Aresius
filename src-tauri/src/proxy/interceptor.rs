@@ -336,7 +336,7 @@ pub fn url_matches_pattern(pattern: &str, host: &str, path: &str) -> bool {
 pub fn is_in_scope(scope: Option<&ActiveScope>, host: &str, path: &str) -> bool {
     let scope = match scope {
         Some(s) => s,
-        None => return false,
+        None => return true,
     };
     let compiled = CompiledScope::compile(scope);
     compiled.is_in_scope(host, path)
@@ -624,8 +624,8 @@ mod tests {
             ],
         };
 
-        // No scope active -> not in scope
-        assert!(!is_in_scope(None, "anything.com", "/"));
+        // No scope active -> everything in scope (no restrictions)
+        assert!(is_in_scope(None, "anything.com", "/"));
 
         // In scope via allow rule 1
         assert!(is_in_scope(Some(&scope), "app.example.com", "/test"));

@@ -22,6 +22,8 @@ pub struct HttpHistoryRow {
     pub is_https: bool,
     pub raw_request: String,
     pub raw_response: String,
+    pub original_raw_request: Option<String>,
+    pub original_raw_response: Option<String>,
 }
 
 /// Lightweight summary row for table views and sitemap tree building.
@@ -85,6 +87,8 @@ pub async fn save_http_history(
     is_https: bool,
     raw_request: String,
     raw_response: String,
+    original_raw_request: Option<String>,
+    original_raw_response: Option<String>,
 ) -> Result<(), String> {
     let state = state_from_code(status_code);
 
@@ -92,8 +96,9 @@ pub async fn save_http_history(
         "INSERT INTO http_history
             (project_id, host, method, path, query, extension,
              status_code, response_length, response_time_ms,
-             sent_at_ms, state, is_https, raw_request, raw_response)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             sent_at_ms, state, is_https, raw_request, raw_response,
+             original_raw_request, original_raw_response)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&project_id)
     .bind(&host)
@@ -109,6 +114,8 @@ pub async fn save_http_history(
     .bind(is_https)
     .bind(&raw_request)
     .bind(&raw_response)
+    .bind(&original_raw_request)
+    .bind(&original_raw_response)
     .execute(&pool)
     .await
     .map_err(|e| e.to_string())?;

@@ -288,6 +288,8 @@ export function useVirtualHttpHistory({
                         isHttps: fullItem.isHttps ?? false,
                         rawRequest: fullItem.rawRequest || '',
                         rawResponse: fullItem.rawResponse || '',
+                        originalRawRequest: fullItem.originalRawRequest ?? null,
+                        originalRawResponse: fullItem.originalRawResponse ?? null,
                     };
 
                     detailCacheRef.current.set(selectedRequest, normalized);

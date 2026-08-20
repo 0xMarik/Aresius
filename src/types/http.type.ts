@@ -46,6 +46,8 @@ export type HttpHistory = {
   isHttps: boolean;
   rawRequest: string;
   rawResponse: string;
+  originalRawRequest?: string | null;
+  originalRawResponse?: string | null;
 };
 
 export type HttpTransaction = {
@@ -64,6 +66,8 @@ export type HttpTransaction = {
   isHttps: boolean;
   rawRequest?: string;
   rawResponse?: string;
+  originalRawRequest?: string | null;
+  originalRawResponse?: string | null;
 };
 
 export type HttpHistorySummaryRow = {

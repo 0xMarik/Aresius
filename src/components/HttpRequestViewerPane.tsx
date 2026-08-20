@@ -1,5 +1,5 @@
-import React, { useMemo, useState, useCallback } from 'react';
-import { Clock, HardDrive, FileText } from 'lucide-react';
+import React, { useMemo, useState, useCallback, useEffect } from 'react';
+import { Clock, HardDrive, FileText, ChevronDown, Check, Sparkles } from 'lucide-react';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { CodeMirrorEditor } from '@/components/result-table.components';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -7,6 +7,12 @@ import { Badge } from '@/components/ui/badge';
 import MethodBadge from '@/components/MethodBadge';
 import { HttpStatusBadge } from '@/components/HttpStatusBadge';
 import { ViewModeTabs } from '@/components/ViewModeTabs';
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import {
     ContextMenu,
     ContextMenuContent,
@@ -43,6 +49,15 @@ export const HttpRequestViewerPane = React.memo(function HttpRequestViewerPane({
     const [internalReqMode, setInternalReqMode] = useState<'raw' | 'pretty'>('raw');
     const [internalResMode, setInternalResMode] = useState<'raw' | 'pretty'>('raw');
 
+    const [reqVersion, setReqVersion] = useState<'edited' | 'original'>('edited');
+    const [resVersion, setResVersion] = useState<'edited' | 'original'>('edited');
+
+    // Reset view version to 'edited' when a different request is selected
+    useEffect(() => {
+        setReqVersion('edited');
+        setResVersion('edited');
+    }, [request?.id]);
+
     const currentReqMode = reqViewModeProp ?? internalReqMode;
     const currentResMode = resViewModeProp ?? internalResMode;
 
@@ -68,17 +83,47 @@ export const HttpRequestViewerPane = React.memo(function HttpRequestViewerPane({
         [onResViewModeChange]
     );
 
+    const hasReqModifications = useMemo(() => {
+        return (
+            !!request?.originalRawRequest &&
+            request.originalRawRequest !== request.rawRequest
+        );
+    }, [request?.originalRawRequest, request?.rawRequest]);
+
+    const hasResModifications = useMemo(() => {
+        return (
+            !!request?.originalRawResponse &&
+            request.originalRawResponse !== request.rawResponse
+        );
+    }, [request?.originalRawResponse, request?.rawResponse]);
+
+    const activeRawRequest = useMemo(() => {
+        if (!request) return '';
+        if (hasReqModifications && reqVersion === 'original' && request.originalRawRequest) {
+            return request.originalRawRequest;
+        }
+        return request.rawRequest;
+    }, [request, hasReqModifications, reqVersion]);
+
+    const activeRawResponse = useMemo(() => {
+        if (!request) return '';
+        if (hasResModifications && resVersion === 'original' && request.originalRawResponse) {
+            return request.originalRawResponse;
+        }
+        return request.rawResponse;
+    }, [request, hasResModifications, resVersion]);
+
     const prettyReq = useMemo(
-        () => (request?.rawRequest ? formatHttpMessagePretty(request.rawRequest) : ''),
-        [request?.rawRequest]
+        () => (activeRawRequest ? formatHttpMessagePretty(activeRawRequest) : ''),
+        [activeRawRequest]
     );
 
     const prettyRes = useMemo(
-        () => (request?.rawResponse ? formatHttpMessagePretty(request.rawResponse) : ''),
-        [request?.rawResponse]
+        () => (activeRawResponse ? formatHttpMessagePretty(activeRawResponse) : ''),
+        [activeRawResponse]
     );
 
-    const parsedRes = useMemo(() => splitHttpMessage(request?.rawResponse ?? ''), [request?.rawResponse]);
+    const parsedRes = useMemo(() => splitHttpMessage(activeRawResponse), [activeRawResponse]);
 
     const resContentType = useMemo(() => {
         const ctHeader = parsedRes.headersList.find((h) => h.name.toLowerCase() === 'content-type');
@@ -112,7 +157,43 @@ export const HttpRequestViewerPane = React.memo(function HttpRequestViewerPane({
                         </span>
                     </div>
 
-                    <div className="flex items-center gap-1.5 shrink-0">
+                    <div className="flex items-center gap-2 shrink-0">
+                        {/* Dropdown for Original vs Edited Request */}
+                        {hasReqModifications && (
+                            <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                    <button
+                                        type="button"
+                                        className="flex items-center gap-1.5 h-6 px-2 rounded text-[11px] font-mono font-medium bg-amber-500/10 text-amber-500 hover:bg-amber-500/20 border border-amber-500/30 transition-colors shadow-xs select-none"
+                                    >
+                                        <Sparkles className="w-3 h-3 text-amber-500" />
+                                        <span>{reqVersion === 'edited' ? 'Edited' : 'Original'}</span>
+                                        <ChevronDown className="w-3 h-3 opacity-70" />
+                                    </button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end" className="text-xs font-mono min-w-[130px]">
+                                    <DropdownMenuItem
+                                        onClick={() => setReqVersion('edited')}
+                                        className={`flex items-center justify-between cursor-pointer ${
+                                            reqVersion === 'edited' ? 'font-semibold text-primary' : ''
+                                        }`}
+                                    >
+                                        <span>Edited</span>
+                                        {reqVersion === 'edited' && <Check className="w-3.5 h-3.5 ml-2" />}
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                        onClick={() => setReqVersion('original')}
+                                        className={`flex items-center justify-between cursor-pointer ${
+                                            reqVersion === 'original' ? 'font-semibold text-primary' : ''
+                                        }`}
+                                    >
+                                        <span>Original</span>
+                                        {reqVersion === 'original' && <Check className="w-3.5 h-3.5 ml-2" />}
+                                    </DropdownMenuItem>
+                                </DropdownMenuContent>
+                            </DropdownMenu>
+                        )}
+
                         <ViewModeTabs mode={currentReqMode} onChange={handleReqModeChange} />
                     </div>
                 </div>
@@ -122,19 +203,19 @@ export const HttpRequestViewerPane = React.memo(function HttpRequestViewerPane({
                     <ContextMenuTrigger asChild>
                         <div className="flex-1 min-h-0 overflow-auto bg-background">
                             <CodeMirrorEditor
-                                value={currentReqMode === 'pretty' ? prettyReq : request.rawRequest}
+                                value={currentReqMode === 'pretty' ? prettyReq : activeRawRequest}
                                 isPretty={currentReqMode === 'pretty'}
                             />
                         </div>
                     </ContextMenuTrigger>
                     <ContextMenuContent className="w-56 text-xs">
-                        <RequestCopyActions rawRequest={request.rawRequest} host={request.host} />
+                        <RequestCopyActions rawRequest={activeRawRequest} host={request.host} />
 
                         <ContextMenuSeparator />
 
-                        <SendToReplayer rawRequest={request.rawRequest} />
+                        <SendToReplayer rawRequest={activeRawRequest} />
 
-                        <SendToFuzzer rawRequest={request.rawRequest} host={request.host || ''} />
+                        <SendToFuzzer rawRequest={activeRawRequest} host={request.host || ''} />
                     </ContextMenuContent>
                 </ContextMenu>
             </ResizablePanel>
@@ -169,7 +250,43 @@ export const HttpRequestViewerPane = React.memo(function HttpRequestViewerPane({
                         )}
                     </div>
 
-                    <div className="flex items-center gap-1.5 shrink-0">
+                    <div className="flex items-center gap-2 shrink-0">
+                        {/* Dropdown for Original vs Edited Response */}
+                        {hasResModifications && (
+                            <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                    <button
+                                        type="button"
+                                        className="flex items-center gap-1.5 h-6 px-2 rounded text-[11px] font-mono font-medium bg-amber-500/10 text-amber-500 hover:bg-amber-500/20 border border-amber-500/30 transition-colors shadow-xs select-none"
+                                    >
+                                        <Sparkles className="w-3 h-3 text-amber-500" />
+                                        <span>{resVersion === 'edited' ? 'Edited' : 'Original'}</span>
+                                        <ChevronDown className="w-3 h-3 opacity-70" />
+                                    </button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end" className="text-xs font-mono min-w-[130px]">
+                                    <DropdownMenuItem
+                                        onClick={() => setResVersion('edited')}
+                                        className={`flex items-center justify-between cursor-pointer ${
+                                            resVersion === 'edited' ? 'font-semibold text-primary' : ''
+                                        }`}
+                                    >
+                                        <span>Edited</span>
+                                        {resVersion === 'edited' && <Check className="w-3.5 h-3.5 ml-2" />}
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                        onClick={() => setResVersion('original')}
+                                        className={`flex items-center justify-between cursor-pointer ${
+                                            resVersion === 'original' ? 'font-semibold text-primary' : ''
+                                        }`}
+                                    >
+                                        <span>Original</span>
+                                        {resVersion === 'original' && <Check className="w-3.5 h-3.5 ml-2" />}
+                                    </DropdownMenuItem>
+                                </DropdownMenuContent>
+                            </DropdownMenu>
+                        )}
+
                         <ViewModeTabs mode={currentResMode} onChange={handleResModeChange} />
                     </div>
                 </div>
@@ -177,7 +294,7 @@ export const HttpRequestViewerPane = React.memo(function HttpRequestViewerPane({
                 {/* Response Content */}
                 <div className="flex-1 min-h-0 overflow-auto bg-background">
                     <CodeMirrorEditor
-                        value={currentResMode === 'pretty' ? prettyRes : request.rawResponse}
+                        value={currentResMode === 'pretty' ? prettyRes : activeRawResponse}
                         isPretty={currentResMode === 'pretty'}
                     />
                 </div>
