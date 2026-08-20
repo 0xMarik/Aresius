@@ -477,10 +477,7 @@ function FuzzerHistoryBody({
 
     const focusedResult = fetchedFocusedResult;
 
-    const failedCount = useMemo(
-        () => (runState.workers ?? []).filter((w) => w.status === 'dropped' || !!w.errorMessage).length,
-        [runState.workers]
-    );
+    const failedCount = runState.failed ?? 0;
 
     const canResendFocused = focusedResult && (
         focusedResult.status === 'error' ||

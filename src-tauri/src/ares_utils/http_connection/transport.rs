@@ -144,38 +144,112 @@ impl Connection {
     }
 }
 
+const MAX_CONNECT_RETRIES: usize = 3;
+
 /// Opens a TCP connection to `host:port`, wrapping it in TLS when `use_tls`
 /// is set. Timeouts, DNS caching, and cert-verification behavior come from `options`.
+/// Includes automatic retries with exponential backoff and DNS cache invalidation on TLS handshake failures / resets.
 pub(super) async fn connect_stream(
     host: &str,
     port: u16,
     use_tls: bool,
     options: &ConnectionOptions,
 ) -> Result<Connection> {
-    let (addrs, from_cache) = resolve_host(host, port, true).await?;
-    let tcp_stream = match connect_tcp(&addrs, options.connect_timeout).await {
-        Ok(stream) => stream,
-        Err(_e) if from_cache => {
-            // Invalidate stale DNS cache and retry fresh lookup once
-            tracing::debug!("Cached DNS failed for {}:{}, re-resolving...", host, port);
-            DnsCache::global().invalidate(host, port);
-            let (fresh_addrs, _) = resolve_host(host, port, false).await?;
-            connect_tcp(&fresh_addrs, options.connect_timeout).await?
-        }
-        Err(e) => return Err(e),
-    };
+    let mut last_err = None;
 
-    if !use_tls {
-        return Ok(Connection::Plain(tcp_stream));
+    for attempt in 0..MAX_CONNECT_RETRIES {
+        let allow_cache = attempt == 0;
+        let (addrs, from_cache) = match resolve_host(host, port, allow_cache).await {
+            Ok(res) => res,
+            Err(e) => {
+                last_err = Some(e);
+                continue;
+            }
+        };
+
+        let tcp_stream = match connect_tcp(&addrs, options.connect_timeout).await {
+            Ok(stream) => stream,
+            Err(_e) if from_cache => {
+                // Invalidate stale DNS cache and retry fresh lookup
+                tracing::debug!("Cached DNS failed for {}:{}, re-resolving...", host, port);
+                DnsCache::global().invalidate(host, port);
+                match resolve_host(host, port, false).await {
+                    Ok((fresh_addrs, _)) => match connect_tcp(&fresh_addrs, options.connect_timeout).await {
+                        Ok(stream) => stream,
+                        Err(fresh_err) => {
+                            last_err = Some(fresh_err);
+                            if attempt + 1 < MAX_CONNECT_RETRIES {
+                                let backoff_ms = (50 * (1 << attempt)).min(500);
+                                tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+                            }
+                            continue;
+                        }
+                    },
+                    Err(dns_err) => {
+                        last_err = Some(dns_err);
+                        continue;
+                    }
+                }
+            }
+            Err(e) => {
+                last_err = Some(e);
+                if attempt + 1 < MAX_CONNECT_RETRIES {
+                    let backoff_ms = (50 * (1 << attempt)).min(500);
+                    tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+                }
+                continue;
+            }
+        };
+
+        if !use_tls {
+            return Ok(Connection::Plain(tcp_stream));
+        }
+
+        let config = match get_tls_config(options.verify_certs) {
+            Ok(cfg) => cfg,
+            Err(e) => return Err(e),
+        };
+        let connector = TlsConnector::from(config);
+        let server_name = match ServerName::try_from(host.to_string()) {
+            Ok(sn) => sn,
+            Err(_) => return Err(anyhow!("Invalid DNS name: {}", host)),
+        };
+
+        let handshake_timeout = options.connect_timeout.min(Duration::from_secs(5));
+        match timeout(handshake_timeout, connector.connect(server_name, tcp_stream)).await {
+            Ok(Ok(tls_stream)) => return Ok(Connection::Tls(Box::new(tls_stream))),
+            Ok(Err(e)) => {
+                tracing::warn!(
+                    "TLS handshake to {}:{} failed (attempt {}/{}): {}",
+                    host,
+                    port,
+                    attempt + 1,
+                    MAX_CONNECT_RETRIES,
+                    e
+                );
+                DnsCache::global().invalidate(host, port);
+                last_err = Some(anyhow!("TLS handshake failed: {}", e));
+            }
+            Err(_) => {
+                tracing::warn!(
+                    "TLS handshake to {}:{} timed out (attempt {}/{})",
+                    host,
+                    port,
+                    attempt + 1,
+                    MAX_CONNECT_RETRIES
+                );
+                DnsCache::global().invalidate(host, port);
+                last_err = Some(anyhow!("TLS handshake timed out"));
+            }
+        }
+
+        if attempt + 1 < MAX_CONNECT_RETRIES {
+            let backoff_ms = (50 * (1 << attempt)).min(500);
+            tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+        }
     }
 
-    let config = get_tls_config(options.verify_certs)?;
-    let connector = TlsConnector::from(config);
-    let server_name = ServerName::try_from(host.to_string())
-        .map_err(|_| anyhow!("Invalid DNS name: {}", host))?;
-
-    let tls_stream = connector.connect(server_name, tcp_stream).await?;
-    Ok(Connection::Tls(Box::new(tls_stream)))
+    Err(last_err.unwrap_or_else(|| anyhow!("Connection to {}:{} failed after {} attempts", host, port, MAX_CONNECT_RETRIES)))
 }
 
 #[cfg(test)]

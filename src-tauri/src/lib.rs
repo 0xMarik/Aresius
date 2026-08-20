@@ -21,7 +21,7 @@ use crate::fuzzer::combinatorial::execute_combinatorial_fuzzing;
 use crate::fuzzer::echo::execute_echo_fuzzing;
 use crate::fuzzer::engine::{
     cancel_fuzzing, get_fuzzer_history_window, get_fuzzer_request_by_id,
-    resend_failed_fuzz_requests, resend_fuzz_request, resend_worker_fuzz_requests,
+    resend_failed_fuzz_requests, resend_fuzz_request,
 };
 use crate::ares_utils::database::fuzzer::{
     create_fuzzer_session_db, delete_fuzzer_history_db, delete_fuzzer_session_db,
@@ -81,7 +81,6 @@ pub fn run() {
             cancel_fuzzing,
             resend_fuzz_request,
             resend_failed_fuzz_requests,
-            resend_worker_fuzz_requests,
             get_fuzzer_history_window,
             get_fuzzer_request_by_id,
             get_fuzzer_project_data,

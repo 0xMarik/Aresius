@@ -1,20 +1,12 @@
 import { useAppDispatch, useAppSelector } from '@/hooks/redux';
 import { useProjectId } from '@/hooks/useProjectId';
-import { markFailedRequestsPending, markRequestPending, markWorkerRequestsPending } from '@/store/slices/fuzzerSlice';
+import { markFailedRequestsPending, markRequestPending } from '@/store/slices/fuzzerSlice';
 import { FuzzRunState } from '@/types/fuzzer.type';
 import { invoke } from '@tauri-apps/api/core';
-import { Activity, AlertTriangle, ChevronDown, Cpu, RotateCcw, Square, WifiOff, Globe, Play } from 'lucide-react';
+import { Activity, AlertTriangle, Cpu, RotateCcw, Square, WifiOff, Globe, Play } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
-import {
-    DropdownMenu,
-    DropdownMenuContent,
-    DropdownMenuItem,
-    DropdownMenuLabel,
-    DropdownMenuSeparator,
-    DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import { selectActiveScope } from '@/store/slices/scopeSlice';
 import { isInScope } from '@/lib/scopeMatcher';
 import { useMemo } from 'react';
@@ -38,6 +30,7 @@ export function FuzzerRunToolbar({
     historyIndex,
     runState,
     targetUrl,
+    numThreads,
     delayMs,
     failedCount,
 }: FuzzerRunToolbarProps) {
@@ -62,9 +55,6 @@ export function FuzzerRunToolbar({
         : 0;
 
     const remainingCount = Math.max(0, runState.total - runState.completed);
-
-    const workers = runState.workers ?? [];
-    const droppedWorkersCount = workers.filter((w) => w.status === 'dropped').length;
 
     const statusLabel: Record<FuzzRunState['status'], string> = {
         idle: 'Idle',
@@ -100,26 +90,6 @@ export function FuzzerRunToolbar({
             });
         } catch (err) {
             console.error('Failed to resume requests:', err);
-        }
-    };
-
-    const handleResendWorker = async (workerId: number) => {
-        if (!projectId) return;
-        dispatch(markWorkerRequestsPending({ sessionIndex, historyIndex, workerId, projectId }));
-        const normalizedUrl = stripPath(targetUrl);
-
-        try {
-            await invoke('resend_worker_fuzz_requests', {
-                url: normalizedUrl,
-                selectedSession: sessionIndex,
-                fuzzHistory: historyIndex,
-                workerId,
-                delayMs,
-                alreadyCompleted: runState.completed,
-                overallTotal: runState.total,
-            });
-        } catch (err) {
-            console.error('Failed to resend worker requests:', err);
         }
     };
 
@@ -182,52 +152,10 @@ export function FuzzerRunToolbar({
 
                 {/* Right: Actions / Controls */}
                 <div className="flex items-center gap-2 shrink-0">
-                    {workers.length > 0 && (
-                        <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                                <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs font-medium border-border/50">
-                                    <Cpu className="w-3.5 h-3.5 text-muted-foreground" />
-                                    <span>Workers ({workers.length})</span>
-                                    {droppedWorkersCount > 0 && (
-                                        <span className="rounded-full bg-rose-500/15 text-rose-700 dark:text-rose-400 px-1.5 py-0.2 text-[10px] font-bold">
-                                            {droppedWorkersCount} dropped
-                                        </span>
-                                    )}
-                                    <ChevronDown className="w-3 h-3 text-muted-foreground/70 ml-0.5" />
-                                </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end" className="w-56 text-xs">
-                                <DropdownMenuLabel className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
-                                    Worker Threads
-                                </DropdownMenuLabel>
-                                <DropdownMenuSeparator />
-                                {workers.map((w) => (
-                                    <DropdownMenuItem
-                                        key={w.workerId}
-                                        className="flex items-center justify-between text-xs cursor-pointer py-1.5"
-                                        onClick={() => {
-                                            if (w.status === 'dropped' || w.status === 'completed' || w.status === 'pending') {
-                                                handleResendWorker(w.workerId);
-                                            }
-                                        }}
-                                    >
-                                        <div className="flex items-center gap-2">
-                                            <span className={cn(
-                                                "w-2 h-2 rounded-full",
-                                                w.status === 'running' ? 'bg-emerald-500 animate-pulse' :
-                                                    w.status === 'dropped' ? 'bg-rose-500' :
-                                                        w.status === 'completed' ? 'bg-emerald-500/60' : 'bg-muted-foreground/40'
-                                            )} />
-                                            <span>Worker #{w.workerId + 1}</span>
-                                        </div>
-                                        <span className="text-[11px] text-muted-foreground font-mono">
-                                            {w.completed}/{w.total}
-                                        </span>
-                                    </DropdownMenuItem>
-                                ))}
-                            </DropdownMenuContent>
-                        </DropdownMenu>
-                    )}
+                    <Badge variant="secondary" className="h-7 px-2.5 text-xs font-mono gap-1.5 border border-border/40">
+                        <Cpu className="w-3.5 h-3.5 text-muted-foreground" />
+                        <span>{numThreads || 1} {numThreads === 1 ? 'Thread' : 'Threads'}</span>
+                    </Badge>
 
                     {/* Resume Button when stopped with unfinished requests */}
                     {!isRunning && runState.status === 'cancelled' && remainingCount > 0 && (

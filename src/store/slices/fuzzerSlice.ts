@@ -1,5 +1,5 @@
-import { FuzzProgressUpdate, FuzzWorkerUpdate } from '@/App';
-import { FuzzingHistory, FuzzerParameter, FuzzerSession, FuzzerState, HighlightRange, FuzzingAttackType, assignWorkerIds, buildInitialWorkers, initialFuzzRunState } from '@/types/fuzzer.type';
+import { FuzzProgressUpdate } from '@/App';
+import { FuzzingHistory, FuzzerParameter, FuzzerSession, FuzzerState, HighlightRange, FuzzingAttackType } from '@/types/fuzzer.type';
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 import type { RootState } from '@/store';
 import { deleteProject, setcurrentProjectId } from './projectSlice';
@@ -180,7 +180,7 @@ export const fuzzerSlice = createSlice({
       state,
       action: PayloadAction<FuzzProgressUpdate & { projectId: string }>
     ) => {
-      const { selectedSession, fuzzHistory, completed, total, status, connectionDropped, projectId } = action.payload;
+      const { selectedSession, fuzzHistory, completed, total, failed, status, connectionDropped, projectId } = action.payload;
       const bucket = getBucket(state, projectId);
       const history = bucket.fuzzerSessions[selectedSession]?.fuzzingHistory[fuzzHistory];
       if (!history) return;
@@ -200,44 +200,9 @@ export const fuzzerSlice = createSlice({
         status: status as FuzzingHistory['runState']['status'],
         total: newTotal,
         completed: newCompleted,
+        failed: failed !== undefined ? failed : (existingRunState.failed ?? 0),
         connectionDropped,
-        workers: existingRunState.workers ?? [],
       };
-    },
-
-    updateFuzzWorkerProgress: (
-      state,
-      action: PayloadAction<FuzzWorkerUpdate & { projectId: string }>
-    ) => {
-      const { selectedSession, fuzzHistory, workerId, status, completed, total, message, projectId } = action.payload;
-      const bucket = getBucket(state, projectId);
-      const history = bucket.fuzzerSessions[selectedSession]?.fuzzingHistory[fuzzHistory];
-      if (!history) return;
-
-      if (!history.runState) {
-        history.runState = initialFuzzRunState();
-      }
-
-      let worker = history.runState.workers.find((w) => w.workerId === workerId);
-      if (!worker) {
-        worker = {
-          workerId,
-          status,
-          completed,
-          total,
-          errorMessage: message,
-        };
-        history.runState.workers.push(worker);
-      } else {
-        worker.status = status;
-        worker.completed = completed;
-        worker.total = total;
-        if (message) worker.errorMessage = message;
-      }
-
-      if (status === 'dropped') {
-        history.runState.connectionDropped = true;
-      }
     },
 
     markRequestPending: (
@@ -255,26 +220,6 @@ export const fuzzerSlice = createSlice({
           completedBase: history.runState.completed,
         };
       }
-    },
-
-    markWorkerRequestsPending: (
-      state,
-      action: PayloadAction<{ sessionIndex: number; historyIndex: number; workerId: number; projectId: string }>
-    ) => {
-      const { sessionIndex, historyIndex, workerId, projectId } = action.payload;
-      const bucket = getBucket(state, projectId);
-      const history = bucket.fuzzerSessions[sessionIndex]?.fuzzingHistory[historyIndex];
-      if (!history) return;
-
-      const worker = history.runState.workers.find((w) => w.workerId === workerId);
-      if (worker) {
-        worker.status = 'running';
-        worker.errorMessage = undefined;
-      }
-
-      history.runState.status = 'running';
-      history.runState.completedBase = history.runState.completed;
-      history.runState.connectionDropped = history.runState.workers.some((w) => w.status === 'dropped');
     },
 
     markFailedRequestsPending: (
@@ -303,17 +248,13 @@ export const fuzzerSlice = createSlice({
       const history = bucket.fuzzerSessions[sessionIndex]?.fuzzingHistory[historyIndex];
       if (!history) return;
 
-      const numThreads = history.fuzzConfigSnapshot.numThreads || 1;
-      const targetsWithWorkers = assignWorkerIds(targets, numThreads);
-      const initialWorkers = buildInitialWorkers(targetsWithWorkers);
-
       history.requests = [];
       history.runState = {
         status: 'running',
         total: targets.length,
         completed: 0,
+        failed: 0,
         connectionDropped: false,
-        workers: initialWorkers,
         completedBase: 0,
       };
     },
@@ -492,9 +433,7 @@ export const fuzzerSlice = createSlice({
 export const {
   setActiveSession,
   updateFuzzProgress,
-  updateFuzzWorkerProgress,
   markRequestPending,
-  markWorkerRequestsPending,
   markFailedRequestsPending,
   setFuzzRunTargets,
   addFuzzSession,
@@ -698,15 +637,9 @@ export const fetchFuzzerDataForProject = (projectId: string) => async (dispatch:
                 status: r.run.status,
                 completed: r.run.completed,
                 total: r.run.total,
+                failed: 0,
                 completedBase: r.run.completedBase,
                 connectionDropped: Boolean(r.run.connectionDropped),
-                workers: (r.workers || []).map((w: any) => ({
-                  workerId: w.workerId,
-                  status: w.status,
-                  total: w.total,
-                  completed: w.completed,
-                  errorMessage: w.errorMessage,
-                })),
               },
             };
           }),

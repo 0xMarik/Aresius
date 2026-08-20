@@ -20,22 +20,12 @@ export interface FuzzerRequest {
 
 export type FuzzRunStatus = 'idle' | 'running' | 'completed' | 'cancelled' | 'connection_dropped';
 
-export type FuzzWorkerStatus = 'pending' | 'connected' | 'running' | 'dropped' | 'completed';
-
-export interface FuzzWorkerState {
-    workerId: number;
-    status: FuzzWorkerStatus;
-    total: number;
-    completed: number;
-    errorMessage?: string;
-}
-
 export interface FuzzRunState {
     status: FuzzRunStatus;
     total: number;
     completed: number;
+    failed: number;
     connectionDropped: boolean;
-    workers: FuzzWorkerState[];
     /** Offset of already-completed requests from a prior run, used during resend to avoid double-counting. */
     completedBase: number;
 }
@@ -108,37 +98,7 @@ export const initialFuzzRunState = (): FuzzRunState => ({
     status: 'idle',
     total: 0,
     completed: 0,
+    failed: 0,
     connectionDropped: false,
-    workers: [],
     completedBase: 0,
 });
-
-/** Must match backend chunking: ceil(len / numThreads) per worker. */
-export function assignWorkerIds<T extends { id: string }>(
-    targets: T[],
-    numThreads: number,
-): (T & { workerId: number })[] {
-    if (targets.length === 0) return [];
-    const chunkSize = Math.max(1, Math.ceil(targets.length / Math.max(1, numThreads)));
-    return targets.map((target, index) => ({
-        ...target,
-        workerId: Math.floor(index / chunkSize),
-    }));
-}
-
-export function buildInitialWorkers(
-    targets: { workerId: number }[],
-): FuzzWorkerState[] {
-    const byWorker = new Map<number, number>();
-    for (const target of targets) {
-        byWorker.set(target.workerId, (byWorker.get(target.workerId) ?? 0) + 1);
-    }
-    return [...byWorker.entries()]
-        .sort(([a], [b]) => a - b)
-        .map(([workerId, total]) => ({
-            workerId,
-            status: 'pending' as const,
-            total,
-            completed: 0,
-        }));
-}

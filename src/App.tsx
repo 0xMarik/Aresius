@@ -14,7 +14,7 @@ import { listen } from "@tauri-apps/api/event";
 import { addToHttpHistory } from "./store/slices/http-historySlice";
 import { useInterceptPoller } from "./hooks/useInterceptPoller";
 import MenubarDemo from "./components/MenuBar";
-import { updateFuzzProgress, updateFuzzWorkerProgress } from "./store/slices/fuzzerSlice";
+import { updateFuzzProgress } from "./store/slices/fuzzerSlice";
 import { updateSiteMap } from "./store/slices/sitemapSlice";
 import { HttpHistory } from "./types/http.type";
 
@@ -46,18 +46,9 @@ export type FuzzProgressUpdate = {
     fuzzHistory: number;
     completed: number;
     total: number;
+    failed?: number;
     status: 'running' | 'completed' | 'cancelled' | 'connection_dropped';
     connectionDropped: boolean;
-};
-
-export type FuzzWorkerUpdate = {
-    selectedSession: number;
-    fuzzHistory: number;
-    workerId: number;
-    status: 'pending' | 'connected' | 'running' | 'dropped' | 'completed';
-    completed: number;
-    total: number;
-    message?: string;
 };
 
 type ProjectSummary = {
@@ -104,19 +95,6 @@ export default function App() {
             const projectId = store.getState().workspacestate.currentProjectId;
             if (projectId) {
                 dispatch(updateFuzzProgress({ ...event.payload, projectId }));
-            }
-        });
-
-        return () => {
-            unlisten.then((f) => f());
-        };
-    }, [dispatch]);
-
-    useEffect(() => {
-        const unlisten = listen<FuzzWorkerUpdate>("fuzz-worker-update", (event) => {
-            const projectId = store.getState().workspacestate.currentProjectId;
-            if (projectId) {
-                dispatch(updateFuzzWorkerProgress({ ...event.payload, projectId }));
             }
         });
 
