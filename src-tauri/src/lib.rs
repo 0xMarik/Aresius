@@ -50,6 +50,12 @@ use crate::ares_utils::database::scope::{
     save_interceptor_settings_db, set_active_scope_db, set_scope_color_db,
 };
 
+use crate::proxy::MatchReplaceEngine;
+use crate::commands::match_replace::{
+    delete_match_replace_collection, delete_match_replace_rule, get_match_replace,
+    save_match_replace_collection, save_match_replace_rule, sync_match_replace_engine,
+    toggle_match_replace_rule,
+};
 use crate::ares_utils::database::sitemap::{get_sitemap_state_db, save_sitemap_state_db};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -69,10 +75,19 @@ pub fn run() {
         .manage(CertCache::new())
         .manage(HistoryIdCounter::new())
         .manage(DbState::new())
+        .manage(MatchReplaceEngine::new())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .setup(app_setup::setup)
         .invoke_handler(tauri::generate_handler![
+            // Match & Replace
+            get_match_replace,
+            save_match_replace_rule,
+            toggle_match_replace_rule,
+            delete_match_replace_rule,
+            save_match_replace_collection,
+            delete_match_replace_collection,
+            sync_match_replace_engine,
             // Fuzzer
             execute_rotator_fuzzing,
             execute_zipped_fuzzing,

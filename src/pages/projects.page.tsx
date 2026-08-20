@@ -33,6 +33,7 @@ import { HttpHistorySummaryRow } from "@/types/http.type"
 import { setcurrentProjectId, setProjects, deleteProject, updateProject } from "@/store/slices/projectSlice"
 import { setSiteMapBulk, fetchSitemapStateForProject } from "@/store/slices/sitemapSlice"
 import { fetchScopeDataForProject } from "@/store/slices/scopeSlice"
+import { fetchMatchReplaceDataForProject } from "@/store/slices/matchReplaceSlice"
 import AddProjectDialog from "@/components/add-project-dialog.component"
 import { invoke } from "@tauri-apps/api/core"
 import { toast } from "sonner"
@@ -146,6 +147,12 @@ export default function Projects() {
         dispatch(fetchSitemapStateForProject(id) as any)
       } catch (err) {
         console.warn("Could not load persisted Sitemap state:", err)
+      }
+
+      try {
+        dispatch(fetchMatchReplaceDataForProject(id) as any)
+      } catch (err) {
+        console.warn("Could not load persisted Match & Replace data:", err)
       }
     } catch (err) {
       console.error("Failed to select/mount project:", err)

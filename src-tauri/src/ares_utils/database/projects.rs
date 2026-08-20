@@ -70,6 +70,9 @@ pub async fn create_project(
         .await
         .map_err(|e| format!("Failed to fetch created project: {e}"))?;
 
+    // Seed default Match & Replace rules
+    let _ = crate::ares_utils::database::match_replace::seed_default_match_replace_rules(&pool, &id).await;
+
     // 4. Close the project pool (project is only mounted when selected)
     pool.close().await;
 

@@ -20,9 +20,11 @@ use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 pub mod interceptor;
+pub mod match_replace;
 pub mod utils;
 
 pub use interceptor::*;
+pub use match_replace::*;
 
 /// Hard cap on a single request/response we'll buffer in memory.
 /// Protects against unbounded growth on malformed or malicious framing.
@@ -288,6 +290,18 @@ async fn handle_connect(
         // handled below for responses.
         let mut outgoing_request_bytes = raw_request.clone();
         let req_meta_init = parse_request_line(&raw_request);
+        let is_req_in_scope = intercept_state.is_url_in_scope(&target, &req_meta_init.path).await;
+
+        let match_replace_engine: tauri::State<MatchReplaceEngine> = app_handle.state();
+        if match_replace_engine.has_request_rules(is_req_in_scope).await {
+            let (mr_bytes, did_modify) = match_replace_engine
+                .apply_request_transformations(&outgoing_request_bytes, is_req_in_scope)
+                .await;
+            if did_modify {
+                outgoing_request_bytes = mr_bytes;
+            }
+        }
+
         if intercept_state
             .should_intercept(InterceptItemType::Request, &target, &req_meta_init.path)
             .await
@@ -380,12 +394,64 @@ async fn handle_connect(
         outgoing_response_bytes.extend_from_slice(&response.body);
 
         let req_meta = parse_request_line(&outgoing_request_bytes);
+        let is_res_in_scope = intercept_state.is_url_in_scope(&target, &req_meta.path).await;
+
+        let has_body_mr = match_replace_engine.has_response_body_rules(is_res_in_scope).await;
+        let has_header_mr = match_replace_engine.has_response_header_rules(is_res_in_scope).await;
+        let mut pre_decoded_response_text: Option<String> = None;
+
+        if has_body_mr {
+            // Decode body, apply replacements, and forward uncompressed to browser
+            let limits = crate::ares_utils::body_decoder::DecodeLimits::default();
+            let decoded = crate::ares_utils::body_decoder::decode_response(
+                &response.headers,
+                response.body.clone(),
+                &limits,
+            );
+            let body_str = String::from_utf8_lossy(&decoded.body);
+            let (mod_body_str, _) = match_replace_engine
+                .apply_response_body_transformations(&body_str, is_res_in_scope)
+                .await;
+
+            let mut header_str = decoded.headers;
+            if has_header_mr {
+                let (mod_headers, _) = match_replace_engine
+                    .apply_response_header_transformations(&header_str, is_res_in_scope)
+                    .await;
+                header_str = mod_headers;
+            }
+
+            let final_headers = crate::ares_utils::body_decoder::rewrite_headers(
+                &header_str,
+                mod_body_str.as_bytes().len(),
+                true,
+            );
+
+            let mut final_wire_bytes = final_headers.as_bytes().to_vec();
+            final_wire_bytes.extend_from_slice(mod_body_str.as_bytes());
+            outgoing_response_bytes = final_wire_bytes;
+            pre_decoded_response_text = Some(format!("{}{}", final_headers, mod_body_str));
+        } else if has_header_mr {
+            // Keep body compressed, modify only header block
+            let (mod_headers, did_mod) = match_replace_engine
+                .apply_response_header_transformations(&response.headers, is_res_in_scope)
+                .await;
+            if did_mod {
+                let mut final_wire_bytes = mod_headers.as_bytes().to_vec();
+                final_wire_bytes.extend_from_slice(&response.body);
+                outgoing_response_bytes = final_wire_bytes;
+            }
+        }
+
         if intercept_state
             .should_intercept(InterceptItemType::Response, &target, &req_meta.path)
             .await
         {
-            let mut final_response_text =
-                decode_for_display(&response.headers, &response.body, &connection_options);
+            let mut final_response_text = if let Some(ref pre) = pre_decoded_response_text {
+                pre.clone()
+            } else {
+                decode_for_display(&response.headers, &response.body, &connection_options)
+            };
             let res_id = Uuid::new_v4().to_string();
             let item = InterceptItem {
                 id: res_id.clone(),
@@ -482,11 +548,15 @@ async fn handle_connect(
             let response_body_bg = response.body;
 
             tokio::spawn(async move {
-                let final_response_text = tokio::task::spawn_blocking(move || {
-                    decode_for_display(&response_headers_bg, &response_body_bg, &connection_options_bg)
-                })
-                .await
-                .unwrap_or_default();
+                let final_response_text = if let Some(pre) = pre_decoded_response_text {
+                    pre
+                } else {
+                    tokio::task::spawn_blocking(move || {
+                        decode_for_display(&response_headers_bg, &response_body_bg, &connection_options_bg)
+                    })
+                    .await
+                    .unwrap_or_default()
+                };
 
                 let (response_head, response_body) = split_message(&final_response_text);
                 let status = parse_status_code(response_head);
@@ -624,6 +694,18 @@ async fn handle_http_request(
         // upstream -- see identical note in `handle_connect`.
         let mut outgoing_request_bytes = raw_request.clone();
         let req_meta_init = parse_request_line(&raw_request);
+        let is_req_in_scope = intercept_state.is_url_in_scope(&target, &req_meta_init.path).await;
+
+        let match_replace_engine: tauri::State<MatchReplaceEngine> = app_handle.state();
+        if match_replace_engine.has_request_rules(is_req_in_scope).await {
+            let (mr_bytes, did_modify) = match_replace_engine
+                .apply_request_transformations(&outgoing_request_bytes, is_req_in_scope)
+                .await;
+            if did_modify {
+                outgoing_request_bytes = mr_bytes;
+            }
+        }
+
         if intercept_state
             .should_intercept(InterceptItemType::Request, &target, &req_meta_init.path)
             .await
@@ -704,12 +786,64 @@ async fn handle_http_request(
         outgoing_response_bytes.extend_from_slice(&response.body);
 
         let req_meta = parse_request_line(&outgoing_request_bytes);
+        let is_res_in_scope = intercept_state.is_url_in_scope(&target, &req_meta.path).await;
+
+        let has_body_mr = match_replace_engine.has_response_body_rules(is_res_in_scope).await;
+        let has_header_mr = match_replace_engine.has_response_header_rules(is_res_in_scope).await;
+        let mut pre_decoded_response_text: Option<String> = None;
+
+        if has_body_mr {
+            // Decode body, apply replacements, and forward uncompressed to browser
+            let limits = crate::ares_utils::body_decoder::DecodeLimits::default();
+            let decoded = crate::ares_utils::body_decoder::decode_response(
+                &response.headers,
+                response.body.clone(),
+                &limits,
+            );
+            let body_str = String::from_utf8_lossy(&decoded.body);
+            let (mod_body_str, _) = match_replace_engine
+                .apply_response_body_transformations(&body_str, is_res_in_scope)
+                .await;
+
+            let mut header_str = decoded.headers;
+            if has_header_mr {
+                let (mod_headers, _) = match_replace_engine
+                    .apply_response_header_transformations(&header_str, is_res_in_scope)
+                    .await;
+                header_str = mod_headers;
+            }
+
+            let final_headers = crate::ares_utils::body_decoder::rewrite_headers(
+                &header_str,
+                mod_body_str.as_bytes().len(),
+                true,
+            );
+
+            let mut final_wire_bytes = final_headers.as_bytes().to_vec();
+            final_wire_bytes.extend_from_slice(mod_body_str.as_bytes());
+            outgoing_response_bytes = final_wire_bytes;
+            pre_decoded_response_text = Some(format!("{}{}", final_headers, mod_body_str));
+        } else if has_header_mr {
+            // Keep body compressed, modify only header block
+            let (mod_headers, did_mod) = match_replace_engine
+                .apply_response_header_transformations(&response.headers, is_res_in_scope)
+                .await;
+            if did_mod {
+                let mut final_wire_bytes = mod_headers.as_bytes().to_vec();
+                final_wire_bytes.extend_from_slice(&response.body);
+                outgoing_response_bytes = final_wire_bytes;
+            }
+        }
+
         if intercept_state
             .should_intercept(InterceptItemType::Response, &target, &req_meta.path)
             .await
         {
-            let mut final_response_text =
-                decode_for_display(&response.headers, &response.body, &connection_options);
+            let mut final_response_text = if let Some(ref pre) = pre_decoded_response_text {
+                pre.clone()
+            } else {
+                decode_for_display(&response.headers, &response.body, &connection_options)
+            };
             let res_id = Uuid::new_v4().to_string();
             let item = InterceptItem {
                 id: res_id.clone(),
@@ -809,11 +943,15 @@ async fn handle_http_request(
             let response_body_bg = response.body;
 
             tokio::spawn(async move {
-                let final_response_text = tokio::task::spawn_blocking(move || {
-                    decode_for_display(&response_headers_bg, &response_body_bg, &connection_options_bg)
-                })
-                .await
-                .unwrap_or_default();
+                let final_response_text = if let Some(pre) = pre_decoded_response_text {
+                    pre
+                } else {
+                    tokio::task::spawn_blocking(move || {
+                        decode_for_display(&response_headers_bg, &response_body_bg, &connection_options_bg)
+                    })
+                    .await
+                    .unwrap_or_default()
+                };
 
                 let (response_head, response_body) = split_message(&final_response_text);
                 let status_code = parse_status_code(response_head);

@@ -1,5 +1,5 @@
 use crate::ares_utils::database::DbState;
-use crate::proxy::interceptor::is_regex_pattern;
+use crate::proxy::interceptor::{is_regex_pattern, ActiveScope, InterceptState, ScopeRule};
 use serde::{Deserialize, Serialize};
 use sqlx::types::chrono;
 use tauri::State;
@@ -65,14 +65,78 @@ pub struct DbInterceptorSettings {
     pub updated_at: i64,
 }
 
+/// Synchronizes the project's active scope definition into the proxy engine in memory.
+pub async fn sync_active_scope_to_interceptor(
+    pool: &sqlx::SqlitePool,
+    project_id: &str,
+    intercept_state: &InterceptState,
+) -> Result<(), String> {
+    let active_scope_row = sqlx::query_as::<_, DbScopeRow>(
+        "SELECT id, project_id, name, color, is_active, created_at, updated_at
+         FROM scopes
+         WHERE project_id = ? AND is_active = 1
+         LIMIT 1",
+    )
+    .bind(project_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| format!("Failed to query active scope: {e}"))?;
+
+    let active_scope = if let Some(scope_row) = active_scope_row {
+        let rules_rows = sqlx::query_as::<_, DbScopeRuleRow>(
+            "SELECT id, scope_id, rule_type, pattern, pattern_type, enabled, order_index, created_at
+             FROM scope_rules
+             WHERE scope_id = ? AND enabled = 1
+             ORDER BY order_index ASC, created_at ASC",
+        )
+        .bind(&scope_row.id)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| format!("Failed to query active scope rules: {e}"))?;
+
+        let mut allow = Vec::new();
+        let mut deny = Vec::new();
+        for r in rules_rows {
+            let item = ScopeRule {
+                id: r.id,
+                pattern: r.pattern,
+            };
+            if r.rule_type == "allow" {
+                allow.push(item);
+            } else {
+                deny.push(item);
+            }
+        }
+
+        Some(ActiveScope {
+            id: scope_row.id,
+            name: scope_row.name,
+            color: scope_row.color,
+            allow,
+            deny,
+        })
+    } else {
+        None
+    };
+
+    let mut settings = intercept_state.settings.write().await;
+    settings.active_scope = active_scope;
+
+    Ok(())
+}
+
 // ─── Scope Query Commands ───────────────────────────────────────────────────
 
 #[tauri::command]
 pub async fn get_scope_project_data(
     db: State<'_, DbState>,
+    intercept_state: State<'_, InterceptState>,
     project_id: String,
 ) -> Result<ScopeProjectData, String> {
     let pool = db.pool().await?;
+
+    // Keep proxy engine in sync with the active scope in DB
+    let _ = sync_active_scope_to_interceptor(&pool, &project_id, &intercept_state).await;
 
     let scopes_rows = sqlx::query_as::<_, DbScopeRow>(
         "SELECT id, project_id, name, color, is_active, created_at, updated_at
@@ -165,15 +229,27 @@ pub async fn create_scope_db(
 #[tauri::command]
 pub async fn delete_scope_db(
     db: State<'_, DbState>,
+    intercept_state: State<'_, InterceptState>,
     scope_id: String,
 ) -> Result<(), String> {
     let pool = db.pool().await?;
+
+    let proj: Option<(String,)> = sqlx::query_as("SELECT project_id FROM scopes WHERE id = ?")
+        .bind(&scope_id)
+        .fetch_optional(&pool)
+        .await
+        .ok()
+        .flatten();
 
     sqlx::query("DELETE FROM scopes WHERE id = ?")
         .bind(&scope_id)
         .execute(&pool)
         .await
         .map_err(|e| format!("Failed to delete scope: {e}"))?;
+
+    if let Some((project_id,)) = proj {
+        let _ = sync_active_scope_to_interceptor(&pool, &project_id, &intercept_state).await;
+    }
 
     Ok(())
 }
@@ -221,6 +297,7 @@ pub async fn set_scope_color_db(
 #[tauri::command]
 pub async fn set_active_scope_db(
     db: State<'_, DbState>,
+    intercept_state: State<'_, InterceptState>,
     project_id: String,
     scope_id: Option<String>,
 ) -> Result<(), String> {
@@ -255,12 +332,15 @@ pub async fn set_active_scope_db(
         .await
         .map_err(|e| format!("Failed to commit active scope change: {e}"))?;
 
+    let _ = sync_active_scope_to_interceptor(&pool, &project_id, &intercept_state).await;
+
     Ok(())
 }
 
 #[tauri::command]
 pub async fn add_scope_rule_db(
     db: State<'_, DbState>,
+    intercept_state: State<'_, InterceptState>,
     rule_id: String,
     scope_id: String,
     rule_type: String,
@@ -273,6 +353,13 @@ pub async fn add_scope_rule_db(
     } else {
         "glob"
     };
+
+    let proj: Option<(String,)> = sqlx::query_as("SELECT project_id FROM scopes WHERE id = ?")
+        .bind(&scope_id)
+        .fetch_optional(&pool)
+        .await
+        .ok()
+        .flatten();
 
     sqlx::query(
         "INSERT INTO scope_rules (id, scope_id, rule_type, pattern, pattern_type, enabled, order_index, created_at)
@@ -289,21 +376,39 @@ pub async fn add_scope_rule_db(
     .await
     .map_err(|e| format!("Failed to insert scope rule: {e}"))?;
 
+    if let Some((project_id,)) = proj {
+        let _ = sync_active_scope_to_interceptor(&pool, &project_id, &intercept_state).await;
+    }
+
     Ok(())
 }
 
 #[tauri::command]
 pub async fn remove_scope_rule_db(
     db: State<'_, DbState>,
+    intercept_state: State<'_, InterceptState>,
     rule_id: String,
 ) -> Result<(), String> {
     let pool = db.pool().await?;
+
+    let scope_proj: Option<(String,)> = sqlx::query_as(
+        "SELECT s.project_id FROM scopes s JOIN scope_rules sr ON s.id = sr.scope_id WHERE sr.id = ?"
+    )
+    .bind(&rule_id)
+    .fetch_optional(&pool)
+    .await
+    .ok()
+    .flatten();
 
     sqlx::query("DELETE FROM scope_rules WHERE id = ?")
         .bind(&rule_id)
         .execute(&pool)
         .await
         .map_err(|e| format!("Failed to remove scope rule: {e}"))?;
+
+    if let Some((project_id,)) = scope_proj {
+        let _ = sync_active_scope_to_interceptor(&pool, &project_id, &intercept_state).await;
+    }
 
     Ok(())
 }
@@ -322,6 +427,7 @@ pub struct ImportScopeBatchPayload {
 #[tauri::command]
 pub async fn batch_import_scope_rules_db(
     db: State<'_, DbState>,
+    intercept_state: State<'_, InterceptState>,
     payload: ImportScopeBatchPayload,
 ) -> Result<String, String> {
     let pool = db.pool().await?;
@@ -411,6 +517,8 @@ pub async fn batch_import_scope_rules_db(
     tx.commit()
         .await
         .map_err(|e| format!("Failed to commit batch import: {e}"))?;
+
+    let _ = sync_active_scope_to_interceptor(&pool, &payload.project_id, &intercept_state).await;
 
     Ok(final_scope_id)
 }

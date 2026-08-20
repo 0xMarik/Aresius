@@ -7,6 +7,7 @@ import { Middleware } from '@reduxjs/toolkit'
 import interceptorReducer from './slices/interceptorSlice';
 import SiteMapReducer from './slices/sitemapSlice'
 import scopeReducer from './slices/scopeSlice'
+import matchReplaceReducer from './slices/matchReplaceSlice'
 
 import { projectDataMiddleware } from './projectDataMiddleware';
 
@@ -30,6 +31,7 @@ const store = configureStore({
     interceptor: interceptorReducer,
     sitemap: SiteMapReducer,
     scope: scopeReducer,
+    matchReplace: matchReplaceReducer,
   },
   middleware: (getDefaultMiddleware) =>
     getDefaultMiddleware({

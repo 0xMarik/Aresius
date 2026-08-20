@@ -336,7 +336,7 @@ pub fn url_matches_pattern(pattern: &str, host: &str, path: &str) -> bool {
 pub fn is_in_scope(scope: Option<&ActiveScope>, host: &str, path: &str) -> bool {
     let scope = match scope {
         Some(s) => s,
-        None => return true,
+        None => return false,
     };
     let compiled = CompiledScope::compile(scope);
     compiled.is_in_scope(host, path)
@@ -402,6 +402,12 @@ impl InterceptState {
         }
 
         true
+    }
+
+    pub async fn is_url_in_scope(&self, target_host: &str, path: &str) -> bool {
+        let settings = self.settings.read().await;
+        let host = target_host.split(':').next().unwrap_or(target_host);
+        is_in_scope(settings.active_scope.as_ref(), host, path)
     }
 
     pub async fn add_and_await(&self, item: InterceptItem) -> Option<InterceptDecision> {
@@ -618,8 +624,8 @@ mod tests {
             ],
         };
 
-        // No scope active -> everything in scope
-        assert!(is_in_scope(None, "anything.com", "/"));
+        // No scope active -> not in scope
+        assert!(!is_in_scope(None, "anything.com", "/"));
 
         // In scope via allow rule 1
         assert!(is_in_scope(Some(&scope), "app.example.com", "/test"));

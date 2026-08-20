@@ -10,7 +10,8 @@ import {
   Antenna,
   Logs,
   Crosshair,
-  ListTree
+  ListTree,
+  ArrowLeftRight
 } from "lucide-react"
 
 // import { NavMain } from '@/components/nav-main'
@@ -149,6 +150,10 @@ const data = {
     name: "HTTP History",
     url: "/http-history",
     icon: Logs,
+  }, {
+    name: "Match & Replace",
+    url: "/match-replace",
+    icon: ArrowLeftRight,
   }],
   workspace: [
     {
