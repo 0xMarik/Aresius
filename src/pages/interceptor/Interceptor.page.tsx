@@ -98,6 +98,12 @@ const RawMessageEditor: React.FC<RawMessageEditorProps> = ({
 }) => {
     const editorRef = useRef<HTMLDivElement>(null);
     const viewRef = useRef<EditorView | null>(null);
+    const onChangeRef = useRef(onChange);
+    const isInternalChangeRef = useRef(false);
+
+    useEffect(() => {
+        onChangeRef.current = onChange;
+    }, [onChange]);
 
     useEffect(() => {
         if (!editorRef.current) return;
@@ -126,13 +132,14 @@ const RawMessageEditor: React.FC<RawMessageEditorProps> = ({
 
         if (readOnly) {
             extensions.push(EditorState.readOnly.of(true));
-        } else if (onChange) {
+        } else {
             extensions.push(
                 EditorView.updateListener.of((update) => {
                     if (update.docChanged) {
                         const isExternal = update.transactions.some(tr => tr.annotation(interceptorExternalUpdateAnnotation));
                         if (!isExternal) {
-                            onChange(update.state.doc.sliceString(0, update.state.doc.length, '\r\n'));
+                            isInternalChangeRef.current = true;
+                            onChangeRef.current?.(update.state.doc.toString());
                         }
                     }
                 })
@@ -150,17 +157,26 @@ const RawMessageEditor: React.FC<RawMessageEditorProps> = ({
         });
     }, [isPretty, readOnly]);
 
-    // Sync external doc changes to editor without losing cursor position when possible
+    // Sync external doc changes to editor without losing cursor position
     useEffect(() => {
         if (viewRef.current) {
+            if (isInternalChangeRef.current) {
+                isInternalChangeRef.current = false;
+                return;
+            }
             const currentDoc = viewRef.current.state.doc.toString();
             if (currentDoc !== value) {
+                const currentSelection = viewRef.current.state.selection;
+                const newLength = value.length;
+                const anchor = Math.min(currentSelection.main.anchor, newLength);
+                const head = Math.min(currentSelection.main.head, newLength);
                 viewRef.current.dispatch({
                     changes: {
                         from: 0,
                         to: currentDoc.length,
                         insert: value,
                     },
+                    selection: { anchor, head },
                     annotations: interceptorExternalUpdateAnnotation.of(true),
                 });
             }
@@ -176,7 +192,7 @@ const RawMessageEditor: React.FC<RawMessageEditorProps> = ({
         };
     }, []);
 
-    return <div ref={editorRef} className="h-full w-full overflow-hidden " />;
+    return <div ref={editorRef} className="h-full w-full overflow-hidden" />;
 };
 
 /* -------------------------------------------------------------------------- */
