@@ -136,3 +136,50 @@ export function getActiveRulesForParam(session: FuzzerSession, param?: FuzzerPar
     }
     return session.fuzzConfig.pipelineRules ?? [];
 }
+
+/**
+ * Generates numerical payload sequence with start, end, step, and digit padding/capping.
+ */
+export function generateNumberPayloads(config: import('@/types/fuzzer.type').NumbersPayloadConfig): string[] {
+    const start = Number(config.start) || 0;
+    const end = Number(config.end) || 0;
+    const step = Number(config.step) > 0 ? Number(config.step) : 1;
+    const minDigits = Math.max(1, Number(config.minIntegerDigits) || 1);
+    let maxDigits = config.maxIntegerDigits !== undefined && config.maxIntegerDigits !== null && Number(config.maxIntegerDigits) > 0
+        ? Number(config.maxIntegerDigits)
+        : undefined;
+
+    if (maxDigits !== undefined && maxDigits < minDigits) {
+        maxDigits = minDigits;
+    }
+
+    if (start > end) return [];
+
+    const results: string[] = [];
+    const maxItems = 100000;
+    let current = start;
+    let count = 0;
+
+    while (current <= end && count < maxItems) {
+        let str = String(current);
+        if (minDigits > 1) {
+            str = str.padStart(minDigits, '0');
+        }
+        if (maxDigits && str.length > maxDigits) {
+            str = str.slice(-maxDigits);
+        }
+        results.push(str);
+        current += step;
+        count++;
+    }
+
+    return results;
+}
+
+/**
+ * Generates an array of empty/null payloads.
+ */
+export function generateNullPayloads(config: import('@/types/fuzzer.type').NullPayloadConfig): string[] {
+    const count = Math.max(1, Math.min(Number(config.count) || 1, 100000));
+    return new Array(count).fill('');
+}

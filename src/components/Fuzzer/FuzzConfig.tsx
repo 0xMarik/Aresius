@@ -6,12 +6,13 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@
 import { useAppDispatch, useAppSelector } from "@/hooks/redux";
 import { useProjectId } from "@/hooks/useProjectId";
 import { PayloadCodeEditor } from "./PayloadCodeEditor";
-import { loadValuesParam, setDelayMs, setNumThreads, setSelectedParameter, selectFuzzerState, persistFuzzerSession, setPipelineScope, addPipelineRule, updatePipelineRule, removePipelineRule, reorderPipelineRules } from "@/store/slices/fuzzerSlice";
-import { FuzzingAttackType, PreprocessingRule } from "@/types/fuzzer.type";
+import { loadValuesParam, setDelayMs, setNumThreads, setSelectedParameter, selectFuzzerState, persistFuzzerSession, setPipelineScope, addPipelineRule, updatePipelineRule, removePipelineRule, reorderPipelineRules, setPayloadSource, setNumbersConfig, setNullPayloadConfig } from "@/store/slices/fuzzerSlice";
+import { FuzzingAttackType, PreprocessingRule, PayloadSource, NumbersPayloadConfig, NullPayloadConfig } from "@/types/fuzzer.type";
 import { IconUpload } from "@tabler/icons-react";
 import { EmptyState } from "../ui/empty-state";
-import { ArrowRight, MousePointerClick } from "lucide-react";
+import { ArrowRight, MousePointerClick, Hash, CircleOff, FileText } from "lucide-react";
 import { PipelineProcessorTable } from "./PipelineProcessorTable";
+import { generateNumberPayloads } from "@/lib/fuzzerPreprocessing";
 import { cn } from "@/lib/utils";
 
 export default function PayloadConfigurator() {
@@ -52,9 +53,68 @@ export default function PayloadConfigurator() {
             : parameters.findIndex(param => param.highlightRange.id === selectedParam.highlightRange.id);
     }, [selectedParam, isOnePayload, parameters]);
 
+    const generatedNumbersPreview = useMemo(() => {
+        if (!selectedParam) return [];
+        const cfg = selectedParam.numbersConfig || { start: 1, end: 100, step: 1, minIntegerDigits: 1 };
+        return generateNumberPayloads(cfg);
+    }, [selectedParam?.numbersConfig]);
+
+    const getParamEffectiveCount = (param: (typeof parameters)[0] | undefined): number => {
+        if (!param) return 0;
+        if (param.payloadSource === 'numbers') {
+            const cfg = param.numbersConfig || { start: 1, end: 100, step: 1, minIntegerDigits: 1 };
+            return generateNumberPayloads(cfg).length;
+        }
+        if (param.payloadSource === 'null_payload') {
+            return param.nullPayloadConfig?.count ?? 10;
+        }
+        return param.values.length;
+    };
+
     const handleValuesChange = (val: string) => {
         if (paramIndex === -1 || !projectId) return;
         dispatch(loadValuesParam({ paramIndex, values: val, projectId }));
+        dispatch(persistFuzzerSession(projectId, activeSessionIndex));
+    };
+
+    const handlePayloadSourceChange = (newSource: PayloadSource) => {
+        if (paramIndex === -1 || !projectId || !selectedParam) return;
+        dispatch(setPayloadSource({ paramIndex, payloadSource: newSource, projectId }));
+
+        if (newSource === 'numbers' && !selectedParam.numbersConfig) {
+            const cfg: NumbersPayloadConfig = { start: 1, end: 100, step: 1, minIntegerDigits: 1 };
+            dispatch(setNumbersConfig({ paramIndex, config: cfg, projectId }));
+        } else if (newSource === 'null_payload' && !selectedParam.nullPayloadConfig) {
+            const cfg: NullPayloadConfig = { count: 10 };
+            dispatch(setNullPayloadConfig({ paramIndex, config: cfg, projectId }));
+        }
+        dispatch(persistFuzzerSession(projectId, activeSessionIndex));
+    };
+
+    const handleNumbersConfigChange = (partial: Partial<NumbersPayloadConfig>) => {
+        if (paramIndex === -1 || !projectId || !selectedParam) return;
+        const currentCfg = selectedParam.numbersConfig || { start: 1, end: 100, step: 1, minIntegerDigits: 1 };
+        const updated = { ...currentCfg, ...partial };
+
+        if (updated.minIntegerDigits !== undefined) {
+            updated.minIntegerDigits = Math.max(1, updated.minIntegerDigits);
+        }
+
+        if (updated.maxIntegerDigits !== undefined && updated.maxIntegerDigits !== null) {
+            const minDigits = updated.minIntegerDigits ?? 1;
+            if (updated.maxIntegerDigits < minDigits) {
+                updated.maxIntegerDigits = minDigits;
+            }
+        }
+
+        dispatch(setNumbersConfig({ paramIndex, config: updated, projectId }));
+        dispatch(persistFuzzerSession(projectId, activeSessionIndex));
+    };
+
+    const handleNullPayloadConfigChange = (count: number) => {
+        if (paramIndex === -1 || !projectId) return;
+        const updated: NullPayloadConfig = { count: Math.max(1, count) };
+        dispatch(setNullPayloadConfig({ paramIndex, config: updated, projectId }));
         dispatch(persistFuzzerSession(projectId, activeSessionIndex));
     };
 
@@ -139,53 +199,199 @@ export default function PayloadConfigurator() {
 
                 }
 
-                <div>
-                    <Label>Type</Label>
-                    <Select defaultValue={selectedParam.payloadSource}>
-                        <SelectTrigger>
+                <div className="space-y-1.5">
+                    <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Payload Type</Label>
+                    <Select
+                        value={selectedParam.payloadSource || 'manual'}
+                        onValueChange={(val) => handlePayloadSourceChange(val as PayloadSource)}
+                    >
+                        <SelectTrigger className="w-full">
                             <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                            <SelectItem value="manual">Manual</SelectItem>
+                            <SelectItem value="manual" className="text-xs">
+                                <div className="flex items-center gap-2">
+                                    <FileText className="w-3.5 h-3.5 text-muted-foreground" />
+                                    <span>Manual / File (Wordlist)</span>
+                                </div>
+                            </SelectItem>
+                            <SelectItem value="numbers" className="text-xs">
+                                <div className="flex items-center gap-2">
+                                    <Hash className="w-3.5 h-3.5 text-primary" />
+                                    <span>Numbers (Sequence Generator)</span>
+                                </div>
+                            </SelectItem>
+                            <SelectItem value="null_payload" className="text-xs">
+                                <div className="flex items-center gap-2">
+                                    <CircleOff className="w-3.5 h-3.5 text-amber-500" />
+                                    <span>Null Payload (Repeater)</span>
+                                </div>
+                            </SelectItem>
                         </SelectContent>
                     </Select>
                 </div>
 
-                <Label>Selected File</Label>
-                <div className="space-y-2">
-                    <PayloadCodeEditor
-                        value={selectedParam.values.join("\n") || ""}
-                        onChange={handleValuesChange}
-                        height="200px"
-                    />
+                {/* Conditional UI based on selectedParam.payloadSource */}
+                {selectedParam.payloadSource === 'numbers' ? (
+                    <div className="space-y-3 p-3 bg-muted/20 border rounded-lg">
+                        <div className="flex items-center justify-between">
+                            <span className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5 uppercase tracking-wider">
+                                <Hash className="w-3.5 h-3.5 text-primary" />
+                                Numbers Configuration
+                            </span>
+                            <span className="text-[11px] font-mono text-muted-foreground">
+                                {generatedNumbersPreview.length} generated
+                            </span>
+                        </div>
 
-                    <div className="flex gap-2 w-full">
-                        <label
-                            htmlFor="file-upload"
-                            className="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 border border-input bg-background hover:bg-accent hover:text-accent-foreground h-10 px-4 py-2 cursor-pointer w-full"
-                        >
-                            <IconUpload className="mr-2" />
-                            Load from File
-                        </label>
-                        <input
-                            id="file-upload"
-                            type="file"
-                            accept=".txt,.csv"
-                            onChange={handleFileUpload}
-                            className="hidden"
-                        />
+                        <div className="grid grid-cols-3 gap-2">
+                            <div className="space-y-1">
+                                <Label htmlFor="numStart" className="text-[10px] text-muted-foreground uppercase font-mono">From (Start)</Label>
+                                <Input
+                                    id="numStart"
+                                    type="number"
+                                    value={selectedParam.numbersConfig?.start ?? 1}
+                                    onChange={(e) => handleNumbersConfigChange({ start: parseInt(e.target.value) || 0 })}
+                                    className="h-8 font-mono text-xs"
+                                />
+                            </div>
+                            <div className="space-y-1">
+                                <Label htmlFor="numEnd" className="text-[10px] text-muted-foreground uppercase font-mono">To (End)</Label>
+                                <Input
+                                    id="numEnd"
+                                    type="number"
+                                    value={selectedParam.numbersConfig?.end ?? 100}
+                                    onChange={(e) => handleNumbersConfigChange({ end: parseInt(e.target.value) || 0 })}
+                                    className="h-8 font-mono text-xs"
+                                />
+                            </div>
+                            <div className="space-y-1">
+                                <Label htmlFor="numStep" className="text-[10px] text-muted-foreground uppercase font-mono">Step</Label>
+                                <Input
+                                    id="numStep"
+                                    type="number"
+                                    min={1}
+                                    value={selectedParam.numbersConfig?.step ?? 1}
+                                    onChange={(e) => handleNumbersConfigChange({ step: Math.max(1, parseInt(e.target.value) || 1) })}
+                                    className="h-8 font-mono text-xs"
+                                />
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2 pt-1 border-t">
+                            <div className="space-y-1">
+                                <Label htmlFor="numMinDigits" className="text-[10px] text-muted-foreground uppercase font-mono">Min Integer Digits</Label>
+                                <Input
+                                    id="numMinDigits"
+                                    type="number"
+                                    min={1}
+                                    max={20}
+                                    value={selectedParam.numbersConfig?.minIntegerDigits ?? 1}
+                                    onChange={(e) => {
+                                        const newMin = Math.max(1, parseInt(e.target.value) || 1);
+                                        const currentMax = selectedParam.numbersConfig?.maxIntegerDigits;
+                                        const updatedMax = currentMax !== undefined && currentMax < newMin ? newMin : currentMax;
+                                        handleNumbersConfigChange({ minIntegerDigits: newMin, maxIntegerDigits: updatedMax });
+                                    }}
+                                    placeholder="1 (no zero padding)"
+                                    className="h-8 font-mono text-xs"
+                                />
+                            </div>
+                            <div className="space-y-1">
+                                <Label htmlFor="numMaxDigits" className="text-[10px] text-muted-foreground uppercase font-mono">Max Integer Digits</Label>
+                                <Input
+                                    id="numMaxDigits"
+                                    type="number"
+                                    min={selectedParam.numbersConfig?.minIntegerDigits ?? 1}
+                                    max={20}
+                                    value={selectedParam.numbersConfig?.maxIntegerDigits ?? ''}
+                                    onChange={(e) => {
+                                        const minDigits = selectedParam.numbersConfig?.minIntegerDigits ?? 1;
+                                        const parsed = e.target.value ? parseInt(e.target.value) : undefined;
+                                        const val = parsed !== undefined && !isNaN(parsed) ? Math.max(minDigits, parsed) : undefined;
+                                        handleNumbersConfigChange({ maxIntegerDigits: val });
+                                    }}
+                                    placeholder="Unlimited"
+                                    className="h-8 font-mono text-xs"
+                                />
+                            </div>
+                        </div>
+
+                        {/* Preview */}
+                        <div className="pt-2 border-t space-y-1">
+                            <Label className="text-[10px] text-muted-foreground uppercase font-mono">Sample Preview</Label>
+                            <div className="min-h-[28px] px-2.5 py-1 rounded bg-background/80 border font-mono text-[11px] text-muted-foreground truncate select-all">
+                                {generatedNumbersPreview.slice(0, 8).join(', ')}
+                                {generatedNumbersPreview.length > 8 ? ` ... (${generatedNumbersPreview.length} total)` : ''}
+                            </div>
+                        </div>
                     </div>
-                </div>
+                ) : selectedParam.payloadSource === 'null_payload' ? (
+                    <div className="space-y-3 p-3 bg-muted/20 border rounded-lg">
+                        <div className="flex items-center justify-between">
+                            <span className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5 uppercase tracking-wider">
+                                <CircleOff className="w-3.5 h-3.5 text-amber-500" />
+                                Null Payload Configuration
+                            </span>
+                            <span className="text-[11px] font-mono text-muted-foreground">
+                                {selectedParam.nullPayloadConfig?.count ?? 10} requests
+                            </span>
+                        </div>
+
+                        <div className="space-y-1.5">
+                            <Label htmlFor="nullPayloadCount" className="text-xs">Number of Payloads (Requests)</Label>
+                            <Input
+                                id="nullPayloadCount"
+                                type="number"
+                                min={1}
+                                max={100000}
+                                value={selectedParam.nullPayloadConfig?.count ?? 10}
+                                onChange={(e) => handleNullPayloadConfigChange(parseInt(e.target.value) || 1)}
+                                className="h-8 font-mono text-xs"
+                            />
+                        </div>
+
+                        <p className="text-[11px] text-muted-foreground bg-muted/40 p-2 rounded border">
+                            Generates empty (null) payloads. Ideal for blind timing attacks, load generation, or repeatedly replaying requests.
+                        </p>
+                    </div>
+                ) : (
+                    <div className="space-y-2">
+                        <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Selected Payload List</Label>
+                        <PayloadCodeEditor
+                            value={selectedParam.values.join("\n") || ""}
+                            onChange={handleValuesChange}
+                            height="200px"
+                        />
+
+                        <div className="flex gap-2 w-full">
+                            <label
+                                htmlFor="file-upload"
+                                className="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 border border-input bg-background hover:bg-accent hover:text-accent-foreground h-10 px-4 py-2 cursor-pointer w-full"
+                            >
+                                <IconUpload className="mr-2" />
+                                Load from File
+                            </label>
+                            <input
+                                id="file-upload"
+                                type="file"
+                                accept=".txt,.csv"
+                                onChange={handleFileUpload}
+                                className="hidden"
+                            />
+                        </div>
+                    </div>
+                )}
 
                 <div>
                     Number of requests: {
                         isOnePayload
-                            ? parameters[0]?.values.length ?? 0
+                            ? getParamEffectiveCount(parameters[0])
                             : session.fuzzConfig.fuzzingAttackType === FuzzingAttackType.ZIPPED
-                                ? parameters.reduce((acc, param) => param.values.length < acc ? param.values.length : acc, Infinity)
+                                ? parameters.reduce((acc, param) => Math.min(acc, getParamEffectiveCount(param)), Infinity)
                                 : session.fuzzConfig.fuzzingAttackType === FuzzingAttackType.COMBINATORIAL
-                                    ? parameters.reduce((acc, param) => acc * param.values.length, 1)
-                                    : parameters[0]?.values.length ?? 0
+                                    ? parameters.reduce((acc, param) => acc * getParamEffectiveCount(param), 1)
+                                    : getParamEffectiveCount(parameters[0])
                     }
                 </div>
             </TabsContent>
@@ -299,7 +505,13 @@ export default function PayloadConfigurator() {
                         dispatch(reorderPipelineRules({ fromIndex, toIndex, projectId, paramId }));
                         dispatch(persistFuzzerSession(projectId, activeSessionIndex));
                     }}
-                    sampleDefaultValue={selectedParam.values?.[0] || 'admin_test123'}
+                    sampleDefaultValue={
+                        selectedParam.payloadSource === 'numbers'
+                            ? (generatedNumbersPreview[0] || '1')
+                            : selectedParam.payloadSource === 'null_payload'
+                            ? ''
+                            : (selectedParam.values?.[0] || 'admin_test123')
+                    }
                 />
             </TabsContent>
 

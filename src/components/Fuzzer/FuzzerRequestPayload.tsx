@@ -7,6 +7,7 @@ import FuzzConfig from './FuzzConfig';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '../ui/resizable';
 import { addFuzzingHistory, setFuzzingAttackType, setFuzzRunTargets, setTargerUrl, selectFuzzerState, defaultFuzzerState, persistFuzzerSession } from '@/store/slices/fuzzerSlice';
 import { FuzzingAttackType, initialFuzzRunState } from '@/types/fuzzer.type';
+import { generateNumberPayloads, generateNullPayloads } from '@/lib/fuzzerPreprocessing';
 import { invoke } from '@tauri-apps/api/core';
 import { useStore } from 'react-redux';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
@@ -88,8 +89,23 @@ const FuzzRequestPayload: React.FC = () => {
       return;
     }
 
-    const hasValues = fuzzSession.fuzzConfig.parameters.some(
-      (p) => p.values && p.values.length > 0 && p.values.some((v) => v.trim() !== '')
+    const resolvedParameters = fuzzSession.fuzzConfig.parameters.map((p) => {
+      let effectiveValues = p.values || [];
+      if (p.payloadSource === 'numbers') {
+        const cfg = p.numbersConfig || { start: 1, end: 100, step: 1, minIntegerDigits: 1 };
+        effectiveValues = generateNumberPayloads(cfg);
+      } else if (p.payloadSource === 'null_payload') {
+        const cfg = p.nullPayloadConfig || { count: 10 };
+        effectiveValues = generateNullPayloads(cfg);
+      }
+      return {
+        ...p,
+        values: effectiveValues,
+      };
+    });
+
+    const hasValues = resolvedParameters.some(
+      (p) => p.values && p.values.length > 0 && (p.payloadSource === 'null_payload' || p.values.some((v) => v.trim() !== ''))
     );
     if (!hasValues) {
       toast.error("Please add payload values to the parameter first", { position: 'top-center' });
@@ -102,6 +118,7 @@ const FuzzRequestPayload: React.FC = () => {
         ...fuzzSession,
         fuzzConfig: {
           ...fuzzSession.fuzzConfig,
+          parameters: resolvedParameters,
           metadata: {
             ...fuzzSession.fuzzConfig.metadata,
             targetUrl: stripedUrl,

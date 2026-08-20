@@ -39,10 +39,13 @@ export enum FuzzingAttackType {
 }
 
 export type PayloadSource =
+  | 'manual'
+  | 'numbers'
+  | 'null_payload'
   | 'library'
   | 'file'
   | 'generator'
-  | 'manual';
+  | 'wordlist';
 
 export interface HighlightRange {
     from: number;
@@ -80,11 +83,25 @@ export interface PreprocessingRule {
 
 export type PipelineScope = 'all' | 'per_parameter';
 
+export interface NumbersPayloadConfig {
+    start: number;
+    end: number;
+    step: number;
+    minIntegerDigits?: number;
+    maxIntegerDigits?: number;
+}
+
+export interface NullPayloadConfig {
+    count: number;
+}
+
 export interface FuzzerParameter {
-    payloadSource: 'manual' | 'wordlist' | 'generator';
+    payloadSource: PayloadSource;
     values: string[];
     highlightRange: HighlightRange;
     pipelineRules?: PreprocessingRule[];
+    numbersConfig?: NumbersPayloadConfig;
+    nullPayloadConfig?: NullPayloadConfig;
 }
 
 export interface FuzzConfig {
