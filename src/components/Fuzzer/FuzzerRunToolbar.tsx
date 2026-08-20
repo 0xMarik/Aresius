@@ -158,7 +158,7 @@ export function FuzzerRunToolbar({
                     </Badge>
 
                     {/* Resume Button when stopped with unfinished requests */}
-                    {!isRunning && runState.status === 'cancelled' && remainingCount > 0 && (
+                    {!isRunning && remainingCount > 0 && (
                         <Button
                             variant="default"
                             size="sm"
@@ -170,8 +170,8 @@ export function FuzzerRunToolbar({
                         </Button>
                     )}
 
-                    {/* Resend failed button if any requests failed */}
-                    {!isRunning && (failedCount > 0 || (runState.status === 'completed' && failedCount > 0)) && (
+                    {/* Resend failed button if any requests failed and no pending remaining */}
+                    {!isRunning && remainingCount === 0 && failedCount > 0 && (
                         <Button
                             variant="outline"
                             size="sm"

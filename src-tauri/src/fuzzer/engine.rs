@@ -804,6 +804,8 @@ async fn run_dynamic_fuzzer(
         "cancelled"
     } else if conn_dropped && final_completed < total {
         "connection_dropped"
+    } else if final_completed < total {
+        "cancelled"
     } else {
         "completed"
     };
