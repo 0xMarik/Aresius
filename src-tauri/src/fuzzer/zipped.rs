@@ -3,11 +3,13 @@ use tauri::AppHandle;
 use crate::ares_utils::http_connection::HttpConnection;
 use crate::fuzzer::engine::{run_fuzz_targets, FuzzRunConfig, FuzzTarget};
 use crate::fuzzer::preprocessing::{apply_pipeline, get_active_rules};
-use crate::fuzzer::utils::building_raw_request;
+use crate::fuzzer::utils::{building_raw_request, format_fuzz_request};
 use crate::types::FuzzerSession;
 
 fn build_zipped_fuzz_requests(session: &FuzzerSession) -> Vec<FuzzTarget> {
     let mut targets = Vec::new();
+    let keep_alive = session.fuzz_config.set_connection_keep_alive.unwrap_or(true);
+    let update_cl = session.fuzz_config.update_content_length.unwrap_or(true);
 
     if session.fuzz_config.parameters.is_empty() {
         return targets;
@@ -37,9 +39,11 @@ fn build_zipped_fuzz_requests(session: &FuzzerSession) -> Vec<FuzzTarget> {
                 building_raw_request(&modified_request, &transformed_value, &param.highlight_range);
         }
 
+        let formatted_request = format_fuzz_request(&modified_request, keep_alive, update_cl);
+
         targets.push(FuzzTarget {
             id: format!("{}", i),
-            request: modified_request,
+            request: formatted_request,
             payload: Some(payload_parts.join(", ")),
         });
     }

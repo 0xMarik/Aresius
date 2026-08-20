@@ -74,6 +74,8 @@ export const fuzzerSlice = createSlice({
           parameters: [],
           pipelineScope: 'all',
           pipelineRules: [],
+          setConnectionKeepAlive: true,
+          updateContentLength: true,
         },
         selectedHighlightId: null,
       });
@@ -443,6 +445,20 @@ export const fuzzerSlice = createSlice({
       }
     },
 
+    setConnectionKeepAlive: (state, action: PayloadAction<{ keepAlive: boolean; projectId: string }>) => {
+      const bucket = getBucket(state, action.payload.projectId);
+      if (bucket.activeSessionIndex !== null && bucket.fuzzerSessions[bucket.activeSessionIndex]) {
+        bucket.fuzzerSessions[bucket.activeSessionIndex].fuzzConfig.setConnectionKeepAlive = action.payload.keepAlive;
+      }
+    },
+
+    setUpdateContentLength: (state, action: PayloadAction<{ updateContentLength: boolean; projectId: string }>) => {
+      const bucket = getBucket(state, action.payload.projectId);
+      if (bucket.activeSessionIndex !== null && bucket.fuzzerSessions[bucket.activeSessionIndex]) {
+        bucket.fuzzerSessions[bucket.activeSessionIndex].fuzzConfig.updateContentLength = action.payload.updateContentLength;
+      }
+    },
+
     setPipelineScope: (state, action: PayloadAction<{ scope: PipelineScope; projectId: string }>) => {
       const bucket = getBucket(state, action.payload.projectId);
       if (bucket.activeSessionIndex !== null && bucket.fuzzerSessions[bucket.activeSessionIndex]) {
@@ -587,6 +603,8 @@ export const {
   setTargerUrl,
   setSelectedFuzz,
   setFuzzingAttackType,
+  setConnectionKeepAlive,
+  setUpdateContentLength,
   setPipelineScope,
   setPipelineRules,
   addPipelineRule,
@@ -711,6 +729,8 @@ export const fetchFuzzerDataForProject = (projectId: string) => async (dispatch:
             rawRequest: s.rawRequest || 'GET / HTTP/1.1\r\n\r\n',
             pipelineScope: (s.pipelineScope as PipelineScope) || 'all',
             pipelineRules: sessionPipelineRules,
+            setConnectionKeepAlive: s.setConnectionKeepAlive !== undefined && s.setConnectionKeepAlive !== null ? Boolean(s.setConnectionKeepAlive) : true,
+            updateContentLength: s.updateContentLength !== undefined && s.updateContentLength !== null ? Boolean(s.updateContentLength) : true,
             parameters: (fullSess.parameters || []).map((p: any) => {
               let paramRules: PreprocessingRule[] = [];
               try {
@@ -788,6 +808,8 @@ export const fetchFuzzerDataForProject = (projectId: string) => async (dispatch:
               rawRequest: hasValidRawRequest ? configSnapshot.rawRequest : (s.rawRequest || 'GET / HTTP/1.1\r\n\r\n'),
               pipelineScope: configSnapshot?.pipelineScope || s.pipelineScope || 'all',
               pipelineRules: configSnapshot?.pipelineRules || sessionPipelineRules,
+              setConnectionKeepAlive: configSnapshot?.setConnectionKeepAlive !== undefined ? Boolean(configSnapshot.setConnectionKeepAlive) : (s.setConnectionKeepAlive !== undefined && s.setConnectionKeepAlive !== null ? Boolean(s.setConnectionKeepAlive) : true),
+              updateContentLength: configSnapshot?.updateContentLength !== undefined ? Boolean(configSnapshot.updateContentLength) : (s.updateContentLength !== undefined && s.updateContentLength !== null ? Boolean(s.updateContentLength) : true),
               parameters: hasValidParameters ? configSnapshot.parameters : fallbackParameters,
               metadata: {
                 targetUrl: configSnapshot?.metadata?.targetUrl || s.targetUrl || '',
@@ -857,6 +879,8 @@ export const persistFuzzerSession = (projectId: string, sessionIndex: number) =>
       delayMs: session.fuzzConfig.delayMs,
       pipelineScope: session.fuzzConfig.pipelineScope || 'all',
       pipelineRules: JSON.stringify(session.fuzzConfig.pipelineRules || []),
+      setConnectionKeepAlive: session.fuzzConfig.setConnectionKeepAlive ?? true,
+      updateContentLength: session.fuzzConfig.updateContentLength ?? true,
     });
 
     await invoke('save_fuzzer_parameters_db', {

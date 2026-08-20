@@ -23,6 +23,10 @@ pub struct FuzzerSessionDb {
     pub pipeline_scope: Option<String>,
     #[sqlx(default)]
     pub pipeline_rules: Option<String>,
+    #[sqlx(default)]
+    pub set_connection_keep_alive: Option<bool>,
+    #[sqlx(default)]
+    pub update_content_length: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
@@ -451,6 +455,8 @@ pub async fn save_fuzzer_session_draft(
     delay_ms: Option<i64>,
     pipeline_scope: Option<String>,
     pipeline_rules: Option<String>,
+    set_connection_keep_alive: Option<bool>,
+    update_content_length: Option<bool>,
 ) -> Result<String, String> {
     let pool = db.pool().await?;
     let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
@@ -532,14 +538,28 @@ pub async fn save_fuzzer_session_draft(
                     .execute(&mut *tx)
                     .await;
             }
+            if let Some(ka) = set_connection_keep_alive {
+                let _ = sqlx::query("UPDATE fuzzer_sessions SET set_connection_keep_alive = ? WHERE id = ?")
+                    .bind(ka)
+                    .bind(&id)
+                    .execute(&mut *tx)
+                    .await;
+            }
+            if let Some(ucl) = update_content_length {
+                let _ = sqlx::query("UPDATE fuzzer_sessions SET update_content_length = ? WHERE id = ?")
+                    .bind(ucl)
+                    .bind(&id)
+                    .execute(&mut *tx)
+                    .await;
+            }
             id
         }
         None => {
             let new_id = uuid::Uuid::new_v4().to_string();
             let now = chrono::Utc::now().timestamp_millis();
             sqlx::query(
-                "INSERT INTO fuzzer_sessions (id, project_id, name, raw_request, target_url, attack_type, num_threads, delay_ms, pipeline_scope, pipeline_rules, sort_order, is_selected, is_expanded, created_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?)"
+                "INSERT INTO fuzzer_sessions (id, project_id, name, raw_request, target_url, attack_type, num_threads, delay_ms, pipeline_scope, pipeline_rules, set_connection_keep_alive, update_content_length, sort_order, is_selected, is_expanded, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?)"
             )
             .bind(&new_id)
             .bind(&real_project_id)
@@ -551,6 +571,8 @@ pub async fn save_fuzzer_session_draft(
             .bind(delay_ms.unwrap_or(0))
             .bind(pipeline_scope.unwrap_or_else(|| "all".to_string()))
             .bind(pipeline_rules.unwrap_or_else(|| "[]".to_string()))
+            .bind(set_connection_keep_alive.unwrap_or(true))
+            .bind(update_content_length.unwrap_or(true))
             .bind(session_index as i64)
             .bind(now)
             .execute(&mut *tx)

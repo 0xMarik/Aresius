@@ -116,6 +116,8 @@ export interface FuzzConfig {
     };
     pipelineScope?: PipelineScope;
     pipelineRules?: PreprocessingRule[];
+    setConnectionKeepAlive?: boolean;
+    updateContentLength?: boolean;
 }
 
 export interface FuzzingHistory {

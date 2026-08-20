@@ -49,6 +49,10 @@ pub struct SessionPayload {
     pub pipeline_scope: Option<String>,
     #[serde(default)]
     pub pipeline_rules: Option<Vec<PreprocessingRule>>,
+    #[serde(default)]
+    pub set_connection_keep_alive: Option<bool>,
+    #[serde(default)]
+    pub update_content_length: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

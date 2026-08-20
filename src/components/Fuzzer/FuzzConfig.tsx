@@ -6,7 +6,8 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@
 import { useAppDispatch, useAppSelector } from "@/hooks/redux";
 import { useProjectId } from "@/hooks/useProjectId";
 import { PayloadCodeEditor } from "./PayloadCodeEditor";
-import { loadValuesParam, setDelayMs, setNumThreads, setSelectedParameter, selectFuzzerState, persistFuzzerSession, setPipelineScope, addPipelineRule, updatePipelineRule, removePipelineRule, reorderPipelineRules, setPayloadSource, setNumbersConfig, setNullPayloadConfig } from "@/store/slices/fuzzerSlice";
+import { Checkbox } from "@/components/ui/checkbox";
+import { loadValuesParam, setDelayMs, setNumThreads, setSelectedParameter, selectFuzzerState, persistFuzzerSession, setPipelineScope, addPipelineRule, updatePipelineRule, removePipelineRule, reorderPipelineRules, setPayloadSource, setNumbersConfig, setNullPayloadConfig, setConnectionKeepAlive, setUpdateContentLength } from "@/store/slices/fuzzerSlice";
 import { FuzzingAttackType, PreprocessingRule, PayloadSource, NumbersPayloadConfig, NullPayloadConfig } from "@/types/fuzzer.type";
 import { IconUpload } from "@tabler/icons-react";
 import { EmptyState } from "../ui/empty-state";
@@ -515,43 +516,111 @@ export default function PayloadConfigurator() {
                 />
             </TabsContent>
 
-            <TabsContent value="settings">
-                <p>Settings configuration</p>
-                <br />
-                <Label htmlFor="numThreads">Number of Threads</Label>
-                <Input
-                    id="numThreads"
-                    type="number"
-                    min={1}
-                    max={100}
-                    value={session.fuzzConfig.numThreads}
-                    onChange={(event) => {
-                        const val = parseInt(event.target.value);
-                        if (projectId && !isNaN(val)) {
-                            dispatch(setNumThreads({ numThreads: val, projectId }));
-                            dispatch(persistFuzzerSession(projectId, activeSessionIndex));
-                        }
-                    }}
-                />
-                <br />
-                <Label htmlFor="delais">Delais between Requests (ms)</Label>
-                <p className="text-xs">
-                    This delais are between request in the same threads, so if you have restriction to send just
-                    one request every 1s use 1 thread and 10,000ms
+            <TabsContent value="settings" className="space-y-4 pt-2">
+                <div className="space-y-1">
+                    <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Engine & Concurrency</h3>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                        <Label htmlFor="numThreads" className="text-xs">Number of Threads</Label>
+                        <Input
+                            id="numThreads"
+                            type="number"
+                            min={1}
+                            max={100}
+                            value={session.fuzzConfig.numThreads}
+                            onChange={(event) => {
+                                const val = parseInt(event.target.value);
+                                if (projectId && !isNaN(val)) {
+                                    dispatch(setNumThreads({ numThreads: val, projectId }));
+                                    dispatch(persistFuzzerSession(projectId, activeSessionIndex));
+                                }
+                            }}
+                            className="h-8 font-mono text-xs"
+                        />
+                    </div>
+
+                    <div className="space-y-1.5">
+                        <Label htmlFor="delais" className="text-xs">Delay between Requests (ms)</Label>
+                        <Input
+                            id="delais"
+                            type="number"
+                            min={0}
+                            value={session.fuzzConfig.delayMs}
+                            onChange={(event) => {
+                                const val = parseInt(event.target.value);
+                                if (projectId && !isNaN(val)) {
+                                    dispatch(setDelayMs({ delayMs: val, projectId }));
+                                    dispatch(persistFuzzerSession(projectId, activeSessionIndex));
+                                }
+                            }}
+                            className="h-8 font-mono text-xs"
+                        />
+                    </div>
+                </div>
+
+                <p className="text-[11px] text-muted-foreground">
+                    Delays are applied between requests within each worker thread. For strict rate limiting (e.g. 1 req/sec), use 1 thread and 1,000ms delay.
                 </p>
-                <Input
-                    id="delais"
-                    type="number"
-                    min={0}
-                    value={session.fuzzConfig.delayMs}
-                    onChange={(event) => {
-                        const val = parseInt(event.target.value);
-                        if (projectId && !isNaN(val)) {
-                            dispatch(setDelayMs({ delayMs: val, projectId }));
-                            dispatch(persistFuzzerSession(projectId, activeSessionIndex));
-                        }
-                    }}
-                />
+
+                <div className="pt-3 border-t space-y-3">
+                    <div className="space-y-1">
+                        <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">HTTP Headers & Connection</h3>
+                    </div>
+
+                    <div className="space-y-2 pt-1">
+                        <div className="flex items-start space-x-3 p-3 rounded-lg border bg-muted/20 hover:bg-muted/30 transition-colors">
+                            <Checkbox
+                                id="setConnectionKeepAlive"
+                                checked={session.fuzzConfig.setConnectionKeepAlive ?? true}
+                                onCheckedChange={(checked) => {
+                                    if (projectId) {
+                                        dispatch(setConnectionKeepAlive({ keepAlive: Boolean(checked), projectId }));
+                                        dispatch(persistFuzzerSession(projectId, activeSessionIndex));
+                                    }
+                                }}
+                                className="mt-0.5"
+                            />
+                            <div className="grid gap-1 leading-none">
+                                <Label
+                                    htmlFor="setConnectionKeepAlive"
+                                    className="text-xs font-medium cursor-pointer"
+                                >
+                                    set Connection to keep-alive
+                                </Label>
+                                <p className="text-[11px] text-muted-foreground">
+                                    Ensures <code>Connection: keep-alive</code> is present in all outgoing requests so workers reuse persistent TCP / TLS connections.
+                                </p>
+                            </div>
+                        </div>
+
+                        <div className="flex items-start space-x-3 p-3 rounded-lg border bg-muted/20 hover:bg-muted/30 transition-colors">
+                            <Checkbox
+                                id="updateContentLength"
+                                checked={session.fuzzConfig.updateContentLength ?? true}
+                                onCheckedChange={(checked) => {
+                                    if (projectId) {
+                                        dispatch(setUpdateContentLength({ updateContentLength: Boolean(checked), projectId }));
+                                        dispatch(persistFuzzerSession(projectId, activeSessionIndex));
+                                    }
+                                }}
+                                className="mt-0.5"
+                            />
+                            <div className="grid gap-1 leading-none">
+                                <Label
+                                    htmlFor="updateContentLength"
+                                    className="text-xs font-medium cursor-pointer"
+                                >
+                                    update Content-Length
+                                </Label>
+                                <p className="text-[11px] text-muted-foreground">
+                                    Automatically recalculates and updates the <code>Content-Length</code> header to match the actual byte length of the body after payload substitution.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </TabsContent>
         </Tabs>
     );
