@@ -811,10 +811,11 @@ async fn run_dynamic_fuzzer(
     if let Some(ref pool) = db_pool {
         let now = chrono::Utc::now().timestamp_millis();
         let _ = sqlx::query(
-            "UPDATE fuzzer_runs SET status = ?, completed = ?, connection_dropped = ?, finished_at = ? WHERE id = ?"
+            "UPDATE fuzzer_runs SET status = ?, completed = ?, failed = ?, connection_dropped = ?, finished_at = ? WHERE id = ?"
         )
         .bind(status)
         .bind(final_completed as i64)
+        .bind(final_failed as i64)
         .bind(conn_dropped)
         .bind(now)
         .bind(&run_id)
@@ -891,9 +892,9 @@ pub async fn run_fuzz_targets(app: AppHandle, config: FuzzRunConfig, targets: Ve
         let now = chrono::Utc::now().timestamp_millis();
         if let Some(ref snapshot_str) = config.config_snapshot {
             let _ = sqlx::query(
-                "INSERT INTO fuzzer_runs (id, session_id, config_snapshot, status, total, completed, completed_base, connection_dropped, started_at)
-                 VALUES (?, ?, ?, 'running', ?, 0, 0, 0, ?)
-                 ON CONFLICT(id) DO UPDATE SET status = 'running', total = excluded.total, config_snapshot = excluded.config_snapshot, started_at = excluded.started_at"
+                "INSERT INTO fuzzer_runs (id, session_id, config_snapshot, status, total, completed, failed, completed_base, connection_dropped, started_at)
+                 VALUES (?, ?, ?, 'running', ?, 0, 0, 0, 0, ?)
+                 ON CONFLICT(id) DO UPDATE SET status = 'running', total = excluded.total, failed = 0, config_snapshot = excluded.config_snapshot, started_at = excluded.started_at"
             )
             .bind(&run_id)
             .bind(&session_id)
@@ -915,9 +916,9 @@ pub async fn run_fuzz_targets(app: AppHandle, config: FuzzRunConfig, targets: Ve
             }).to_string();
 
             let _ = sqlx::query(
-                "INSERT INTO fuzzer_runs (id, session_id, config_snapshot, status, total, completed, completed_base, connection_dropped, started_at)
-                 VALUES (?, ?, ?, 'running', ?, 0, 0, 0, ?)
-                 ON CONFLICT(id) DO UPDATE SET status = 'running', total = excluded.total, started_at = excluded.started_at"
+                "INSERT INTO fuzzer_runs (id, session_id, config_snapshot, status, total, completed, failed, completed_base, connection_dropped, started_at)
+                 VALUES (?, ?, ?, 'running', ?, 0, 0, 0, 0, ?)
+                 ON CONFLICT(id) DO UPDATE SET status = 'running', total = excluded.total, failed = 0, started_at = excluded.started_at"
             )
             .bind(&run_id)
             .bind(&session_id)
@@ -982,9 +983,10 @@ pub async fn cancel_fuzzing(
                 let _ = crate::ares_utils::database::fuzzer::cancel_pending_fuzzer_requests(&pool, &run_id).await;
                 let now = chrono::Utc::now().timestamp_millis();
                 let _ = sqlx::query(
-                    "UPDATE fuzzer_runs SET status = 'cancelled', completed = ?, finished_at = ? WHERE id = ?"
+                    "UPDATE fuzzer_runs SET status = 'cancelled', completed = ?, failed = ?, finished_at = ? WHERE id = ?"
                 )
                 .bind(completed as i64)
+                .bind(failed as i64)
                 .bind(now)
                 .bind(&run_id)
                 .execute(&pool)

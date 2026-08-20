@@ -55,22 +55,11 @@ pub struct FuzzerRunDb {
     pub status: String,
     pub total: i64,
     pub completed: i64,
+    pub failed: i64,
     pub completed_base: i64,
     pub connection_dropped: bool,
     pub started_at: i64,
     pub finished_at: Option<i64>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
-#[serde(rename_all = "camelCase")]
-pub struct FuzzerWorkerDb {
-    pub id: i64,
-    pub run_id: String,
-    pub worker_id: i64,
-    pub status: String,
-    pub total: i64,
-    pub completed: i64,
-    pub error_message: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
@@ -97,7 +86,7 @@ pub struct FuzzerRequestDb {
 pub struct FuzzerFullSession {
     pub session: FuzzerSessionDb,
     pub parameters: Vec<FuzzerParameterWithValues>,
-    pub runs: Vec<FuzzerRunWithWorkers>,
+    pub runs: Vec<FuzzerRunDb>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -105,13 +94,6 @@ pub struct FuzzerFullSession {
 pub struct FuzzerParameterWithValues {
     pub parameter: FuzzerParameterDb,
     pub values: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FuzzerRunWithWorkers {
-    pub run: FuzzerRunDb,
-    pub workers: Vec<FuzzerWorkerDb>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -206,23 +188,10 @@ pub async fn get_fuzzer_project_data(
         .await
         .map_err(|e| e.to_string())?;
 
-        let mut run_items = Vec::new();
-        for run in runs {
-            let workers = sqlx::query_as::<_, FuzzerWorkerDb>(
-                "SELECT * FROM fuzzer_workers WHERE run_id = ? ORDER BY worker_id ASC",
-            )
-            .bind(&run.id)
-            .fetch_all(&pool)
-            .await
-            .map_err(|e| e.to_string())?;
-
-            run_items.push(FuzzerRunWithWorkers { run, workers });
-        }
-
         full_sessions.push(FuzzerFullSession {
             session: sess,
             parameters: param_items,
-            runs: run_items,
+            runs,
         });
     }
 
@@ -916,43 +885,7 @@ pub async fn cancel_pending_fuzzer_requests(
     Ok(())
 }
 
-/// Batch update fuzzer workers telemetry in SQLite
-pub async fn update_fuzzer_workers_batch(
-    pool: &SqlitePool,
-    run_id: &str,
-    workers: &[(u32, String, u32, u32, Option<String>)], // (worker_id, status, completed, total, error_message)
-) -> Result<(), String> {
-    for (w_id, status, completed, total, err_msg) in workers {
-        let updated = sqlx::query(
-            "UPDATE fuzzer_workers SET status = ?, completed = ?, total = ?, error_message = ? WHERE run_id = ? AND worker_id = ?"
-        )
-        .bind(status)
-        .bind(*completed as i64)
-        .bind(*total as i64)
-        .bind(err_msg.as_deref())
-        .bind(run_id)
-        .bind(*w_id as i64)
-        .execute(pool)
-        .await;
 
-        if let Ok(res) = updated {
-            if res.rows_affected() == 0 {
-                let _ = sqlx::query(
-                    "INSERT INTO fuzzer_workers (run_id, worker_id, status, total, completed, error_message) VALUES (?, ?, ?, ?, ?, ?)"
-                )
-                .bind(run_id)
-                .bind(*w_id as i64)
-                .bind(status)
-                .bind(*total as i64)
-                .bind(*completed as i64)
-                .bind(err_msg.as_deref())
-                .execute(pool)
-                .await;
-            }
-        }
-    }
-    Ok(())
-}
 
 /// Load all fuzzer requests for a run from SQLite
 pub async fn load_all_fuzzer_requests(

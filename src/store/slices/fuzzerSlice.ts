@@ -587,10 +587,11 @@ export const fetchFuzzerDataForProject = (projectId: string) => async (dispatch:
           selectedHistoryIndex: fullSess.session.selectedHistoryIndex !== undefined && fullSess.session.selectedHistoryIndex !== null
             ? fullSess.session.selectedHistoryIndex
             : null,
-          fuzzingHistory: (fullSess.runs || []).map((r: any) => {
+          fuzzingHistory: (fullSess.runs || []).map((rawRun: any) => {
+            const run = rawRun.run || rawRun;
             let configSnapshot: any = {};
             try {
-              configSnapshot = JSON.parse(r.run.configSnapshot);
+              configSnapshot = JSON.parse(run.configSnapshot);
             } catch {
               configSnapshot = {};
             }
@@ -630,16 +631,16 @@ export const fetchFuzzerDataForProject = (projectId: string) => async (dispatch:
               },
             };
             return {
-              date: new Date(r.run.startedAt).toISOString(),
+              date: new Date(run.startedAt).toISOString(),
               fuzzConfigSnapshot: fullConfigSnapshot,
               requests: [],
               runState: {
-                status: r.run.status,
-                completed: r.run.completed,
-                total: r.run.total,
-                failed: 0,
-                completedBase: r.run.completedBase,
-                connectionDropped: Boolean(r.run.connectionDropped),
+                status: run.status,
+                completed: run.completed,
+                total: run.total,
+                failed: run.failed ?? 0,
+                completedBase: run.completedBase ?? 0,
+                connectionDropped: Boolean(run.connectionDropped),
               },
             };
           }),

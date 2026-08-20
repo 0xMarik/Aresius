@@ -49,6 +49,7 @@ CREATE TABLE fuzzer_runs (
     status              TEXT    NOT NULL DEFAULT 'idle',
     total               INTEGER NOT NULL DEFAULT 0,
     completed           INTEGER NOT NULL DEFAULT 0,
+    failed              INTEGER NOT NULL DEFAULT 0,
     completed_base      INTEGER NOT NULL DEFAULT 0,
     connection_dropped  INTEGER NOT NULL DEFAULT 0,
     started_at          INTEGER NOT NULL,
@@ -57,20 +58,7 @@ CREATE TABLE fuzzer_runs (
 CREATE INDEX idx_fuzzer_runs_session_id ON fuzzer_runs (session_id);
 CREATE INDEX idx_fuzzer_runs_session_started ON fuzzer_runs (session_id, started_at);
 
--- 5. Fuzzer Workers (Worker thread telemetry)
-CREATE TABLE fuzzer_workers (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
-    run_id        TEXT    NOT NULL REFERENCES fuzzer_runs(id) ON DELETE CASCADE,
-    worker_id     INTEGER NOT NULL,
-    status        TEXT    NOT NULL DEFAULT 'pending',
-    total         INTEGER NOT NULL DEFAULT 0,
-    completed     INTEGER NOT NULL DEFAULT 0,
-    error_message TEXT
-);
-CREATE INDEX idx_fuzzer_workers_run_id ON fuzzer_workers (run_id);
-CREATE INDEX idx_fuzzer_workers_run_worker ON fuzzer_workers (run_id, worker_id);
-
--- 6. Fuzzer Requests (Individual fuzzed transactions)
+-- 5. Fuzzer Requests (Individual fuzzed transactions)
 CREATE TABLE fuzzer_requests (
     id                  TEXT    NOT NULL, -- fuzzRequestId
     run_id              TEXT    NOT NULL REFERENCES fuzzer_runs(id) ON DELETE CASCADE,
