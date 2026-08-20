@@ -128,9 +128,10 @@ function DraggableHeaderCell({
             }}
             style={{
                 width: `var(${colWidthVar(id)})`,
+                minWidth: `var(${colWidthVar(id)})`,
                 opacity: isDragging ? 0.4 : 1,
             }}
-            className={`relative flex items-center gap-1 py-1.5 pl-2 pr-3 hover:bg-accent/60 ${isOver ? 'bg-accent' : ''}`}
+            className={`relative flex shrink-0 items-center gap-1 py-1.5 pl-2 pr-3 hover:bg-accent/60 whitespace-nowrap select-none ${isOver ? 'bg-accent' : ''}`}
         >
             <span
                 {...attributes}
@@ -216,14 +217,17 @@ function TableRowInner<TData extends BaseRow>({
         <div
             onClick={(e) => onRowClick(e, rowId)}
             onContextMenu={() => onContextMenu(rowId)}
-            className={`flex h-full cursor-pointer items-center border-b border-border/40 ${selected ? 'bg-primary text-primary-foreground' : 'hover:bg-accent/50 text-foreground'
+            className={`flex h-full min-w-full w-max cursor-pointer items-center border-b border-border/40 ${selected ? 'bg-primary text-primary-foreground' : 'hover:bg-accent/50 text-foreground'
                 }`}
         >
             {row.getVisibleCells().map((cell) => (
                 <div
                     key={cell.id}
-                    className="truncate px-2 py-1"
-                    style={{ width: `var(${colWidthVar(cell.column.id)})` }}
+                    className="shrink-0 truncate px-2 py-1 whitespace-nowrap"
+                    style={{
+                        width: `var(${colWidthVar(cell.column.id)})`,
+                        minWidth: `var(${colWidthVar(cell.column.id)})`,
+                    }}
                 >
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
                 </div>
@@ -302,9 +306,9 @@ function TableHeaderRowInner<TData extends BaseRow>({
 
     return (
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onColumnDragEnd}>
-            <div className="border-b border-border bg-muted/50 text-muted-foreground">
+            <div className="sticky top-0 z-20 border-b border-border bg-muted text-muted-foreground min-w-full w-max">
                 {table.getHeaderGroups().map((hg) => (
-                    <div key={hg.id} className="flex items-center">
+                    <div key={hg.id} className="flex items-center min-w-full w-max">
                         {hg.headers.map((header) => (
                             <DraggableHeaderCell
                                 key={header.id}
@@ -316,7 +320,7 @@ function TableHeaderRowInner<TData extends BaseRow>({
                                     onClick={header.column.getToggleSortingHandler()}
                                     className="flex flex-1 cursor-pointer select-none items-center justify-between gap-1"
                                 >
-                                    <span className="text-[10.5px] font-semibold uppercase tracking-wide text-muted-foreground">
+                                    <span className="text-[10.5px] font-semibold uppercase tracking-wide text-muted-foreground whitespace-nowrap">
                                         {flexRender(header.column.columnDef.header, header.getContext())}
                                     </span>
                                     <span className="text-muted-foreground/60">
@@ -351,6 +355,7 @@ const TableHeaderRow = React.memo(TableHeaderRowInner) as typeof TableHeaderRowI
 /* ================================================================== */
 
 interface RowsViewportProps<TData extends BaseRow> {
+    header: React.ReactNode;
     visibleRows: Row<TData>[];
     columnOrder: string[];
     selectedIds: Set<number>;
@@ -367,6 +372,7 @@ interface RowsViewportProps<TData extends BaseRow> {
 }
 
 function RowsViewportInner<TData extends BaseRow>({
+    header,
     visibleRows,
     columnOrder,
     selectedIds,
@@ -602,70 +608,75 @@ function RowsViewportInner<TData extends BaseRow>({
         };
     }, [setSelectedIds]);
 
-    if (visibleRows.length === 0) {
-        return (
-            <div className={fillHeight ? 'flex min-h-0 flex-1 items-center justify-center py-12 text-center text-muted-foreground' : 'py-12 text-center text-muted-foreground'}>
-                <p className="text-[13px]">{emptyLabel}</p>
-                {emptyHint && <p className="mt-1 text-[11px]">{emptyHint}</p>}
-            </div>
-        );
-    }
-
     return (
         <div
             ref={scrollContainerRef}
-            className={fillHeight ? 'relative min-h-0 flex-1 overflow-y-auto' : undefined}
-            style={fillHeight ? undefined : { maxHeight, overflowY: 'auto', position: 'relative' }}
+            className={fillHeight ? 'relative min-h-0 flex-1 overflow-auto bg-card' : 'overflow-auto bg-card'}
+            style={fillHeight ? undefined : { maxHeight, overflow: 'auto', position: 'relative' }}
         >
-            <div style={{ height: rowVirtualizer.getTotalSize(), position: 'relative', width: '100%' }}>
-                {virtualItems.map((virtualItem) => {
-                    const sliceIndex = windowOffset !== undefined ? virtualItem.index - windowOffset : virtualItem.index;
-                    const row = visibleRows[sliceIndex];
-                    if (!row) {
-                        return (
-                            <div
-                                key={`placeholder-${virtualItem.index}`}
-                                style={{
-                                    position: 'absolute',
-                                    top: 0,
-                                    left: 0,
-                                    width: '100%',
-                                    height: virtualItem.size,
-                                    transform: `translateY(${virtualItem.start}px)`,
-                                }}
-                                className="flex items-center px-4 border-b border-border/40 text-xs text-muted-foreground/60 bg-accent/10 animate-pulse"
-                            >
-                                <span>Loading row #{virtualItem.index + 1}...</span>
-                            </div>
-                        );
-                    }
-                    const rowId = row.original.id;
-
-                    return (
-                        <div
-                            key={row.id}
-                            style={{
-                                position: 'absolute',
-                                top: 0,
-                                left: 0,
-                                width: '100%',
-                                height: virtualItem.size,
-                                transform: `translateY(${virtualItem.start}px)`,
-                            }}
-                        >
-                            <TableRow
-                                row={row}
-                                selected={selectedIds.has(rowId)}
-                                columnOrder={columnOrder}
-                                onRowClick={handleRowClick}
-                                onContextMenu={handleRowContextMenu}
-                                getActionIds={getActionIds}
-                                renderContextMenu={renderContextMenu}
-                                onRemove={onRemove}
-                            />
+            <div className="min-w-full w-max flex flex-col">
+                {header}
+                {visibleRows.length === 0 ? (
+                    <div className="flex min-h-[160px] flex-1 items-center justify-center py-12 text-center text-muted-foreground">
+                        <div>
+                            <p className="text-[13px]">{emptyLabel}</p>
+                            {emptyHint && <p className="mt-1 text-[11px]">{emptyHint}</p>}
                         </div>
-                    );
-                })}
+                    </div>
+                ) : (
+                    <div style={{ height: rowVirtualizer.getTotalSize(), position: 'relative', width: '100%' }}>
+                        {virtualItems.map((virtualItem) => {
+                            const sliceIndex = windowOffset !== undefined ? virtualItem.index - windowOffset : virtualItem.index;
+                            const row = visibleRows[sliceIndex];
+                            if (!row) {
+                                return (
+                                    <div
+                                        key={`placeholder-${virtualItem.index}`}
+                                        style={{
+                                            position: 'absolute',
+                                            top: 0,
+                                            left: 0,
+                                            minWidth: '100%',
+                                            width: 'max-content',
+                                            height: virtualItem.size,
+                                            transform: `translateY(${virtualItem.start}px)`,
+                                        }}
+                                        className="flex items-center px-4 border-b border-border/40 text-xs text-muted-foreground/60 bg-accent/10 animate-pulse"
+                                    >
+                                        <span>Loading row #{virtualItem.index + 1}...</span>
+                                    </div>
+                                );
+                            }
+                            const rowId = row.original.id;
+
+                            return (
+                                <div
+                                    key={row.id}
+                                    style={{
+                                        position: 'absolute',
+                                        top: 0,
+                                        left: 0,
+                                        minWidth: '100%',
+                                        width: 'max-content',
+                                        height: virtualItem.size,
+                                        transform: `translateY(${virtualItem.start}px)`,
+                                    }}
+                                >
+                                    <TableRow
+                                        row={row}
+                                        selected={selectedIds.has(rowId)}
+                                        columnOrder={columnOrder}
+                                        onRowClick={handleRowClick}
+                                        onContextMenu={handleRowContextMenu}
+                                        getActionIds={getActionIds}
+                                        renderContextMenu={renderContextMenu}
+                                        onRemove={onRemove}
+                                    />
+                                </div>
+                            );
+                        })}
+                    </div>
+                )}
             </div>
         </div>
     );
@@ -1017,13 +1028,10 @@ export default function DataTable<TData extends BaseRow>({
     return (
         <div
             ref={containerRef}
-            className={fillHeight ? 'flex h-full min-h-0 w-full flex-col bg-background' : 'w-full flex flex-col bg-background'}
+            className={fillHeight ? 'flex h-full min-h-0 w-full flex-col bg-background overflow-hidden' : 'w-full flex flex-col bg-background overflow-hidden'}
         >
-            <div className={fillHeight
-                ? 'flex min-h-0 flex-1 flex-col overflow-hidden bg-card'
-                : 'overflow-hidden bg-card'
-            }>
-                <div className={fillHeight ? 'shrink-0' : undefined}>
+            <RowsViewport
+                header={
                     <TableHeaderRow
                         table={table}
                         columnOrder={columnOrder}
@@ -1033,24 +1041,21 @@ export default function DataTable<TData extends BaseRow>({
                         onResizeStart={handleResizeStart}
                         onResizeReset={handleResizeReset}
                     />
-                </div>
-
-                <RowsViewport
-                    visibleRows={visibleRows}
-                    columnOrder={columnOrder}
-                    selectedIds={selectedIds}
-                    setSelectedIds={setSelectedIds}
-                    maxHeight={maxHeight}
-                    fillHeight={fillHeight}
-                    emptyLabel={emptyLabel}
-                    emptyHint={emptyHint}
-                    renderContextMenu={resolvedRenderContextMenu}
-                    onRemove={removeIds}
-                    totalCount={totalCount}
-                    windowOffset={windowOffset}
-                    onScrollWindowChange={onScrollWindowChange}
-                />
-            </div>
+                }
+                visibleRows={visibleRows}
+                columnOrder={columnOrder}
+                selectedIds={selectedIds}
+                setSelectedIds={setSelectedIds}
+                maxHeight={maxHeight}
+                fillHeight={fillHeight}
+                emptyLabel={emptyLabel}
+                emptyHint={emptyHint}
+                renderContextMenu={resolvedRenderContextMenu}
+                onRemove={removeIds}
+                totalCount={totalCount}
+                windowOffset={windowOffset}
+                onScrollWindowChange={onScrollWindowChange}
+            />
         </div>
     );
 }

@@ -27,18 +27,18 @@ export const httpColumns: ColumnDef<HttpTransaction, any>[] = [
     columnHelper.accessor('id', {
         id: 'id',
         header: 'ID',
-        size: 56,
-        minSize: 56,
+        size: 64,
+        minSize: 50,
         cell: (info) => {
             const selected = isRowSelected(info);
-            return <span className={`font-mono text-[11px] ${selected ? 'text-primary-foreground/80' : 'text-muted-foreground'}`}>{info.getValue()}</span>;
+            return <span className={`font-mono text-[11px] whitespace-nowrap ${selected ? 'text-primary-foreground/80' : 'text-muted-foreground'}`}>{info.getValue()}</span>;
         },
     }),
     columnHelper.accessor('method', {
         id: 'method',
         header: 'Method',
-        size: 120,
-        minSize: 120,
+        size: 90,
+        minSize: 70,
         cell: (info) => {
             const selected = isRowSelected(info);
             return <MethodBadge method={info.getValue()} selected={selected} />;
@@ -47,33 +47,33 @@ export const httpColumns: ColumnDef<HttpTransaction, any>[] = [
     columnHelper.accessor('host', {
         id: 'host',
         header: 'Host',
-        size: 200,
-        minSize: 200,
+        size: 220,
+        minSize: 120,
         cell: (info) => {
             const selected = isRowSelected(info);
-            return <span className={`truncate font-mono text-[12px] ${selected ? 'text-primary-foreground' : 'text-foreground'}`}>{info.getValue()}</span>;
+            return <span className={`truncate font-mono text-[12px] whitespace-nowrap ${selected ? 'text-primary-foreground' : 'text-foreground'}`}>{info.getValue()}</span>;
         },
     }),
     columnHelper.accessor('path', {
         id: 'path',
         header: 'Path',
-        size: 260,
-        minSize: 260,
+        size: 320,
+        minSize: 150,
         cell: (info) => {
             const selected = isRowSelected(info);
-            return <span className={`truncate font-mono text-[12px] ${selected ? 'text-primary-foreground/90' : 'text-foreground'}`}>{info.getValue()}</span>;
+            return <span className={`truncate font-mono text-[12px] whitespace-nowrap ${selected ? 'text-primary-foreground/90' : 'text-foreground'}`}>{info.getValue()}</span>;
         },
     }),
     columnHelper.accessor('query', {
         id: 'query',
         header: 'Query',
-        size: 200,
-        minSize: 200,
+        size: 240,
+        minSize: 100,
         cell: (info) => {
             const selected = isRowSelected(info);
             const value = info.getValue();
             return (
-                <span className={`truncate font-mono text-[12px] ${selected ? 'text-primary-foreground/70' : 'text-muted-foreground'}`}>
+                <span className={`truncate font-mono text-[12px] whitespace-nowrap ${selected ? 'text-primary-foreground/70' : 'text-muted-foreground'}`}>
                     {value ?? '—'}
                 </span>
             );
@@ -82,13 +82,13 @@ export const httpColumns: ColumnDef<HttpTransaction, any>[] = [
     columnHelper.accessor('extension', {
         id: 'extension',
         header: 'Ext',
-        size: 64,
-        minSize: 64,
+        size: 70,
+        minSize: 50,
         cell: (info) => {
             const selected = isRowSelected(info);
             const value = info.getValue();
             return (
-                <span className={`text-[12px] ${selected ? 'text-primary-foreground/70' : 'text-muted-foreground'}`}>
+                <span className={`text-[12px] whitespace-nowrap ${selected ? 'text-primary-foreground/70' : 'text-muted-foreground'}`}>
                     {value ?? '—'}
                 </span>
             );
@@ -97,43 +97,43 @@ export const httpColumns: ColumnDef<HttpTransaction, any>[] = [
     columnHelper.accessor('statusCode', {
         id: 'statusCode',
         header: 'Status',
-        size: 80,
-        minSize: 80,
+        size: 85,
+        minSize: 65,
         cell: (info) => {
             const selected = isRowSelected(info);
             const value = info.getValue();
-            return <span className={`text-[12px] font-semibold ${codeColor(value, selected)}`}>{value || '—'}</span>;
+            return <span className={`text-[12px] font-semibold whitespace-nowrap ${codeColor(value, selected)}`}>{value || '—'}</span>;
         },
     }),
     columnHelper.accessor('responseLength', {
         id: 'responseLength',
         header: 'Length',
-        size: 84,
-        minSize: 84,
+        size: 95,
+        minSize: 70,
         cell: (info) => {
             const selected = isRowSelected(info);
-            return <span className={`text-[12px] tabular-nums ${selected ? 'text-primary-foreground/80' : 'text-muted-foreground'}`}>{info.getValue()} B</span>;
+            return <span className={`text-[12px] tabular-nums whitespace-nowrap ${selected ? 'text-primary-foreground/80' : 'text-muted-foreground'}`}>{info.getValue()} B</span>;
         },
     }),
     columnHelper.accessor('responseTimeMs', {
         id: 'responseTimeMs',
         header: 'Duration (ms)',
         size: 150,
-        minSize: 150,
+        minSize: 120,
         cell: (info) => {
             const selected = isRowSelected(info);
-            return <span className={`text-[12px] tabular-nums ${selected ? 'text-primary-foreground/80' : 'text-muted-foreground'}`}>{info.getValue()}</span>;
+            return <span className={`text-[12px] tabular-nums whitespace-nowrap ${selected ? 'text-primary-foreground/80' : 'text-muted-foreground'}`}>{info.getValue()}</span>;
         },
     }),
     columnHelper.accessor('sentAtMs', {
         id: 'sentAtMs',
         header: 'Sent at',
-        size: 130,
+        size: 160,
         minSize: 130,
         cell: (info) => {
             const selected = isRowSelected(info);
             return (
-                <span className={`text-[12px] tabular-nums ${selected ? 'text-primary-foreground/80' : 'text-muted-foreground'}`}>
+                <span className={`text-[12px] tabular-nums whitespace-nowrap ${selected ? 'text-primary-foreground/80' : 'text-muted-foreground'}`}>
                     {(() => {
                         const date = new Date(info.getValue());
                         const pad = (value: number) => String(value).padStart(2, '0');
