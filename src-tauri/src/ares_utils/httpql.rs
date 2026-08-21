@@ -2,6 +2,7 @@ use chrono::{DateTime, NaiveDate, NaiveDateTime};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use crate::ares_utils::parse::split_message;
 
 pub fn parse_datetime_to_ms(s: &str) -> Option<i64> {
     let trimmed = s.trim().trim_matches(|c| c == '"' || c == '\'');
@@ -1025,9 +1026,6 @@ fn compile_condition_to_sql(
             let preset_name = val_str.replace('_', "-");
             let preset_trimmed = preset_name.trim_matches(|c| c == '"' || c == '\'');
             match preset_trimmed {
-                "hide-static" | "no-images" | "static" | "no-static" => {
-                    builder.push("COALESCE(extension, '') NOT IN ('css', 'js', 'png', 'jpg', 'jpeg', 'gif', 'svg', 'woff', 'woff2', 'ico', 'ttf', 'map', 'webp', 'avif', 'mp4', 'mp3', 'wasm')");
-                }
                 "errors-only" | "errors" | "error" | "4xx" | "5xx" => {
                     builder.push("status_code >= 400");
                 }
@@ -1045,6 +1043,9 @@ fn compile_condition_to_sql(
                 }
                 "has-params" | "params" => {
                     builder.push("query IS NOT NULL AND query != ''");
+                }
+                "hide-static" | "no-images" | "static" | "no-static" => {
+                    builder.push("(COALESCE(extension, '') = '' OR LOWER(COALESCE(extension, '')) NOT IN ('css', 'js', 'png', 'jpg', 'jpeg', 'gif', 'svg', 'woff', 'woff2', 'ico', 'ttf', 'map', 'webp', 'avif', 'mp4', 'mp3', 'wasm', 'eot', 'otf', 'mjs', 'webmanifest', 'xml', 'txt'))");
                 }
                 _ => {
                     builder.push("1=1");
@@ -1074,7 +1075,7 @@ fn compile_str_field(
     col: &str,
     op: HttpqlOperator,
     val: &HttpqlValue,
-    exact_case_insensitive: bool,
+    case_insensitive: bool,
 ) {
     match op {
         HttpqlOperator::Eq => match val {
@@ -1093,7 +1094,7 @@ fn compile_str_field(
             }
             _ => {
                 let s = val_as_string(val);
-                if exact_case_insensitive {
+                if case_insensitive {
                     builder.push(col);
                     builder.push(" = ");
                     builder.push_bind(s);
@@ -1126,48 +1127,174 @@ fn compile_str_field(
                 builder.push_bind(s);
             }
         },
-        HttpqlOperator::Cont => {
-            let s = val_as_string(val);
-            let pattern = format!("%{}%", s);
-            builder.push(col);
-            builder.push(" LIKE ");
-            builder.push_bind(pattern);
-        }
-        HttpqlOperator::Ncont => {
-            let s = val_as_string(val);
-            let pattern = format!("%{}%", s);
-            builder.push(col);
-            builder.push(" NOT LIKE ");
-            builder.push_bind(pattern);
-        }
-        HttpqlOperator::Sw => {
-            let s = val_as_string(val);
-            let pattern = format!("{}%", s);
-            builder.push(col);
-            builder.push(" LIKE ");
-            builder.push_bind(pattern);
-        }
-        HttpqlOperator::Nsw => {
-            let s = val_as_string(val);
-            let pattern = format!("{}%", s);
-            builder.push(col);
-            builder.push(" NOT LIKE ");
-            builder.push_bind(pattern);
-        }
-        HttpqlOperator::Ew => {
-            let s = val_as_string(val);
-            let pattern = format!("%{}", s);
-            builder.push(col);
-            builder.push(" LIKE ");
-            builder.push_bind(pattern);
-        }
-        HttpqlOperator::New => {
-            let s = val_as_string(val);
-            let pattern = format!("%{}", s);
-            builder.push(col);
-            builder.push(" NOT LIKE ");
-            builder.push_bind(pattern);
-        }
+        HttpqlOperator::Cont => match val {
+            HttpqlValue::List(list) => {
+                if list.is_empty() {
+                    builder.push("1=0");
+                } else {
+                    builder.push("(");
+                    let mut first = true;
+                    for item in list {
+                        if !first {
+                            builder.push(" OR ");
+                        }
+                        first = false;
+                        let pattern = format!("%{}%", item);
+                        builder.push(col);
+                        builder.push(" LIKE ");
+                        builder.push_bind(pattern);
+                    }
+                    builder.push(")");
+                }
+            }
+            _ => {
+                let s = val_as_string(val);
+                let pattern = format!("%{}%", s);
+                builder.push(col);
+                builder.push(" LIKE ");
+                builder.push_bind(pattern);
+            }
+        },
+        HttpqlOperator::Ncont => match val {
+            HttpqlValue::List(list) => {
+                if list.is_empty() {
+                    builder.push("1=1");
+                } else {
+                    builder.push("(");
+                    let mut first = true;
+                    for item in list {
+                        if !first {
+                            builder.push(" AND ");
+                        }
+                        first = false;
+                        let pattern = format!("%{}%", item);
+                        builder.push(col);
+                        builder.push(" NOT LIKE ");
+                        builder.push_bind(pattern);
+                    }
+                    builder.push(")");
+                }
+            }
+            _ => {
+                let s = val_as_string(val);
+                let pattern = format!("%{}%", s);
+                builder.push(col);
+                builder.push(" NOT LIKE ");
+                builder.push_bind(pattern);
+            }
+        },
+        HttpqlOperator::Sw => match val {
+            HttpqlValue::List(list) => {
+                if list.is_empty() {
+                    builder.push("1=0");
+                } else {
+                    builder.push("(");
+                    let mut first = true;
+                    for item in list {
+                        if !first {
+                            builder.push(" OR ");
+                        }
+                        first = false;
+                        let pattern = format!("{}%", item);
+                        builder.push(col);
+                        builder.push(" LIKE ");
+                        builder.push_bind(pattern);
+                    }
+                    builder.push(")");
+                }
+            }
+            _ => {
+                let s = val_as_string(val);
+                let pattern = format!("{}%", s);
+                builder.push(col);
+                builder.push(" LIKE ");
+                builder.push_bind(pattern);
+            }
+        },
+        HttpqlOperator::Nsw => match val {
+            HttpqlValue::List(list) => {
+                if list.is_empty() {
+                    builder.push("1=1");
+                } else {
+                    builder.push("(");
+                    let mut first = true;
+                    for item in list {
+                        if !first {
+                            builder.push(" AND ");
+                        }
+                        first = false;
+                        let pattern = format!("{}%", item);
+                        builder.push(col);
+                        builder.push(" NOT LIKE ");
+                        builder.push_bind(pattern);
+                    }
+                    builder.push(")");
+                }
+            }
+            _ => {
+                let s = val_as_string(val);
+                let pattern = format!("{}%", s);
+                builder.push(col);
+                builder.push(" NOT LIKE ");
+                builder.push_bind(pattern);
+            }
+        },
+        HttpqlOperator::Ew => match val {
+            HttpqlValue::List(list) => {
+                if list.is_empty() {
+                    builder.push("1=0");
+                } else {
+                    builder.push("(");
+                    let mut first = true;
+                    for item in list {
+                        if !first {
+                            builder.push(" OR ");
+                        }
+                        first = false;
+                        let pattern = format!("%{}", item);
+                        builder.push(col);
+                        builder.push(" LIKE ");
+                        builder.push_bind(pattern);
+                    }
+                    builder.push(")");
+                }
+            }
+            _ => {
+                let s = val_as_string(val);
+                let pattern = format!("%{}", s);
+                builder.push(col);
+                builder.push(" LIKE ");
+                builder.push_bind(pattern);
+            }
+        },
+        HttpqlOperator::New => match val {
+            HttpqlValue::List(list) => {
+                if list.is_empty() {
+                    builder.push("1=1");
+                } else {
+                    builder.push("(");
+                    let mut first = true;
+                    for item in list {
+                        if !first {
+                            builder.push(" AND ");
+                        }
+                        first = false;
+                        let pattern = format!("%{}", item);
+                        builder.push(col);
+                        builder.push(" NOT LIKE ");
+                        builder.push_bind(pattern);
+                    }
+                    builder.push(")");
+                }
+            }
+            _ => {
+                let s = val_as_string(val);
+                let pattern = format!("%{}", s);
+                builder.push(col);
+                builder.push(" NOT LIKE ");
+                builder.push_bind(pattern);
+            }
+        },
         HttpqlOperator::In => {
             let list = val_as_list(val);
             if list.is_empty() {
@@ -1631,30 +1758,100 @@ fn eval_str_cmp(val: &str, op: HttpqlOperator, expected: &HttpqlValue, case_inse
                 }
             }
         },
-        HttpqlOperator::Cont => {
-            let exp_str = val_as_string(expected).to_lowercase();
-            val.to_lowercase().contains(&exp_str)
-        }
-        HttpqlOperator::Ncont => {
-            let exp_str = val_as_string(expected).to_lowercase();
-            !val.to_lowercase().contains(&exp_str)
-        }
-        HttpqlOperator::Sw => {
-            let exp_str = val_as_string(expected).to_lowercase();
-            val.to_lowercase().starts_with(&exp_str)
-        }
-        HttpqlOperator::Nsw => {
-            let exp_str = val_as_string(expected).to_lowercase();
-            !val.to_lowercase().starts_with(&exp_str)
-        }
-        HttpqlOperator::Ew => {
-            let exp_str = val_as_string(expected).to_lowercase();
-            val.to_lowercase().ends_with(&exp_str)
-        }
-        HttpqlOperator::New => {
-            let exp_str = val_as_string(expected).to_lowercase();
-            !val.to_lowercase().ends_with(&exp_str)
-        }
+        HttpqlOperator::Cont => match expected {
+            HttpqlValue::List(list) => {
+                let v = val.to_lowercase();
+                list.iter().any(|item| v.contains(&item.to_lowercase()))
+            }
+            _ => {
+                let exp_str = val_as_string(expected).to_lowercase();
+                val.to_lowercase().contains(&exp_str)
+            }
+        },
+        HttpqlOperator::Ncont => match expected {
+            HttpqlValue::List(list) => {
+                let v = val.to_lowercase();
+                !list.iter().any(|item| v.contains(&item.to_lowercase()))
+            }
+            _ => {
+                let exp_str = val_as_string(expected).to_lowercase();
+                !val.to_lowercase().contains(&exp_str)
+            }
+        },
+        HttpqlOperator::Sw => match expected {
+            HttpqlValue::List(list) => {
+                let v = val.to_lowercase();
+                list.iter().any(|item| v.starts_with(&item.to_lowercase()))
+            }
+            _ => {
+                let exp_str = val_as_string(expected).to_lowercase();
+                val.to_lowercase().starts_with(&exp_str)
+            }
+        },
+        HttpqlOperator::Nsw => match expected {
+            HttpqlValue::List(list) => {
+                let v = val.to_lowercase();
+                !list.iter().any(|item| v.starts_with(&item.to_lowercase()))
+            }
+            _ => {
+                let exp_str = val_as_string(expected).to_lowercase();
+                !val.to_lowercase().starts_with(&exp_str)
+            }
+        },
+        HttpqlOperator::Ew => match expected {
+            HttpqlValue::List(list) => {
+                let v = val.to_lowercase();
+                list.iter().any(|item| v.ends_with(&item.to_lowercase()))
+            }
+            _ => {
+                let exp_str = val_as_string(expected).to_lowercase();
+                val.to_lowercase().ends_with(&exp_str)
+            }
+        },
+        HttpqlOperator::New => match expected {
+            HttpqlValue::List(list) => {
+                let v = val.to_lowercase();
+                !list.iter().any(|item| v.ends_with(&item.to_lowercase()))
+            }
+            _ => {
+                let exp_str = val_as_string(expected).to_lowercase();
+                !val.to_lowercase().ends_with(&exp_str)
+            }
+        },
+        HttpqlOperator::In => match expected {
+            HttpqlValue::List(list) => {
+                if case_insensitive {
+                    list.iter().any(|item| item.eq_ignore_ascii_case(val))
+                } else {
+                    list.iter().any(|item| item == val)
+                }
+            }
+            _ => {
+                let exp_str = val_as_string(expected);
+                if case_insensitive {
+                    val.eq_ignore_ascii_case(&exp_str)
+                } else {
+                    val == exp_str
+                }
+            }
+        },
+        HttpqlOperator::Nin => match expected {
+            HttpqlValue::List(list) => {
+                if case_insensitive {
+                    !list.iter().any(|item| item.eq_ignore_ascii_case(val))
+                } else {
+                    !list.iter().any(|item| item == val)
+                }
+            }
+            _ => {
+                let exp_str = val_as_string(expected);
+                if case_insensitive {
+                    !val.eq_ignore_ascii_case(&exp_str)
+                } else {
+                    val != exp_str
+                }
+            }
+        },
         HttpqlOperator::Like => {
             let pattern = val_as_string(expected);
             if let Ok(re) = sql_like_to_regex(&pattern) {
@@ -1687,14 +1884,6 @@ fn eval_str_cmp(val: &str, op: HttpqlOperator, expected: &HttpqlValue, case_inse
                 !val.contains(&exp_str)
             }
         }
-        HttpqlOperator::In => {
-            let list = val_as_list(expected);
-            list.iter().any(|item| item.eq_ignore_ascii_case(val))
-        }
-        HttpqlOperator::Nin => {
-            let list = val_as_list(expected);
-            !list.iter().any(|item| item.eq_ignore_ascii_case(val))
-        }
         HttpqlOperator::Gt => val_cmp > val_as_string(expected).to_lowercase(),
         HttpqlOperator::Ge => val_cmp >= val_as_string(expected).to_lowercase(),
         HttpqlOperator::Lt => val_cmp < val_as_string(expected).to_lowercase(),
@@ -1705,12 +1894,14 @@ fn eval_str_cmp(val: &str, op: HttpqlOperator, expected: &HttpqlValue, case_inse
 fn eval_num_cmp(val: i64, op: HttpqlOperator, expected: &HttpqlValue) -> bool {
     match op {
         HttpqlOperator::Eq => match expected {
-            HttpqlValue::List(list) => list.iter().any(|item| item.parse::<i64>().ok() == Some(val)),
-            _ => val == val_as_num(expected),
+            HttpqlValue::Number(n) => val == *n,
+            HttpqlValue::List(list) => list.iter().any(|item| item.parse::<i64>().map(|n| n == val).unwrap_or(false)),
+            _ => val_as_string(expected).parse::<i64>().map(|n| n == val).unwrap_or(false),
         },
         HttpqlOperator::Ne => match expected {
-            HttpqlValue::List(list) => !list.iter().any(|item| item.parse::<i64>().ok() == Some(val)),
-            _ => val != val_as_num(expected),
+            HttpqlValue::Number(n) => val != *n,
+            HttpqlValue::List(list) => !list.iter().any(|item| item.parse::<i64>().map(|n| n == val).unwrap_or(false)),
+            _ => val_as_string(expected).parse::<i64>().map(|n| n != val).unwrap_or(false),
         },
         HttpqlOperator::Gt => val > val_as_num(expected),
         HttpqlOperator::Ge => val >= val_as_num(expected),
@@ -1724,31 +1915,31 @@ fn eval_num_cmp(val: i64, op: HttpqlOperator, expected: &HttpqlValue) -> bool {
             let list = val_as_num_list(expected);
             !list.contains(&val)
         }
-        _ => val == val_as_num(expected),
+        _ => true,
     }
 }
 
 fn eval_header_cmp(raw: &str, header_name: Option<&str>, op: HttpqlOperator, expected: &HttpqlValue) -> bool {
-    let exp_str = val_as_string(expected).to_lowercase();
-    let raw_lower = raw.to_lowercase();
+    let (head, _) = split_message(raw);
+    let hname = match header_name {
+        Some(name) => name.to_lowercase(),
+        None => "".to_string(),
+    };
 
-    if let Some(hname) = header_name {
-        let hname_lower = hname.to_lowercase();
-        // Look for lines starting with "header-name:"
-        let has_match = raw_lower
-            .lines()
-            .any(|line| line.starts_with(&format!("{}:", hname_lower)) && line.contains(&exp_str));
-        match op {
-            HttpqlOperator::Ne | HttpqlOperator::Ncont => !has_match,
-            _ => has_match,
-        }
-    } else {
-        let has_match = raw_lower.contains(&exp_str);
-        match op {
-            HttpqlOperator::Ne | HttpqlOperator::Ncont => !has_match,
-            _ => has_match,
+    if hname.is_empty() {
+        return eval_str_cmp(head, op, expected, true);
+    }
+
+    for line in head.lines().skip(1) {
+        if let Some((k, v)) = line.split_once(':') {
+            if k.trim().eq_ignore_ascii_case(&hname) {
+                if eval_str_cmp(v.trim(), op, expected, true) {
+                    return true;
+                }
+            }
         }
     }
+    false
 }
 
 fn sql_like_to_regex(pattern: &str) -> Result<Regex, regex::Error> {
@@ -1968,5 +2159,33 @@ mod tests {
 
         let q14 = parse_httpql("preset:\"hide-static\"").unwrap().unwrap();
         assert!(q14.evaluate(&row));
+
+        let static_row = MockRow {
+            id: 2,
+            method: "GET".to_string(),
+            host: "api.example.com".to_string(),
+            path: "/assets/logo.png".to_string(),
+            query: None,
+            extension: Some("png".to_string()),
+            status_code: 200,
+            response_length: 5400,
+            response_time_ms: 30,
+            sent_at_ms: 1690000000000,
+            state: "Success".to_string(),
+            is_https: true,
+            raw_request: "GET /assets/logo.png HTTP/1.1\r\nHost: api.example.com\r\n\r\n".to_string(),
+            raw_response: "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\n\r\n".to_string(),
+        };
+
+        // Static row should NOT match hide-static filter
+        assert!(!q14.evaluate(&static_row));
+
+        let q15 = parse_httpql("req.ext.nin:[\"png\", \"jpg\", \"css\", \"js\"]").unwrap().unwrap();
+        assert!(q15.evaluate(&row));
+        assert!(!q15.evaluate(&static_row));
+
+        let q16 = parse_httpql("req.ext.nin:[\".png\", \".jpg\", \".css\", \".js\"]").unwrap().unwrap();
+        assert!(q16.evaluate(&row));
+        assert!(!q16.evaluate(&static_row));
     }
 }

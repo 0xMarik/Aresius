@@ -50,7 +50,7 @@ pub fn get_default_presets(project_id: &str) -> Vec<PresetFilterItem> {
             project_id: project_id.to_string(),
             name: "Hide Static".to_string(),
             alias: "hide-static".to_string(),
-            expression: "req.ext.ncont:['.css', '.js', '.png', '.jpg', '.jpeg', '.gif', '.svg', '.woff', '.woff2', '.ico', '.ttf', '.map', '.webp', '.avif', '.mp4', '.mp3', '.wasm']".to_string(),
+            expression: "req.ext.nin:['css', 'js', 'png', 'jpg', 'jpeg', 'gif', 'svg', 'woff', 'woff2', 'ico', 'ttf', 'map', 'webp', 'avif', 'mp4', 'mp3', 'wasm', 'eot', 'otf']".to_string(),
             description: "Hide static assets (images, CSS, JS, fonts, maps)".to_string(),
             badge: "Noise".to_string(),
             apply_in_interception: false,
@@ -176,13 +176,58 @@ pub async fn seed_default_presets_if_empty(
     Ok(())
 }
 
+pub async fn sync_interception_filters_to_state(
+    pool: &sqlx::SqlitePool,
+    project_id: &str,
+    intercept_state: &crate::proxy::interceptor::InterceptState,
+) -> Result<(), String> {
+    seed_default_presets_if_empty(pool, project_id).await?;
+
+    let rows = sqlx::query_as::<_, DbPresetFilterRow>(
+        "SELECT id, project_id, name, alias, expression, description, badge, apply_in_interception, sort_order, created_at, updated_at
+         FROM preset_filters
+         WHERE project_id = ?
+         ORDER BY sort_order ASC, created_at ASC",
+    )
+    .bind(project_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let mut preset_map = std::collections::HashMap::new();
+    for r in &rows {
+        preset_map.insert(r.alias.to_lowercase(), r.expression.clone());
+    }
+
+    let active_filters: Vec<(String, String, String)> = rows
+        .into_iter()
+        .filter(|r| r.apply_in_interception)
+        .map(|r| (r.id, r.name, r.expression))
+        .collect();
+
+    intercept_state.update_filters(active_filters, &preset_map).await;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn sync_interception_filters_db(
+    db: State<'_, DbState>,
+    intercept_state: State<'_, crate::proxy::interceptor::InterceptState>,
+    project_id: String,
+) -> Result<(), String> {
+    let pool = db.pool().await?;
+    sync_interception_filters_to_state(&pool, &project_id, &intercept_state).await
+}
+
 #[tauri::command]
 pub async fn get_preset_filters_db(
     db: State<'_, DbState>,
+    intercept_state: State<'_, crate::proxy::interceptor::InterceptState>,
     project_id: String,
 ) -> Result<Vec<PresetFilterItem>, String> {
     let pool = db.pool().await?;
     seed_default_presets_if_empty(&pool, &project_id).await?;
+    let _ = sync_interception_filters_to_state(&pool, &project_id, &intercept_state).await;
 
     let rows = sqlx::query_as::<_, DbPresetFilterRow>(
         "SELECT id, project_id, name, alias, expression, description, badge, apply_in_interception, sort_order, created_at, updated_at
@@ -216,6 +261,7 @@ pub async fn get_preset_filters_db(
 #[tauri::command]
 pub async fn save_preset_filter_db(
     db: State<'_, DbState>,
+    intercept_state: State<'_, crate::proxy::interceptor::InterceptState>,
     filter: PresetFilterItem,
 ) -> Result<PresetFilterItem, String> {
     let pool = db.pool().await?;
@@ -256,6 +302,8 @@ pub async fn save_preset_filter_db(
     .await
     .map_err(|e| e.to_string())?;
 
+    let _ = sync_interception_filters_to_state(&pool, &filter.project_id, &intercept_state).await;
+
     Ok(PresetFilterItem {
         created_at,
         updated_at,
@@ -266,6 +314,7 @@ pub async fn save_preset_filter_db(
 #[tauri::command]
 pub async fn delete_preset_filter_db(
     db: State<'_, DbState>,
+    intercept_state: State<'_, crate::proxy::interceptor::InterceptState>,
     project_id: String,
     id: String,
 ) -> Result<(), String> {
@@ -277,12 +326,15 @@ pub async fn delete_preset_filter_db(
         .await
         .map_err(|e| e.to_string())?;
 
+    let _ = sync_interception_filters_to_state(&pool, &project_id, &intercept_state).await;
+
     Ok(())
 }
 
 #[tauri::command]
 pub async fn reset_default_preset_filters_db(
     db: State<'_, DbState>,
+    intercept_state: State<'_, crate::proxy::interceptor::InterceptState>,
     project_id: String,
 ) -> Result<Vec<PresetFilterItem>, String> {
     let pool = db.pool().await?;
@@ -293,5 +345,29 @@ pub async fn reset_default_preset_filters_db(
         .map_err(|e| e.to_string())?;
 
     seed_default_presets_if_empty(&pool, &project_id).await?;
-    get_preset_filters_db(db, project_id).await
+    get_preset_filters_db(db, intercept_state, project_id).await
+}
+
+#[tauri::command]
+pub async fn toggle_preset_filter_interception_db(
+    db: State<'_, DbState>,
+    intercept_state: State<'_, crate::proxy::interceptor::InterceptState>,
+    project_id: String,
+    id: String,
+    apply_in_interception: bool,
+) -> Result<(), String> {
+    let pool = db.pool().await?;
+    let now = now_ms();
+    sqlx::query("UPDATE preset_filters SET apply_in_interception = ?, updated_at = ? WHERE project_id = ? AND id = ?")
+        .bind(if apply_in_interception { 1i64 } else { 0i64 })
+        .bind(now)
+        .bind(&project_id)
+        .bind(&id)
+        .execute(&pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let _ = sync_interception_filters_to_state(&pool, &project_id, &intercept_state).await;
+
+    Ok(())
 }

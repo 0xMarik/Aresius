@@ -1,3 +1,5 @@
+use crate::ares_utils::httpql::{parse_httpql_with_presets, HttpTransactionEvaluable, HttpqlExpr};
+use std::collections::HashMap;
 use tokio::sync::{oneshot, Mutex, RwLock};
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -360,6 +362,46 @@ pub enum InterceptDecision {
     Drop,
 }
 
+#[derive(Debug, Clone)]
+pub struct InterceptFilterRule {
+    pub id: String,
+    pub name: String,
+    pub expr: HttpqlExpr,
+}
+
+pub struct InterceptEvalContext<'a> {
+    pub method: &'a str,
+    pub host: &'a str,
+    pub path: &'a str,
+    pub query: Option<&'a str>,
+    pub extension: Option<&'a str>,
+    pub status_code: i64,
+    pub response_length: i64,
+    pub response_time_ms: i64,
+    pub sent_at_ms: i64,
+    pub state: &'a str,
+    pub is_https: bool,
+    pub raw_request: Option<&'a str>,
+    pub raw_response: Option<&'a str>,
+}
+
+impl<'a> HttpTransactionEvaluable for InterceptEvalContext<'a> {
+    fn eval_id(&self) -> u32 { 0 }
+    fn eval_method(&self) -> &str { self.method }
+    fn eval_host(&self) -> &str { self.host }
+    fn eval_path(&self) -> &str { self.path }
+    fn eval_query(&self) -> Option<&str> { self.query }
+    fn eval_ext(&self) -> Option<&str> { self.extension }
+    fn eval_status_code(&self) -> i64 { self.status_code }
+    fn eval_response_length(&self) -> i64 { self.response_length }
+    fn eval_response_time_ms(&self) -> i64 { self.response_time_ms }
+    fn eval_sent_at_ms(&self) -> i64 { self.sent_at_ms }
+    fn eval_state(&self) -> &str { self.state }
+    fn eval_is_https(&self) -> bool { self.is_https }
+    fn eval_raw_request(&self) -> Option<&str> { self.raw_request }
+    fn eval_raw_response(&self) -> Option<&str> { self.raw_response }
+}
+
 pub struct PendingEntry {
     pub item: InterceptItem,
     pub sender: oneshot::Sender<InterceptDecision>,
@@ -367,6 +409,7 @@ pub struct PendingEntry {
 
 pub struct InterceptState {
     pub settings: RwLock<InterceptSettings>,
+    pub filters: RwLock<Vec<InterceptFilterRule>>,
     pub pending: Mutex<Vec<PendingEntry>>,
 }
 
@@ -374,15 +417,32 @@ impl InterceptState {
     pub fn new() -> Self {
         Self {
             settings: RwLock::new(InterceptSettings::default()),
+            filters: RwLock::new(Vec::new()),
             pending: Mutex::new(Vec::new()),
         }
     }
 
-    pub async fn should_intercept(
+    pub async fn update_filters(
+        &self,
+        filters: Vec<(String, String, String)>,
+        all_presets: &HashMap<String, String>,
+    ) {
+        let mut compiled = Vec::new();
+        for (id, name, expr_str) in filters {
+            if let Ok(Some(expr)) = parse_httpql_with_presets(&expr_str, all_presets) {
+                compiled.push(InterceptFilterRule { id, name, expr });
+            }
+        }
+        let mut current = self.filters.write().await;
+        *current = compiled;
+    }
+
+    pub async fn should_intercept<T: HttpTransactionEvaluable>(
         &self,
         item_type: InterceptItemType,
         target_host: &str,
         path: &str,
+        ctx: &T,
     ) -> bool {
         let settings = self.settings.read().await;
         let enabled = match item_type {
@@ -397,6 +457,15 @@ impl InterceptState {
         if settings.scope_filter_enabled {
             let host = target_host.split(':').next().unwrap_or(target_host);
             if !is_in_scope(settings.active_scope.as_ref(), host, path) {
+                return false;
+            }
+        }
+
+        // Evaluate active interception preset filters
+        let filters = self.filters.read().await;
+        for filter in filters.iter() {
+            if !filter.expr.evaluate(ctx) {
+                // If any active interception filter rejects this traffic, do not intercept
                 return false;
             }
         }
@@ -664,5 +733,66 @@ mod tests {
             validate_http_message("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n", false).is_ok()
         );
         assert!(validate_http_message("200 OK", false).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_interceptor_filter_evaluation() {
+        let state = InterceptState::new();
+        {
+            let mut s = state.settings.write().await;
+            s.requests_enabled = true;
+            s.responses_enabled = true;
+        }
+
+        // Add hide-static filter to active interception filters
+        let presets = HashMap::new();
+        state
+            .update_filters(
+                vec![(
+                    "hide-static".to_string(),
+                    "Hide Static".to_string(),
+                    "req.ext.nin:['css', 'js', 'png', 'jpg']".to_string(),
+                )],
+                &presets,
+            )
+            .await;
+
+        let api_ctx = InterceptEvalContext {
+            method: "GET",
+            host: "api.example.com",
+            path: "/v1/users",
+            query: None,
+            extension: None,
+            status_code: 200,
+            response_length: 120,
+            response_time_ms: 50,
+            sent_at_ms: 1000,
+            state: "",
+            is_https: true,
+            raw_request: Some("GET /v1/users HTTP/1.1\r\n\r\n"),
+            raw_response: None,
+        };
+
+        let static_ctx = InterceptEvalContext {
+            method: "GET",
+            host: "api.example.com",
+            path: "/assets/bundle.js",
+            query: None,
+            extension: Some("js"),
+            status_code: 200,
+            response_length: 50000,
+            response_time_ms: 20,
+            sent_at_ms: 1000,
+            state: "",
+            is_https: true,
+            raw_request: Some("GET /assets/bundle.js HTTP/1.1\r\n\r\n"),
+            raw_response: None,
+        };
+
+        // API request should be intercepted (passes hide-static filter)
+        assert!(state.should_intercept(InterceptItemType::Request, "api.example.com", "/v1/users", &api_ctx).await);
+
+        // Static request should NOT be intercepted (blocked by hide-static filter)
+        assert!(!state.should_intercept(InterceptItemType::Request, "api.example.com", "/assets/bundle.js", &static_ctx).await);
     }
 }

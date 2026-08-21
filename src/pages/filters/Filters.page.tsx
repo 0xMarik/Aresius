@@ -9,6 +9,7 @@ import {
     setSelectedFilterId,
     createLocalFilterDraft,
     saveFilterToDb,
+    togglePresetInterception,
     deleteFilterFromDb,
     resetDefaultFiltersDb,
     fetchFiltersForProject,
@@ -180,6 +181,17 @@ export const FiltersPage: React.FC = () => {
 
         dispatch(createLocalFilterDraft({ projectId, filter: newFilter }));
         dispatch(saveFilterToDb({ projectId, filter: newFilter }));
+    };
+
+    const handleToggleInterception = async (checked: boolean) => {
+        setApplyInInterception(checked);
+        if (selectedFilter && projectId) {
+            dispatch(togglePresetInterception({
+                projectId,
+                id: selectedFilter.id,
+                applyInInterception: checked,
+            }));
+        }
     };
 
     const handleSave = async () => {
@@ -399,21 +411,44 @@ export const FiltersPage: React.FC = () => {
                                                     </div>
 
                                                     <div className="flex items-center gap-1.5 shrink-0">
-                                                        {item.applyInInterception && (
-                                                            <TooltipProvider>
-                                                                <Tooltip>
-                                                                    <TooltipTrigger asChild>
-                                                                        <div className="flex items-center text-amber-500 bg-amber-500/10 px-1.5 py-0.5 rounded text-[10px] font-mono border border-amber-500/20">
-                                                                            <Antenna className="w-2.5 h-2.5 mr-1" />
-                                                                            Intercept
-                                                                        </div>
-                                                                    </TooltipTrigger>
-                                                                    <TooltipContent side="top" className="text-xs">
-                                                                        Applied in Interception & default HTTP history
-                                                                    </TooltipContent>
-                                                                </Tooltip>
-                                                            </TooltipProvider>
-                                                        )}
+                                                        <TooltipProvider>
+                                                            <Tooltip>
+                                                                <TooltipTrigger asChild>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={(e) => {
+                                                                            e.stopPropagation();
+                                                                            if (!projectId) return;
+                                                                            const nextVal = !item.applyInInterception;
+                                                                            dispatch(
+                                                                                togglePresetInterception({
+                                                                                    projectId,
+                                                                                    id: item.id,
+                                                                                    applyInInterception: nextVal,
+                                                                                })
+                                                                            );
+                                                                            if (selectedFilter?.id === item.id) {
+                                                                                setApplyInInterception(nextVal);
+                                                                            }
+                                                                        }}
+                                                                        className={cn(
+                                                                            'flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono border transition-all cursor-pointer select-none',
+                                                                            item.applyInInterception
+                                                                                ? 'text-amber-500 bg-amber-500/10 border-amber-500/30 hover:bg-amber-500/20 font-semibold'
+                                                                                : 'text-muted-foreground/50 bg-muted/20 border-border/40 hover:text-foreground hover:bg-muted/60'
+                                                                        )}
+                                                                    >
+                                                                        <Antenna className="w-2.5 h-2.5 mr-1 shrink-0" />
+                                                                        {item.applyInInterception ? 'Intercept' : 'Off'}
+                                                                    </button>
+                                                                </TooltipTrigger>
+                                                                <TooltipContent side="top" className="text-xs">
+                                                                    {item.applyInInterception
+                                                                        ? 'Active in Interception & HTTP History. Click to turn off.'
+                                                                        : 'Inactive in Interception. Click to enable.'}
+                                                                </TooltipContent>
+                                                            </Tooltip>
+                                                        </TooltipProvider>
 
                                                         <button
                                                             onClick={(e) => handleDelete(item.id, e)}
@@ -627,7 +662,7 @@ export const FiltersPage: React.FC = () => {
                                             <Switch
                                                 id="interception-switch"
                                                 checked={applyInInterception}
-                                                onCheckedChange={setApplyInInterception}
+                                                onCheckedChange={handleToggleInterception}
                                             />
                                         </div>
                                     </div>

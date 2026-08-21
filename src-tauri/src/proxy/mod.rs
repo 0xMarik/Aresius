@@ -314,11 +314,27 @@ async fn handle_connect(
             }
         }
 
+        let current_req_str = String::from_utf8_lossy(&outgoing_request_bytes).to_string();
+        let req_eval_ctx = InterceptEvalContext {
+            method: &req_meta_init.method,
+            host: &target,
+            path: &req_meta_init.path,
+            query: req_meta_init.query.as_deref(),
+            extension: req_meta_init.extension.as_deref(),
+            status_code: 0,
+            response_length: 0,
+            response_time_ms: 0,
+            sent_at_ms: sent_at_ms as i64,
+            state: "",
+            is_https: true,
+            raw_request: Some(&current_req_str),
+            raw_response: None,
+        };
+
         if intercept_state
-            .should_intercept(InterceptItemType::Request, &target, &req_meta_init.path)
+            .should_intercept(InterceptItemType::Request, &target, &req_meta_init.path, &req_eval_ctx)
             .await
         {
-            let current_req_str = String::from_utf8_lossy(&outgoing_request_bytes).to_string();
             let item = InterceptItem {
                 id: request_id.clone(),
                 item_type: InterceptItemType::Request,
@@ -338,7 +354,7 @@ async fn handle_connect(
                         // A fuzzing edit that changes body length but
                         // leaves a stale Content-Length would otherwise
                         // truncate/hang the request or desync the next
-                        // request on this same keep-alive connection.
+                        // pipelined request on this connection.
                         outgoing_request_bytes = resync_edited_message(&mod_msg);
                         req_manual = true;
                     }
@@ -499,15 +515,32 @@ async fn handle_connect(
             }
         }
 
+        let mut final_response_text = if let Some(ref pre) = pre_decoded_response_text {
+            pre.clone()
+        } else {
+            decode_for_display(&response.headers, &response.body, &connection_options)
+        };
+        let current_req_str_for_resp = String::from_utf8_lossy(&outgoing_request_bytes).to_string();
+        let resp_eval_ctx = InterceptEvalContext {
+            method: &req_meta.method,
+            host: &target,
+            path: &req_meta.path,
+            query: req_meta.query.as_deref(),
+            extension: req_meta.extension.as_deref(),
+            status_code: parse_status_code(&response.headers) as i64,
+            response_length: response.body.len() as i64,
+            response_time_ms: response.elapsed.as_millis() as i64,
+            sent_at_ms: sent_at_ms as i64,
+            state: "",
+            is_https: true,
+            raw_request: Some(&current_req_str_for_resp),
+            raw_response: Some(&final_response_text),
+        };
+
         if intercept_state
-            .should_intercept(InterceptItemType::Response, &target, &req_meta.path)
+            .should_intercept(InterceptItemType::Response, &target, &req_meta.path, &resp_eval_ctx)
             .await
         {
-            let mut final_response_text = if let Some(ref pre) = pre_decoded_response_text {
-                pre.clone()
-            } else {
-                decode_for_display(&response.headers, &response.body, &connection_options)
-            };
             let res_id = Uuid::new_v4().to_string();
             let item = InterceptItem {
                 id: res_id.clone(),
@@ -861,11 +894,27 @@ async fn handle_http_request(
             }
         }
 
+        let current_req_str = String::from_utf8_lossy(&outgoing_request_bytes).to_string();
+        let req_eval_ctx = InterceptEvalContext {
+            method: &req_meta_init.method,
+            host: &target,
+            path: &req_meta_init.path,
+            query: req_meta_init.query.as_deref(),
+            extension: req_meta_init.extension.as_deref(),
+            status_code: 0,
+            response_length: 0,
+            response_time_ms: 0,
+            sent_at_ms: sent_at_ms as i64,
+            state: "",
+            is_https: false,
+            raw_request: Some(&current_req_str),
+            raw_response: None,
+        };
+
         if intercept_state
-            .should_intercept(InterceptItemType::Request, &target, &req_meta_init.path)
+            .should_intercept(InterceptItemType::Request, &target, &req_meta_init.path, &req_eval_ctx)
             .await
         {
-            let current_req_str = String::from_utf8_lossy(&outgoing_request_bytes).to_string();
             let item = InterceptItem {
                 id: request_id.clone(),
                 item_type: InterceptItemType::Request,
@@ -1034,15 +1083,32 @@ async fn handle_http_request(
             }
         }
 
+        let mut final_response_text = if let Some(ref pre) = pre_decoded_response_text {
+            pre.clone()
+        } else {
+            decode_for_display(&response.headers, &response.body, &connection_options)
+        };
+        let current_req_str_for_resp = String::from_utf8_lossy(&outgoing_request_bytes).to_string();
+        let resp_eval_ctx = InterceptEvalContext {
+            method: &req_meta.method,
+            host: &target,
+            path: &req_meta.path,
+            query: req_meta.query.as_deref(),
+            extension: req_meta.extension.as_deref(),
+            status_code: parse_status_code(&response.headers) as i64,
+            response_length: response.body.len() as i64,
+            response_time_ms: response.elapsed.as_millis() as i64,
+            sent_at_ms: sent_at_ms as i64,
+            state: "",
+            is_https: false,
+            raw_request: Some(&current_req_str_for_resp),
+            raw_response: Some(&final_response_text),
+        };
+
         if intercept_state
-            .should_intercept(InterceptItemType::Response, &target, &req_meta.path)
+            .should_intercept(InterceptItemType::Response, &target, &req_meta.path, &resp_eval_ctx)
             .await
         {
-            let mut final_response_text = if let Some(ref pre) = pre_decoded_response_text {
-                pre.clone()
-            } else {
-                decode_for_display(&response.headers, &response.body, &connection_options)
-            };
             let res_id = Uuid::new_v4().to_string();
             let item = InterceptItem {
                 id: res_id.clone(),

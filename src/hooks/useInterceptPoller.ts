@@ -56,6 +56,8 @@ export function useInterceptSettings() {
                 }
             })
             .catch(() => {});
+
+        invoke('sync_interception_filters_db', { projectId }).catch(() => {});
     }, [projectId, dispatch]);
 
     const updateSettings = async (newSettings: InterceptSettings) => {

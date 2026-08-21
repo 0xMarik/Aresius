@@ -28,16 +28,27 @@ type FiltersByProject = Record<string, ProjectFiltersState>;
 
 const initialState: FiltersByProject = {};
 
-const defaultProjectFiltersState = (): ProjectFiltersState => ({
-    filters: [],
-    selectedFilterId: null,
-    isLoaded: false,
-    applyInterceptionInHistory: true,
-});
+const defaultProjectFiltersState = (projectId?: string): ProjectFiltersState => {
+    let initialApply = true;
+    if (projectId) {
+        try {
+            const saved = localStorage.getItem(`aresius_apply_filter_history_${projectId}`);
+            if (saved !== null) {
+                initialApply = saved === 'true';
+            }
+        } catch {}
+    }
+    return {
+        filters: [],
+        selectedFilterId: null,
+        isLoaded: false,
+        applyInterceptionInHistory: initialApply,
+    };
+};
 
 function getBucket(state: FiltersByProject, projectId: string): ProjectFiltersState {
     if (!state[projectId]) {
-        state[projectId] = defaultProjectFiltersState();
+        state[projectId] = defaultProjectFiltersState(projectId);
     }
     return state[projectId];
 }
@@ -69,6 +80,24 @@ export const saveFilterToDb = createAsyncThunk<
     } catch (err: any) {
         console.error('Failed to save preset filter:', err);
         return rejectWithValue(typeof err === 'string' ? err : err.message || 'Failed to save filter');
+    }
+});
+
+export const togglePresetInterception = createAsyncThunk<
+    { projectId: string; id: string; applyInInterception: boolean },
+    { projectId: string; id: string; applyInInterception: boolean },
+    { rejectValue: string }
+>('filters/toggleInterception', async ({ projectId, id, applyInInterception }, { rejectWithValue }) => {
+    try {
+        await invoke('toggle_preset_filter_interception_db', {
+            projectId,
+            id,
+            applyInInterception,
+        });
+        return { projectId, id, applyInInterception };
+    } catch (err: any) {
+        console.error('Failed to toggle preset filter interception in DB:', err);
+        return rejectWithValue(typeof err === 'string' ? err : err.message || 'Failed to toggle');
     }
 });
 
@@ -119,6 +148,23 @@ export const filtersSlice = createSlice({
         ) => {
             const bucket = getBucket(state, action.payload.projectId);
             bucket.applyInterceptionInHistory = action.payload.enabled;
+            try {
+                localStorage.setItem(
+                    `aresius_apply_filter_history_${action.payload.projectId}`,
+                    String(action.payload.enabled)
+                );
+            } catch {}
+        },
+        toggleLocalInterception: (
+            state,
+            action: PayloadAction<{ projectId: string; id: string; applyInInterception: boolean }>
+        ) => {
+            const bucket = getBucket(state, action.payload.projectId);
+            const item = bucket.filters.find((f) => f.id === action.payload.id);
+            if (item) {
+                item.applyInInterception = action.payload.applyInInterception;
+                item.updatedAt = Date.now();
+            }
         },
         createLocalFilterDraft: (
             state,
@@ -162,6 +208,14 @@ export const filtersSlice = createSlice({
                     bucket.filters.push(saved);
                 }
                 bucket.selectedFilterId = saved.id;
+            })
+            .addCase(togglePresetInterception.fulfilled, (state, action) => {
+                const bucket = getBucket(state, action.payload.projectId);
+                const item = bucket.filters.find((f) => f.id === action.payload.id);
+                if (item) {
+                    item.applyInInterception = action.payload.applyInInterception;
+                    item.updatedAt = Date.now();
+                }
             })
             .addCase(deleteFilterFromDb.fulfilled, (state, action) => {
                 const bucket = getBucket(state, action.payload.projectId);
