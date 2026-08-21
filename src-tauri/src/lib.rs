@@ -5,6 +5,7 @@ mod fuzzer;
 mod proxy;
 mod types;
 
+use crate::app_setup::close_splashscreen;
 use crate::ares_utils::certs::certification_installation::install_cert;
 use crate::ares_utils::certs::check_cert_installed::check_cert_installed;
 use crate::ares_utils::database::http_history::{
@@ -80,6 +81,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .setup(app_setup::setup)
         .invoke_handler(tauri::generate_handler![
+            close_splashscreen,
             // Match & Replace
             get_match_replace,
             save_match_replace_rule,
