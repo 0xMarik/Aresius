@@ -56,12 +56,58 @@ pub struct HttpHistorySummaryRowDb {
     pub response_edit_type: Option<String>,
 }
 
+impl crate::ares_utils::httpql::HttpTransactionEvaluable for HttpHistorySummaryRowDb {
+    fn eval_id(&self) -> u32 {
+        self.id
+    }
+    fn eval_method(&self) -> &str {
+        &self.method
+    }
+    fn eval_host(&self) -> &str {
+        &self.host
+    }
+    fn eval_path(&self) -> &str {
+        &self.path
+    }
+    fn eval_query(&self) -> Option<&str> {
+        self.query.as_deref()
+    }
+    fn eval_ext(&self) -> Option<&str> {
+        self.extension.as_deref()
+    }
+    fn eval_status_code(&self) -> i64 {
+        self.status_code
+    }
+    fn eval_response_length(&self) -> i64 {
+        self.response_length
+    }
+    fn eval_response_time_ms(&self) -> i64 {
+        self.response_time_ms
+    }
+    fn eval_sent_at_ms(&self) -> i64 {
+        self.sent_at_ms
+    }
+    fn eval_state(&self) -> &str {
+        &self.state
+    }
+    fn eval_is_https(&self) -> bool {
+        self.is_https
+    }
+    fn eval_raw_request(&self) -> Option<&str> {
+        None
+    }
+    fn eval_raw_response(&self) -> Option<&str> {
+        None
+    }
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HttpHistoryWindowResult {
     pub total: usize,
     pub items: Vec<HttpHistorySummaryRowDb>,
 }
+
 
 /// Derives the `state` label from a raw HTTP status code, matching the
 /// logic in the frontend's `stateFromCode` helper.
@@ -248,21 +294,26 @@ pub async fn get_http_history_window(
         query_builder.push(" AND project_id = ");
         query_builder.push_bind(pid);
     }
-    if let Some(ref q) = search {
+
+    let parsed_httpql = if let Some(ref q) = search {
         if !q.trim().is_empty() {
-            let pattern = format!("%{}%", q.trim());
-            query_builder.push(" AND (host LIKE ");
-            query_builder.push_bind(pattern.clone());
-            query_builder.push(" OR path LIKE ");
-            query_builder.push_bind(pattern.clone());
-            query_builder.push(" OR method LIKE ");
-            query_builder.push_bind(pattern.clone());
-            query_builder.push(" OR query LIKE ");
-            query_builder.push_bind(pattern.clone());
-            query_builder.push(" OR CAST(status_code AS TEXT) LIKE ");
-            query_builder.push_bind(pattern);
-            query_builder.push(")");
+            match crate::ares_utils::httpql::parse_httpql(q) {
+                Ok(Some(expr)) => Some(expr),
+                _ => {
+                    // Fallback to a single bare expression
+                    Some(crate::ares_utils::httpql::HttpqlExpr::Bare(q.trim().to_string()))
+                }
+            }
+        } else {
+            None
         }
+    } else {
+        None
+    };
+
+    if let Some(ref expr) = parsed_httpql {
+        query_builder.push(" AND ");
+        crate::ares_utils::httpql::compile_httpql_to_sql(&mut query_builder, expr);
     }
     query_builder.push(" ORDER BY ");
     query_builder.push(&order_clause);
@@ -281,7 +332,8 @@ pub async fn get_http_history_window(
         let filtered: Vec<HttpHistorySummaryRowDb> = all_rows
             .into_iter()
             .filter(|row| {
-                compiled_scope.is_in_scope(&row.host, &row.path) == match_in
+                let in_scope = compiled_scope.is_in_scope(&row.host, &row.path);
+                in_scope == match_in
             })
             .collect();
 
@@ -304,22 +356,11 @@ pub async fn get_http_history_window(
         count_builder.push(" AND project_id = ");
         count_builder.push_bind(pid);
     }
-    if let Some(ref q) = search {
-        if !q.trim().is_empty() {
-            let pattern = format!("%{}%", q.trim());
-            count_builder.push(" AND (host LIKE ");
-            count_builder.push_bind(pattern.clone());
-            count_builder.push(" OR path LIKE ");
-            count_builder.push_bind(pattern.clone());
-            count_builder.push(" OR method LIKE ");
-            count_builder.push_bind(pattern.clone());
-            count_builder.push(" OR query LIKE ");
-            count_builder.push_bind(pattern.clone());
-            count_builder.push(" OR CAST(status_code AS TEXT) LIKE ");
-            count_builder.push_bind(pattern);
-            count_builder.push(")");
-        }
+    if let Some(ref expr) = parsed_httpql {
+        count_builder.push(" AND ");
+        crate::ares_utils::httpql::compile_httpql_to_sql(&mut count_builder, expr);
     }
+
 
     let total: i64 = count_builder
         .build_query_scalar::<i64>()
@@ -387,3 +428,32 @@ pub async fn delete_http_history_items(
 
     Ok(())
 }
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HttpqlValidationResult {
+    pub is_valid: bool,
+    pub error: Option<String>,
+}
+
+/// Validates an HTTPQL query string and returns syntax correctness
+#[tauri::command]
+pub fn validate_httpql(query: String) -> HttpqlValidationResult {
+    if query.trim().is_empty() {
+        return HttpqlValidationResult {
+            is_valid: true,
+            error: None,
+        };
+    }
+    match crate::ares_utils::httpql::parse_httpql(&query) {
+        Ok(_) => HttpqlValidationResult {
+            is_valid: true,
+            error: None,
+        },
+        Err(err) => HttpqlValidationResult {
+            is_valid: false,
+            error: Some(err),
+        },
+    }
+}
+

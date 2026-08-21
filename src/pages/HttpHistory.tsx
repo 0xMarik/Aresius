@@ -9,6 +9,7 @@ import MethodBadge from '@/components/MethodBadge';
 import { selectActiveScope } from '@/store/slices/scopeSlice';
 import { useProjectId } from '@/hooks/useProjectId';
 import { ScopeFilterBar, ScopeFilterOption } from '@/components/ScopeFilterBar';
+import { HttpqlBar } from '@/components/Httpql/HttpqlBar';
 import HttpRequestViewerPane from '@/components/HttpRequestViewerPane';
 import { useVirtualHttpHistory } from '@/hooks/useVirtualHttpHistory';
 
@@ -149,6 +150,7 @@ const HTTPHistory = () => {
     const projectId = useProjectId();
     const activeScope = useAppSelector(selectActiveScope(projectId));
     const [scopeFilter, setScopeFilter] = useState<ScopeFilterOption>('in');
+    const [httpqlQuery, setHttpqlQuery] = useState<string>('');
 
     const {
         items,
@@ -165,6 +167,7 @@ const HTTPHistory = () => {
         projectId,
         activeScope,
         scopeFilter,
+        searchQuery: httpqlQuery,
     });
 
     return (
@@ -177,6 +180,11 @@ const HTTPHistory = () => {
                             activeScope={activeScope}
                             value={scopeFilter}
                             onChange={setScopeFilter}
+                        />
+                        {/* HTTPQL Search & Filter Bar */}
+                        <HttpqlBar
+                            value={httpqlQuery}
+                            onChange={setHttpqlQuery}
                         />
                         <Table
                             data={items}
