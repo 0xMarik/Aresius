@@ -613,4 +613,73 @@ pub async fn evaluate_httpql_sandbox(
     }
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct DbHttpHistoryStateRow {
+    pub project_id: String,
+    pub httpql_query: String,
+    pub scope_filter: String,
+    pub selected_request_id: Option<i64>,
+    pub apply_interception_filters: bool,
+    pub updated_at: i64,
+}
+
+#[tauri::command]
+pub async fn get_http_history_state_db(
+    db: tauri::State<'_, DbState>,
+    project_id: String,
+) -> Result<Option<DbHttpHistoryStateRow>, String> {
+    let pool = db.pool().await?;
+    let row: Option<DbHttpHistoryStateRow> = sqlx::query_as(
+        "SELECT project_id, httpql_query, scope_filter, selected_request_id, apply_interception_filters, updated_at FROM http_history_state WHERE project_id = ?"
+    )
+    .bind(&project_id)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    Ok(row)
+}
+
+#[tauri::command]
+pub async fn save_http_history_state_db(
+    db: tauri::State<'_, DbState>,
+    project_id: String,
+    httpql_query: String,
+    scope_filter: Option<String>,
+    selected_request_id: Option<i64>,
+    apply_interception_filters: Option<bool>,
+) -> Result<(), String> {
+    let pool = db.pool().await?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    let scope = scope_filter.unwrap_or_else(|| "in".to_string());
+    let apply_filters = apply_interception_filters.unwrap_or(true);
+
+    sqlx::query(
+        "INSERT INTO http_history_state (project_id, httpql_query, scope_filter, selected_request_id, apply_interception_filters, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(project_id) DO UPDATE SET
+            httpql_query = excluded.httpql_query,
+            scope_filter = excluded.scope_filter,
+            selected_request_id = excluded.selected_request_id,
+            apply_interception_filters = excluded.apply_interception_filters,
+            updated_at = excluded.updated_at"
+    )
+    .bind(&project_id)
+    .bind(&httpql_query)
+    .bind(&scope)
+    .bind(selected_request_id)
+    .bind(apply_filters)
+    .bind(now)
+    .execute(&pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+
 

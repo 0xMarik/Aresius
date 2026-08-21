@@ -10,7 +10,8 @@ use crate::ares_utils::certs::certification_installation::install_cert;
 use crate::ares_utils::certs::check_cert_installed::check_cert_installed;
 use crate::ares_utils::database::http_history::{
     delete_http_history_items, evaluate_httpql_sandbox, get_http_history, get_http_history_item,
-    get_http_history_summaries, get_http_history_window, validate_httpql,
+    get_http_history_state_db, get_http_history_summaries, get_http_history_window,
+    save_http_history_state_db, validate_httpql,
 };
 use crate::ares_utils::database::projects::create_project;
 use crate::ares_utils::database::projects_catalog::{
@@ -153,6 +154,8 @@ pub fn run() {
             delete_http_history_items,
             validate_httpql,
             evaluate_httpql_sandbox,
+            get_http_history_state_db,
+            save_http_history_state_db,
             // Scopes
             get_scope_project_data,
             create_scope_db,

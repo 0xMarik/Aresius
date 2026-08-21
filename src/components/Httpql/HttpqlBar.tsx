@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -29,8 +29,9 @@ import {
     Antenna,
 } from 'lucide-react';
 import { HTTPQL_PRESETS } from '@/lib/httpql/httpql';
-import { getHttpqlSuggestions, AutocompleteSuggestion } from '@/lib/httpql/autocomplete';
 import HttpqlCheatsheetModal from './HttpqlCheatsheetModal';
+import { useHttpqlAutocomplete } from './useHttpqlAutocomplete';
+import { HttpqlAutocompleteDropdown } from './HttpqlAutocompleteDropdown';
 import { useAppSelector } from '@/hooks/redux';
 import { useProjectId } from '@/hooks/useProjectId';
 import { selectAllFilters } from '@/store/slices/filtersSlice';
@@ -88,16 +89,37 @@ export const HttpqlBar: React.FC<HttpqlBarProps> = ({
         }));
     }, [storeFilters]);
 
+    const dynamicPresets = React.useMemo(() => {
+        return effectivePresets.map((p) => ({
+            alias: p.alias,
+            name: p.label,
+            description: p.description,
+        }));
+    }, [effectivePresets]);
+
     const inputRef = useRef<HTMLInputElement>(null);
     const [inputValue, setInputValue] = useState(value);
     const [isValid, setIsValid] = useState<boolean>(true);
     const [validationError, setValidationError] = useState<string | null>(null);
 
-    // Autocomplete state
-    const [suggestions, setSuggestions] = useState<AutocompleteSuggestion[]>([]);
-    const [selectedIndex, setSelectedIndex] = useState<number>(0);
-    const [showSuggestions, setShowSuggestions] = useState<boolean>(false);
-    const [replacementRange, setReplacementRange] = useState<{ start: number; end: number }>({ start: 0, end: 0 });
+    // Shared Autocomplete Hook
+    const {
+        suggestions,
+        selectedIndex,
+        showSuggestions,
+        setShowSuggestions,
+        updateSuggestions,
+        handleKeyDown: handleAutocompleteKeyDown,
+        applySuggestion,
+    } = useHttpqlAutocomplete({
+        value: inputValue,
+        onChange: (newVal) => {
+            setInputValue(newVal);
+            onChange(newVal);
+        },
+        inputRef,
+        dynamicPresets,
+    });
 
     // History and saved queries
     const [savedQueries, setSavedQueries] = useState<SavedQuery[]>(() => {
@@ -148,20 +170,6 @@ export const HttpqlBar: React.FC<HttpqlBarProps> = ({
         return () => clearTimeout(timer);
     }, [inputValue]);
 
-    // Handle suggestion trigger
-    const updateSuggestions = useCallback((text: string, pos: number) => {
-        const dynamicPresets = effectivePresets.map((p) => ({
-            alias: p.alias,
-            name: p.label,
-            description: p.description,
-        }));
-        const { suggestions: list, startPos, endPos } = getHttpqlSuggestions(text, pos, dynamicPresets);
-        setSuggestions(list);
-        setSelectedIndex(0);
-        setShowSuggestions(list.length > 0);
-        setReplacementRange({ start: startPos, end: endPos });
-    }, [effectivePresets]);
-
     const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const newVal = e.target.value;
         setInputValue(newVal);
@@ -171,30 +179,8 @@ export const HttpqlBar: React.FC<HttpqlBarProps> = ({
     };
 
     const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-        if (showSuggestions && suggestions.length > 0) {
-            if (e.key === 'ArrowDown') {
-                e.preventDefault();
-                setSelectedIndex((prev) => (prev + 1) % suggestions.length);
-                return;
-            }
-            if (e.key === 'ArrowUp') {
-                e.preventDefault();
-                setSelectedIndex((prev) => (prev - 1 + suggestions.length) % suggestions.length);
-                return;
-            }
-            if (e.key === 'Enter' || e.key === 'Tab') {
-                if (suggestions[selectedIndex]) {
-                    e.preventDefault();
-                    applySuggestion(suggestions[selectedIndex]);
-                    return;
-                }
-            }
-            if (e.key === 'Escape') {
-                e.preventDefault();
-                setShowSuggestions(false);
-                return;
-            }
-        }
+        const handled = handleAutocompleteKeyDown(e);
+        if (handled) return;
 
         if (e.key === 'Enter') {
             // Save to recent history
@@ -210,33 +196,6 @@ export const HttpqlBar: React.FC<HttpqlBarProps> = ({
             }
             setShowSuggestions(false);
         }
-    };
-
-    const applySuggestion = (suggestion: AutocompleteSuggestion) => {
-        const text = inputValue;
-        const before = text.slice(0, replacementRange.start);
-        const after = text.slice(replacementRange.end);
-        const newText = before + suggestion.replacement + (after.startsWith(' ') || suggestion.replacement.endsWith(' ') ? after : (after ? ' ' + after : ''));
-
-        setInputValue(newText);
-        onChange(newText);
-
-        const newPos = before.length + suggestion.replacement.length;
-
-        if (suggestion.hasMoreLayers) {
-            // Keep suggestions open and immediately query the next layer
-            updateSuggestions(newText, newPos);
-        } else {
-            setShowSuggestions(false);
-        }
-
-        // Put focus back and position cursor
-        setTimeout(() => {
-            if (inputRef.current) {
-                inputRef.current.focus();
-                inputRef.current.setSelectionRange(newPos, newPos);
-            }
-        }, 10);
     };
 
     const handleSaveCurrentQuery = () => {
@@ -365,33 +324,11 @@ export const HttpqlBar: React.FC<HttpqlBarProps> = ({
 
                     {/* Autocomplete Suggestions Popup anchored right under input */}
                     {showSuggestions && suggestions.length > 0 && (
-                        <div className="absolute top-[calc(100%+3px)] left-0 w-full max-w-lg max-h-48 overflow-y-auto bg-popover/95 backdrop-blur-md border border-border/80 shadow-2xl rounded-md p-0.5 text-xs divide-y divide-border/20 z-50">
-                            {suggestions.map((s, idx) => (
-                                <div
-                                    key={s.id}
-                                    onMouseDown={(e) => {
-                                        e.preventDefault();
-                                        applySuggestion(s);
-                                    }}
-                                    className={`px-2.5 py-1 rounded flex items-center justify-between cursor-pointer transition-colors ${
-                                        idx === selectedIndex
-                                            ? 'bg-primary text-primary-foreground font-medium'
-                                            : 'hover:bg-accent/60 text-foreground'
-                                    }`}
-                                >
-                                    <span className="font-mono text-[11.5px] truncate">
-                                        {s.displayText || s.text}
-                                    </span>
-                                    <span
-                                        className={`text-[10.5px] truncate max-w-[220px] ml-2 ${
-                                            idx === selectedIndex ? 'text-primary-foreground/80' : 'text-muted-foreground'
-                                        }`}
-                                    >
-                                        {s.description}
-                                    </span>
-                                </div>
-                            ))}
-                        </div>
+                        <HttpqlAutocompleteDropdown
+                            suggestions={suggestions}
+                            selectedIndex={selectedIndex}
+                            onSelect={applySuggestion}
+                        />
                     )}
                 </div>
 

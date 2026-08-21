@@ -12,8 +12,10 @@ import {
     MenubarTrigger,
 } from "@/components/ui/menubar"
 import { Avatar, AvatarFallback, AvatarImage } from "./ui/avatar"
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState, useMemo } from "react"
+import { useNavigate } from "react-router-dom"
 import { getCurrentWindow } from "@tauri-apps/api/window"
+import { invoke } from "@tauri-apps/api/core"
 import {
     Minus,
     Square,
@@ -46,12 +48,18 @@ import { open } from "@tauri-apps/plugin-shell"
 import { useTheme } from "./theme-provider"
 import { useAppDispatch, useAppSelector } from "@/hooks/redux"
 import { useProjectId } from "@/hooks/useProjectId"
-import { selectAllScopes, selectActiveScope, selectActiveScopeId, setActiveScope } from "@/store/slices/scopeSlice"
+import { selectAllScopes, selectActiveScope, selectActiveScopeId, setActiveScope, fetchScopeDataForProject } from "@/store/slices/scopeSlice"
+import { setcurrentProjectId, updateProject } from "@/store/slices/projectSlice"
+import { fetchSitemapStateForProject, setSiteMapBulk } from "@/store/slices/sitemapSlice"
+import { fetchMatchReplaceDataForProject } from "@/store/slices/matchReplaceSlice"
+import { Project } from "@/types/project.type"
+import { HttpHistorySummaryRow } from "@/types/http.type"
 import { cn } from "@/lib/utils"
 
 const appWindow = getCurrentWindow()
 
 export default function MenubarDemo() {
+    const navigate = useNavigate()
     const [isMaximized, setIsMaximized] = useState(false)
     const [isFullscreen, setIsFullscreen] = useState(false)
     const { theme, setTheme } = useTheme()
@@ -59,6 +67,12 @@ export default function MenubarDemo() {
     // Dialog states
     const [certDialogOpen, setCertDialogOpen] = useState(false)
     const [aboutDialogOpen, setAboutDialogOpen] = useState(false)
+
+    // Project state
+    const { projects, currentProjectId } = useAppSelector((state) => state.workspacestate)
+    const activeProject = useMemo(() => projects.find((p) => p.id === currentProjectId) || null, [projects, currentProjectId])
+    const [projectDropdownOpen, setProjectDropdownOpen] = useState(false)
+    const projectDropdownRef = useRef<HTMLDivElement>(null)
 
     // Scope state
     const dispatch = useAppDispatch()
@@ -69,17 +83,58 @@ export default function MenubarDemo() {
     const [scopeDropdownOpen, setScopeDropdownOpen] = useState(false)
     const scopeDropdownRef = useRef<HTMLDivElement>(null)
 
-    // Close scope dropdown on outside click
+    // Close dropdowns on outside click
     useEffect(() => {
-        if (!scopeDropdownOpen) return
+        if (!scopeDropdownOpen && !projectDropdownOpen) return
         const handler = (e: MouseEvent) => {
             if (scopeDropdownRef.current && !scopeDropdownRef.current.contains(e.target as Node)) {
                 setScopeDropdownOpen(false)
             }
+            if (projectDropdownRef.current && !projectDropdownRef.current.contains(e.target as Node)) {
+                setProjectDropdownOpen(false)
+            }
         }
         document.addEventListener("mousedown", handler)
         return () => document.removeEventListener("mousedown", handler)
-    }, [scopeDropdownOpen])
+    }, [scopeDropdownOpen, projectDropdownOpen])
+
+    const handleSwitchProject = async (id: string) => {
+        setProjectDropdownOpen(false)
+        if (id === currentProjectId) return
+
+        try {
+            const updatedProject = await invoke<Project>("select_project", { id })
+            dispatch(setcurrentProjectId(id))
+            dispatch(updateProject(updatedProject))
+
+            try {
+                const summaries = await invoke<HttpHistorySummaryRow[]>("get_http_history_summaries", { projectId: id })
+                dispatch(setSiteMapBulk({ items: summaries, projectId: id }))
+            } catch (err) {
+                console.warn("Could not load persisted HTTP history summaries:", err)
+            }
+
+            try {
+                dispatch(fetchScopeDataForProject(id) as any)
+            } catch (err) {
+                console.warn("Could not load persisted Scope data:", err)
+            }
+
+            try {
+                dispatch(fetchSitemapStateForProject(id) as any)
+            } catch (err) {
+                console.warn("Could not load persisted Sitemap state:", err)
+            }
+
+            try {
+                dispatch(fetchMatchReplaceDataForProject(id) as any)
+            } catch (err) {
+                console.warn("Could not load persisted Match & Replace data:", err)
+            }
+        } catch (err) {
+            console.error("Failed to switch project:", err)
+        }
+    }
 
     useEffect(() => {
         // Set initial window state
@@ -352,52 +407,134 @@ export default function MenubarDemo() {
                 </MenubarMenu>
             </Menubar>
 
-            {/* ── Scope Indicator ── */}
-            <div className="ml-auto flex items-center shrink-0 mr-2 relative" ref={scopeDropdownRef}>
-                <button
-                    type="button"
-                    onClick={() => setScopeDropdownOpen((v) => !v)}
-                    className={cn(
-                        "flex items-center gap-1.5 h-6 px-2 rounded-md border text-[11px] font-medium transition-all select-none",
-                        activeScope
-                            ? "border-border bg-accent/60 text-foreground hover:bg-accent"
-                            : "border-border/50 bg-transparent text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted/40"
-                    )}
-                    title={activeScope ? `Active scope: ${activeScope.name}` : "No active scope"}
-                >
-                    {activeScope ? (
-                        <span
-                            className="w-2 h-2 rounded-full shrink-0 ring-1 ring-inset ring-white/20"
-                            style={{ backgroundColor: activeScope.color }}
-                        />
-                    ) : (
-                        <CircleDot className="w-2.5 h-2.5 shrink-0 text-muted-foreground/50" />
-                    )}
-                    <span className={activeScope ? "text-foreground" : "text-muted-foreground/60"}>
-                        {activeScope ? activeScope.name : "No Scope"}
-                    </span>
-                    <ChevronDown className="w-2.5 h-2.5 text-muted-foreground/60" />
-                </button>
+            {/* ── Project & Scope Switchers ── */}
+            <div className="ml-auto flex items-center shrink-0 gap-1.5 mr-2">
+                {/* ── Project Dropdown Switcher ── */}
+                <div className="relative" ref={projectDropdownRef}>
+                    <button
+                        type="button"
+                        onClick={() => {
+                            setProjectDropdownOpen((v) => !v)
+                            setScopeDropdownOpen(false)
+                        }}
+                        className={cn(
+                            "flex items-center gap-1.5 h-6 px-2 rounded-md border text-[11px] font-medium transition-all select-none",
+                            activeProject
+                                ? "border-border bg-accent/60 text-foreground hover:bg-accent"
+                                : "border-border/50 bg-transparent text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted/40"
+                        )}
+                        title={activeProject ? `Active Project: ${activeProject.name}` : "No active project"}
+                    >
+                        <FolderOpen className="w-3 h-3 shrink-0 text-primary" />
+                        <span className={cn("max-w-[120px] truncate", activeProject ? "text-foreground" : "text-muted-foreground/60")}>
+                            {activeProject ? activeProject.name : "Select Project"}
+                        </span>
+                        <ChevronDown className="w-2.5 h-2.5 text-muted-foreground/60 shrink-0" />
+                    </button>
 
-                {/* Scope dropdown */}
-                {scopeDropdownOpen && (
-                    <div className="absolute top-full right-0 mt-1 z-50 w-52 rounded-md border border-border bg-popover shadow-lg py-1 text-[11px]">
-                        {/* No scope option */}
-                        <button
-                            type="button"
-                            onClick={() => {
-                                if (projectId) dispatch(setActiveScope({ scopeId: null, projectId }))
-                                setScopeDropdownOpen(false)
-                            }}
-                            className={cn(
-                                "w-full flex items-center gap-2 px-3 py-1.5 hover:bg-accent text-left transition-colors",
-                                activeScopeId === null ? "text-primary font-medium" : "text-muted-foreground"
-                            )}
-                        >
-                            <CircleDot className="w-2.5 h-2.5 shrink-0" />
-                            <span>No Scope (all traffic)</span>
-                            {activeScopeId === null && <Check className="w-2.5 h-2.5 ml-auto" />}
-                        </button>
+                    {/* Project dropdown */}
+                    {projectDropdownOpen && (
+                        <div className="absolute top-full right-0 mt-1 z-50 w-60 rounded-md border border-border bg-popover shadow-xl py-1 text-[11px] divide-y divide-border/30">
+                            <div className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground select-none flex items-center justify-between">
+                                <span>Projects</span>
+                                <span className="text-[9px] font-normal">{projects.length} available</span>
+                            </div>
+
+                            <div className="max-h-60 overflow-y-auto py-1">
+                                {projects.map((proj) => (
+                                    <button
+                                        key={proj.id}
+                                        type="button"
+                                        onClick={() => handleSwitchProject(proj.id)}
+                                        className={cn(
+                                            "w-full flex items-center gap-2 px-3 py-1.5 hover:bg-accent text-left transition-colors",
+                                            proj.id === currentProjectId ? "text-primary font-medium bg-primary/10" : "text-foreground"
+                                        )}
+                                    >
+                                        <FolderOpen className={cn("w-3.5 h-3.5 shrink-0", proj.id === currentProjectId ? "text-primary" : "text-muted-foreground")} />
+                                        <div className="flex flex-col min-w-0 flex-1">
+                                            <span className="truncate">{proj.name}</span>
+                                            {proj.description && (
+                                                <span className="text-[9.5px] text-muted-foreground truncate">{proj.description}</span>
+                                            )}
+                                        </div>
+                                        {proj.id === currentProjectId && <Check className="w-3 h-3 ml-auto text-primary shrink-0" />}
+                                    </button>
+                                ))}
+
+                                {projects.length === 0 && (
+                                    <div className="px-3 py-2 text-muted-foreground/60 text-center italic">
+                                        No projects found
+                                    </div>
+                                )}
+                            </div>
+
+                            <div className="p-1">
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setProjectDropdownOpen(false)
+                                        navigate("/projects")
+                                    }}
+                                    className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-accent rounded transition-colors"
+                                >
+                                    <Library className="w-3.5 h-3.5 text-primary" />
+                                    <span>Manage Projects...</span>
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                </div>
+
+                {/* ── Scope Indicator ── */}
+                <div className="relative" ref={scopeDropdownRef}>
+                    <button
+                        type="button"
+                        onClick={() => {
+                            setScopeDropdownOpen((v) => !v)
+                            setProjectDropdownOpen(false)
+                        }}
+                        className={cn(
+                            "flex items-center gap-1.5 h-6 px-2 rounded-md border text-[11px] font-medium transition-all select-none",
+                            activeScope
+                                ? "border-border bg-accent/60 text-foreground hover:bg-accent"
+                                : "border-border/50 bg-transparent text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted/40"
+                        )}
+                        title={activeScope ? `Active scope: ${activeScope.name}` : "No active scope"}
+                    >
+                        {activeScope ? (
+                            <span
+                                className="w-2 h-2 rounded-full shrink-0 ring-1 ring-inset ring-white/20"
+                                style={{ backgroundColor: activeScope.color }}
+                            />
+                        ) : (
+                            <CircleDot className="w-2.5 h-2.5 shrink-0 text-muted-foreground/50" />
+                        )}
+                        <span className={cn("max-w-[120px] truncate", activeScope ? "text-foreground" : "text-muted-foreground/60")}>
+                            {activeScope ? activeScope.name : "No Scope"}
+                        </span>
+                        <ChevronDown className="w-2.5 h-2.5 text-muted-foreground/60 shrink-0" />
+                    </button>
+
+                    {/* Scope dropdown */}
+                    {scopeDropdownOpen && (
+                        <div className="absolute top-full right-0 mt-1 z-50 w-52 rounded-md border border-border bg-popover shadow-lg py-1 text-[11px]">
+                            {/* No scope option */}
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    if (projectId) dispatch(setActiveScope({ scopeId: null, projectId }))
+                                    setScopeDropdownOpen(false)
+                                }}
+                                className={cn(
+                                    "w-full flex items-center gap-2 px-3 py-1.5 hover:bg-accent text-left transition-colors",
+                                    activeScopeId === null ? "text-primary font-medium" : "text-muted-foreground"
+                                )}
+                            >
+                                <CircleDot className="w-2.5 h-2.5 shrink-0" />
+                                <span>No Scope (all traffic)</span>
+                                <span className="ml-auto flex items-center">{activeScopeId === null && <Check className="w-2.5 h-2.5" />}</span>
+                            </button>
 
                         {allScopes.length > 0 && (
                             <div className="my-1 h-px bg-border/50 mx-2" />
@@ -432,6 +569,7 @@ export default function MenubarDemo() {
                         )}
                     </div>
                 )}
+                </div>
             </div>
 
             {/* Window controls: minimize, maximize/restore, close */}

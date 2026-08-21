@@ -1,7 +1,9 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useAppDispatch, useAppSelector } from '@/hooks/redux';
 import { useProjectId } from '@/hooks/useProjectId';
+import { useHttpqlAutocomplete } from '@/components/Httpql/useHttpqlAutocomplete';
+import { HttpqlAutocompleteDropdown } from '@/components/Httpql/HttpqlAutocompleteDropdown';
 import {
     selectAllFilters,
     selectSelectedFilter,
@@ -80,6 +82,34 @@ export const FiltersPage: React.FC = () => {
     const [testPath, setTestPath] = useState('/users');
     const [testCode, setTestCode] = useState('200');
     const [testResult, setTestResult] = useState<boolean | null>(null);
+
+    // Expression Autocomplete
+    const expressionInputRef = useRef<HTMLTextAreaElement>(null);
+
+    const dynamicPresets = useMemo(() => {
+        return filters
+            .filter((f) => f.id !== selectedFilter?.id)
+            .map((f) => ({
+                alias: f.alias,
+                name: f.name,
+                description: f.description,
+            }));
+    }, [filters, selectedFilter?.id]);
+
+    const {
+        suggestions: exprSuggestions,
+        selectedIndex: selectedExprIndex,
+        showSuggestions: showExprSuggestions,
+        setShowSuggestions: setShowExprSuggestions,
+        updateSuggestions: updateExprSuggestions,
+        handleKeyDown: handleExprKeyDown,
+        applySuggestion: applyExprSuggestion,
+    } = useHttpqlAutocomplete({
+        value: expression,
+        onChange: setExpression,
+        inputRef: expressionInputRef,
+        dynamicPresets,
+    });
 
     // Load filters on project mount
     useEffect(() => {
@@ -587,13 +617,42 @@ export const FiltersPage: React.FC = () => {
                                             </span>
                                         </div>
 
-                                        <Textarea
-                                            value={expression}
-                                            onChange={(e) => setExpression(e.target.value)}
-                                            placeholder='e.g. req.method.eq:"POST" and resp.code.gte:400'
-                                            className="font-mono text-xs min-h-[85px] bg-muted/20 border-border/80 leading-relaxed"
-                                            spellCheck={false}
-                                        />
+                                        <div className="relative">
+                                            <Textarea
+                                                ref={expressionInputRef}
+                                                value={expression}
+                                                onChange={(e) => {
+                                                    const val = e.target.value;
+                                                    setExpression(val);
+                                                    const cursor = e.target.selectionStart ?? val.length;
+                                                    updateExprSuggestions(val, cursor);
+                                                }}
+                                                onKeyDown={handleExprKeyDown}
+                                                onFocus={() => {
+                                                    if (expression) {
+                                                        const cursor =
+                                                            expressionInputRef.current?.selectionStart ??
+                                                            expression.length;
+                                                        updateExprSuggestions(expression, cursor);
+                                                    }
+                                                }}
+                                                onBlur={() => {
+                                                    setTimeout(() => setShowExprSuggestions(false), 200);
+                                                }}
+                                                placeholder='e.g. req.method.eq:"POST" and resp.code.gte:400'
+                                                className="font-mono text-xs min-h-[85px] bg-muted/20 border-border/80 leading-relaxed"
+                                                spellCheck={false}
+                                                autoComplete="off"
+                                            />
+
+                                            {showExprSuggestions && exprSuggestions.length > 0 && (
+                                                <HttpqlAutocompleteDropdown
+                                                    suggestions={exprSuggestions}
+                                                    selectedIndex={selectedExprIndex}
+                                                    onSelect={applyExprSuggestion}
+                                                />
+                                            )}
+                                        </div>
 
                                         {/* Quick insert token chips */}
                                         <div className="flex items-center gap-1.5 flex-wrap pt-1">

@@ -1,7 +1,8 @@
 import Table, { isRowSelected } from '@/components/Table';
 import { useAppDispatch, useAppSelector } from '@/hooks/redux';
 import { ColumnDef, createColumnHelper } from '@tanstack/react-table';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { renderHttpHistoryTableContextMenu } from '@/components/HttpHistoryTableContextMenu';
 import { HttpTransaction } from '@/types/http.type';
@@ -156,8 +157,25 @@ const HTTPHistory = () => {
     const activeScope = useAppSelector(selectActiveScope(projectId));
     const applyInterceptionInHistory = useAppSelector(selectApplyInterceptionInHistory(projectId));
 
-    const [scopeFilter, setScopeFilter] = useState<ScopeFilterOption>('in');
-    const [httpqlQuery, setHttpqlQuery] = useState<string>('');
+    const [isStateLoaded, setIsStateLoaded] = useState<boolean>(false);
+    const [scopeFilter, setScopeFilter] = useState<ScopeFilterOption>(() => {
+        if (projectId) {
+            try {
+                const s = localStorage.getItem(`aresius_http_history_scope_${projectId}`);
+                if (s === 'all' || s === 'in' || s === 'out') return s;
+            } catch {}
+        }
+        return 'in';
+    });
+    const [httpqlQuery, setHttpqlQuery] = useState<string>(() => {
+        if (projectId) {
+            try {
+                const q = localStorage.getItem(`aresius_http_history_httpql_${projectId}`);
+                if (q !== null) return q;
+            } catch {}
+        }
+        return '';
+    });
 
     const {
         items,
@@ -177,6 +195,75 @@ const HTTPHistory = () => {
         searchQuery: httpqlQuery,
         applyInterceptionFilters: applyInterceptionInHistory,
     });
+
+    // 1. Fetch persistent state from SQLite DB on project mount / switch
+    useEffect(() => {
+        if (!projectId) return;
+
+        invoke<{
+            projectId: string;
+            httpqlQuery: string;
+            scopeFilter: string;
+            selectedRequestId: number | null;
+            applyInterceptionFilters: boolean;
+            updatedAt: number;
+        } | null>('get_http_history_state_db', { projectId })
+            .then((savedState) => {
+                if (savedState) {
+                    if (savedState.httpqlQuery !== undefined) {
+                        setHttpqlQuery(savedState.httpqlQuery);
+                    }
+                    if (
+                        savedState.scopeFilter &&
+                        (savedState.scopeFilter === 'all' ||
+                            savedState.scopeFilter === 'in' ||
+                            savedState.scopeFilter === 'out')
+                    ) {
+                        setScopeFilter(savedState.scopeFilter as ScopeFilterOption);
+                    }
+                    if (savedState.selectedRequestId) {
+                        setSelectedRequest(savedState.selectedRequestId);
+                    }
+                    if (savedState.applyInterceptionFilters !== undefined) {
+                        dispatch(
+                            setApplyInterceptionInHistory({
+                                projectId,
+                                enabled: savedState.applyInterceptionFilters,
+                            })
+                        );
+                    }
+                }
+                setIsStateLoaded(true);
+            })
+            .catch((err) => {
+                console.error('Failed to load http history state:', err);
+                setIsStateLoaded(true);
+            });
+    }, [projectId, dispatch]);
+
+    // 2. Debounced save to SQLite DB whenever query or filter changes (only after initial load)
+    useEffect(() => {
+        if (!projectId || !isStateLoaded) return;
+
+        try {
+            localStorage.setItem(`aresius_http_history_httpql_${projectId}`, httpqlQuery);
+            localStorage.setItem(`aresius_http_history_scope_${projectId}`, scopeFilter);
+        } catch {}
+
+        const timer = setTimeout(() => {
+            invoke('save_http_history_state_db', {
+                projectId,
+                httpqlQuery,
+                scopeFilter,
+                selectedRequestId: selectedRequest ?? null,
+                applyInterceptionFilters: applyInterceptionInHistory,
+            }).catch((err) => {
+                console.error('Failed to save http history state to DB:', err);
+            });
+        }, 400);
+
+        return () => clearTimeout(timer);
+    }, [projectId, httpqlQuery, scopeFilter, selectedRequest, applyInterceptionInHistory, isStateLoaded]);
 
     const handleToggleApplyFilter = (checked: boolean) => {
         if (projectId) {
