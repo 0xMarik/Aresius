@@ -2601,7 +2601,6 @@ mod tests {
         // SQL compilation
         let mut builder = sqlx::QueryBuilder::<sqlx::Sqlite>::new("SELECT * FROM http_history WHERE ");
         compile_httpql_to_sql(&mut builder, &q);
-        let sql = builder.into_sql();
-        assert!(sql.contains("INSTR(LOWER(raw_response)"), "SQL should extract single header line");
+        assert!(builder.sql().as_str().contains("INSTR(LOWER(raw_response)"), "SQL should extract single header line");
     }
 }

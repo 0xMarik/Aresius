@@ -24,7 +24,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
 import {
@@ -621,25 +621,22 @@ export const FiltersPage: React.FC = () => {
                                         </div>
                                     </div>
 
-                                    {/* Interception Checkbox & Settings */}
-                                    <div className="p-3 rounded-lg border border-amber-500/20 bg-amber-500/5 space-y-3">
-                                        <div className="flex items-center justify-between">
-                                            <div className="flex items-start gap-2.5">
-                                                <Antenna className="w-4 h-4 text-amber-500 mt-0.5 shrink-0" />
-                                                <div>
-                                                    <Label htmlFor="interception-switch" className="text-xs font-semibold cursor-pointer">
-                                                        Apply this filter in interception
-                                                    </Label>
-                                                    <p className="text-[11px] text-muted-foreground mt-0.5">
-                                                        When enabled, the Proxy Interceptor evaluates this filter during capture, and HTTP History filters the table by default with a toggleable switch.
-                                                    </p>
-                                                </div>
-                                            </div>
-                                            <Switch
-                                                id="interception-switch"
+                                    {/* Interception Checkbox */}
+                                    <div className="flex items-center justify-between pt-1">
+                                        <div className="flex items-center gap-2">
+                                            <Checkbox
+                                                id="filter-apply-interception"
                                                 checked={applyInInterception}
-                                                onCheckedChange={handleToggleInterception}
+                                                onCheckedChange={(checked) => handleToggleInterception(checked === true)}
+                                                className="h-4 w-4 rounded"
                                             />
+                                            <Label
+                                                htmlFor="filter-apply-interception"
+                                                className="flex items-center gap-1.5 text-xs font-medium text-foreground cursor-pointer select-none"
+                                            >
+                                                <Antenna className="w-3.5 h-3.5 text-primary" />
+                                                Apply this filter in interception
+                                            </Label>
                                         </div>
                                     </div>
 
