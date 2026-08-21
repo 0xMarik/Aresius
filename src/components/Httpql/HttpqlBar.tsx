@@ -26,6 +26,7 @@ import {
     HelpCircle,
     Plus,
     Trash2,
+    Antenna,
 } from 'lucide-react';
 import { HTTPQL_PRESETS } from '@/lib/httpql/httpql';
 import { getHttpqlSuggestions, AutocompleteSuggestion } from '@/lib/httpql/autocomplete';
@@ -39,6 +40,8 @@ export interface HttpqlBarProps {
     onChange: (query: string) => void;
     placeholder?: string;
     className?: string;
+    applyFilterChecked?: boolean;
+    onApplyFilterChange?: (checked: boolean) => void;
 }
 
 interface SavedQuery {
@@ -56,6 +59,8 @@ export const HttpqlBar: React.FC<HttpqlBarProps> = ({
     onChange,
     placeholder = 'Query traffic with HTTPQL (e.g. req.method:"POST" and resp.code.ge:400)...',
     className = '',
+    applyFilterChecked,
+    onApplyFilterChange,
 }) => {
     const projectId = useProjectId();
     const storeFilters = useAppSelector(selectAllFilters(projectId));
@@ -234,13 +239,6 @@ export const HttpqlBar: React.FC<HttpqlBarProps> = ({
         }, 10);
     };
 
-    const handleSelectPreset = (preset: { query: string; expression?: string; label: string }) => {
-        const isCurrent = inputValue.trim() === preset.query.trim() || (preset.expression && inputValue.trim() === preset.expression.trim());
-        const nextVal = isCurrent ? '' : preset.query;
-        setInputValue(nextVal);
-        onChange(nextVal);
-    };
-
     const handleSaveCurrentQuery = () => {
         if (!inputValue.trim() || !newQueryName.trim()) return;
         const newSaved: SavedQuery = {
@@ -276,7 +274,28 @@ export const HttpqlBar: React.FC<HttpqlBarProps> = ({
     return (
         <div className={`flex flex-col gap-1.5 px-3 py-2 bg-card/40 border-b border-border/70 ${className}`}>
             {/* Search Input Row */}
-            <div className="relative flex items-center gap-2">
+            <div className="relative flex items-center gap-1.5">
+                {/* Cheatsheet icon button at left of HTTPQL input */}
+                <TooltipProvider delayDuration={150}>
+                    <Tooltip>
+                        <TooltipTrigger asChild>
+                            <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground"
+                                onClick={() => setCheatsheetOpen(true)}
+                                aria-label="HTTPQL cheatsheet and syntax reference"
+                            >
+                                <HelpCircle className="h-4 w-4" />
+                            </Button>
+                        </TooltipTrigger>
+                        <TooltipContent side="top" align="start" className="text-xs">
+                            HTTPQL Reference &amp; Cheatsheet
+                        </TooltipContent>
+                    </Tooltip>
+                </TooltipProvider>
+
                 <div className="relative flex-1 flex items-center">
                     {/* HTTPQL Prefix Badge */}
                     <div className="absolute left-2.5 flex items-center gap-1 pointer-events-none text-muted-foreground z-10">
@@ -469,42 +488,33 @@ export const HttpqlBar: React.FC<HttpqlBarProps> = ({
                     </DropdownMenuContent>
                 </DropdownMenu>
 
-                {/* Cheatsheet Button */}
-                <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-8 px-2.5 text-xs gap-1.5 shrink-0 text-muted-foreground hover:text-foreground"
-                    onClick={() => setCheatsheetOpen(true)}
-                    title="HTTPQL Reference & Syntax Guide"
-                >
-                    <HelpCircle className="w-3.5 h-3.5 text-amber-500" />
-                    <span className="hidden sm:inline">Cheatsheet</span>
-                </Button>
-            </div>
-
-            {/* Quick Filter Preset Chips Row */}
-            <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pt-0.5 pb-0.5 text-xs">
-                <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70 shrink-0 mr-0.5">
-                    Presets:
-                </span>
-                {effectivePresets.map((preset) => {
-                    const isActive = inputValue.trim() === preset.query.trim() || (preset.expression && inputValue.trim() === preset.expression.trim());
-                    return (
-                        <button
-                            key={preset.id}
-                            type="button"
-                            onClick={() => handleSelectPreset(preset)}
-                            className={`px-2 py-0.5 rounded-full text-[11px] font-medium whitespace-nowrap transition-all border shrink-0 ${
-                                isActive
-                                    ? 'bg-primary/20 border-primary/50 text-primary font-semibold'
-                                    : 'bg-muted/40 border-border/60 text-muted-foreground hover:text-foreground hover:bg-muted/80'
+                {/* Apply Filter Button (Interception Preset Filter on History) */}
+                {onApplyFilterChange !== undefined && (
+                    <Button
+                        type="button"
+                        variant={applyFilterChecked ? 'secondary' : 'outline'}
+                        size="sm"
+                        className={`h-8 px-2.5 text-xs gap-1.5 shrink-0 transition-all ${
+                            applyFilterChecked
+                                ? 'border-amber-500/40 bg-amber-500/15 text-amber-600 dark:text-amber-400 font-medium hover:bg-amber-500/25'
+                                : 'text-muted-foreground hover:text-foreground opacity-75 hover:opacity-100'
+                        }`}
+                        onClick={() => onApplyFilterChange(!applyFilterChecked)}
+                        title={
+                            applyFilterChecked
+                                ? 'Interception preset filters applied to history table. Click to disable.'
+                                : 'Interception preset filters disabled on history table. Click to apply.'
+                        }
+                    >
+                        <Antenna className={`w-3.5 h-3.5 ${applyFilterChecked ? 'text-amber-500' : 'text-muted-foreground'}`} />
+                        <span>Apply Filter</span>
+                        <div
+                            className={`w-1.5 h-1.5 rounded-full ${
+                                applyFilterChecked ? 'bg-amber-500 animate-pulse' : 'bg-muted-foreground/30'
                             }`}
-                            title={preset.description}
-                        >
-                            {preset.label}
-                        </button>
-                    );
-                })}
+                        />
+                    </Button>
+                )}
             </div>
 
             {/* Cheatsheet Modal */}

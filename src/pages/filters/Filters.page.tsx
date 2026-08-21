@@ -384,89 +384,54 @@ export const FiltersPage: React.FC = () => {
                                                 key={item.id}
                                                 onClick={() => handleSelectFilter(item.id)}
                                                 className={cn(
-                                                    'group relative p-2.5 rounded-lg cursor-pointer transition-all border flex flex-col gap-1',
+                                                    'group relative px-3 py-2.5 rounded-lg cursor-pointer transition-all border flex items-center justify-between gap-2',
                                                     isSelected
                                                         ? 'bg-primary/10 border-primary/40 shadow-sm'
                                                         : 'bg-card/40 border-border/40 hover:bg-accent/40 hover:border-border/70 text-foreground'
                                                 )}
                                             >
-                                                <div className="flex items-center justify-between gap-2">
-                                                    <div className="flex items-center gap-1.5 min-w-0">
-                                                        <span
-                                                            className={cn(
-                                                                'font-medium text-xs truncate',
-                                                                isSelected ? 'text-primary font-semibold' : 'text-foreground'
-                                                            )}
-                                                        >
-                                                            {item.name}
-                                                        </span>
-                                                        {item.badge && (
-                                                            <Badge
-                                                                variant="outline"
-                                                                className="text-[9.5px] px-1 py-0 h-4 font-normal text-muted-foreground shrink-0"
-                                                            >
-                                                                {item.badge}
-                                                            </Badge>
+                                                <div className="flex items-center gap-1.5 min-w-0">
+                                                    <span
+                                                        className={cn(
+                                                            'font-medium text-xs truncate',
+                                                            isSelected ? 'text-primary font-semibold' : 'text-foreground'
                                                         )}
-                                                    </div>
+                                                    >
+                                                        {item.name}
+                                                    </span>
+                                                    {item.badge && (
+                                                        <Badge
+                                                            variant="outline"
+                                                            className="text-[9.5px] px-1.5 py-0 h-4 font-normal text-muted-foreground shrink-0"
+                                                        >
+                                                            {item.badge}
+                                                        </Badge>
+                                                    )}
+                                                </div>
 
-                                                    <div className="flex items-center gap-1.5 shrink-0">
+                                                <div className="flex items-center gap-1.5 shrink-0">
+                                                    {item.applyInInterception && (
                                                         <TooltipProvider>
                                                             <Tooltip>
                                                                 <TooltipTrigger asChild>
-                                                                    <button
-                                                                        type="button"
-                                                                        onClick={(e) => {
-                                                                            e.stopPropagation();
-                                                                            if (!projectId) return;
-                                                                            const nextVal = !item.applyInInterception;
-                                                                            dispatch(
-                                                                                togglePresetInterception({
-                                                                                    projectId,
-                                                                                    id: item.id,
-                                                                                    applyInInterception: nextVal,
-                                                                                })
-                                                                            );
-                                                                            if (selectedFilter?.id === item.id) {
-                                                                                setApplyInInterception(nextVal);
-                                                                            }
-                                                                        }}
-                                                                        className={cn(
-                                                                            'flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono border transition-all cursor-pointer select-none',
-                                                                            item.applyInInterception
-                                                                                ? 'text-amber-500 bg-amber-500/10 border-amber-500/30 hover:bg-amber-500/20 font-semibold'
-                                                                                : 'text-muted-foreground/50 bg-muted/20 border-border/40 hover:text-foreground hover:bg-muted/60'
-                                                                        )}
-                                                                    >
-                                                                        <Antenna className="w-2.5 h-2.5 mr-1 shrink-0" />
-                                                                        {item.applyInInterception ? 'Intercept' : 'Off'}
-                                                                    </button>
+                                                                    <div className="flex items-center text-amber-500 bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold">
+                                                                        <Antenna className="w-3 h-3" />
+                                                                    </div>
                                                                 </TooltipTrigger>
                                                                 <TooltipContent side="top" className="text-xs">
-                                                                    {item.applyInInterception
-                                                                        ? 'Active in Interception & HTTP History. Click to turn off.'
-                                                                        : 'Inactive in Interception. Click to enable.'}
+                                                                    Active in Interception
                                                                 </TooltipContent>
                                                             </Tooltip>
                                                         </TooltipProvider>
+                                                    )}
 
-                                                        <button
-                                                            onClick={(e) => handleDelete(item.id, e)}
-                                                            className="opacity-0 group-hover:opacity-100 p-1 text-muted-foreground hover:text-rose-500 rounded transition-opacity"
-                                                            title="Delete preset"
-                                                        >
-                                                            <Trash2 className="w-3.5 h-3.5" />
-                                                        </button>
-                                                    </div>
-                                                </div>
-
-                                                <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-                                                    <code className="font-mono text-[10.5px] text-primary/80 bg-background/60 px-1 rounded border border-border/40 truncate max-w-[170px]">
-                                                        preset:"{item.alias}"
-                                                    </code>
-                                                    <span className="font-mono text-[10px] text-muted-foreground/70 truncate max-w-[120px]">
-                                                        {item.expression}
-                                                    </span>
+                                                    <button
+                                                        onClick={(e) => handleDelete(item.id, e)}
+                                                        className="opacity-0 group-hover:opacity-100 p-1 text-muted-foreground hover:text-rose-500 rounded transition-opacity"
+                                                        title="Delete preset"
+                                                    >
+                                                        <Trash2 className="w-3.5 h-3.5" />
+                                                    </button>
                                                 </div>
                                             </div>
                                         );
