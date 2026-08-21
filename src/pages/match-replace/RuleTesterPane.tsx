@@ -259,7 +259,7 @@ export const RuleTesterPane: React.FC<RuleTesterPaneProps> = ({
             </div>
 
             {/* Split Before / After Editors */}
-            <ResizablePanelGroup direction="horizontal" className="flex-1 min-h-0">
+            <ResizablePanelGroup direction="horizontal" autoSaveId="aresius-match-replace-rule-tester" className="flex-1 min-h-0">
                 {/* Left: Before Editor */}
                 <ResizablePanel defaultSize={50} minSize={25}>
                     <div className="flex flex-col h-full min-h-0 bg-card">

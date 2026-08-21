@@ -1,20 +1,42 @@
+import * as React from "react"
 import { GripVertical } from "lucide-react"
 import * as ResizablePrimitive from "react-resizable-panels"
 
 import { cn } from "@/lib/utils"
+import { useProjectId } from "@/hooks/useProjectId"
+
+export interface ResizablePanelGroupProps
+  extends React.ComponentProps<typeof ResizablePrimitive.PanelGroup> {
+  layoutId?: string
+  projectId?: string | null
+}
 
 const ResizablePanelGroup = ({
   className,
+  autoSaveId,
+  layoutId,
+  projectId: projectIdProp,
   ...props
-}: React.ComponentProps<typeof ResizablePrimitive.PanelGroup>) => (
-  <ResizablePrimitive.PanelGroup
-    className={cn(
-      "flex h-full w-full data-[panel-group-direction=vertical]:flex-col",
-      className
-    )}
-    {...props}
-  />
-)
+}: ResizablePanelGroupProps) => {
+  const currentProjectId = useProjectId()
+  const projectId = projectIdProp !== undefined ? projectIdProp : currentProjectId
+  const baseLayoutId = layoutId || autoSaveId
+  const persistentId = baseLayoutId
+    ? (projectId ? `${projectId}-${baseLayoutId}` : baseLayoutId)
+    : undefined
+
+  return (
+    <ResizablePrimitive.PanelGroup
+      key={persistentId}
+      className={cn(
+        "flex h-full w-full data-[panel-group-direction=vertical]:flex-col",
+        className
+      )}
+      autoSaveId={persistentId}
+      {...props}
+    />
+  )
+}
 
 const ResizablePanel = ResizablePrimitive.Panel
 

@@ -729,12 +729,12 @@ const InterceptorPage: React.FC = () => {
                         description="Enable Intercept Request or Intercept Response in the top bar to begin capturing and editing HTTP traffic in real time."
                     />
                 )}
-                <ResizablePanelGroup direction="horizontal">
+                <ResizablePanelGroup direction="horizontal" autoSaveId="aresius-interceptor-layout">
                     {/* -------------------------------------------------------------- */}
                     {/* Left Pane: Requests Side                                       */}
                     {/* -------------------------------------------------------------- */}
                     <ResizablePanel defaultSize={50} minSize={30} hidden={!settings.requestsEnabled}>
-                        <ResizablePanelGroup direction="vertical">
+                        <ResizablePanelGroup direction="vertical" autoSaveId="aresius-interceptor-requests-layout">
                             {/* Top Left: Request Queue Table */}
                             <ResizablePanel defaultSize={45} minSize={20}>
                                 <div className="flex flex-col h-full bg-background border-r border-border">
@@ -878,7 +878,7 @@ const InterceptorPage: React.FC = () => {
                     {(settings.responsesEnabled && settings.requestsEnabled) && <ResizableHandle withHandle />}
 
                     <ResizablePanel defaultSize={50} minSize={30} hidden={!settings.responsesEnabled}>
-                        <ResizablePanelGroup direction="vertical">
+                        <ResizablePanelGroup direction="vertical" autoSaveId="aresius-interceptor-responses-layout">
                             {/* Top Right: Response Queue Table */}
                             <ResizablePanel defaultSize={45} minSize={20}>
                                 <div className="flex flex-col h-full bg-background">
