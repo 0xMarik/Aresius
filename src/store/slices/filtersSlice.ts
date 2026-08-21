@@ -238,6 +238,7 @@ export const filtersSlice = createSlice({
 export const {
     setSelectedFilterId,
     setApplyInterceptionInHistory,
+    toggleLocalInterception,
     createLocalFilterDraft,
     updateLocalFilter,
 } = filtersSlice.actions;

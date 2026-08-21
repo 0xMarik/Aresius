@@ -463,10 +463,37 @@ impl InterceptState {
 
         // Evaluate active interception preset filters
         let filters = self.filters.read().await;
-        for filter in filters.iter() {
-            if !filter.expr.evaluate(ctx) {
-                // If any active interception filter rejects this traffic, do not intercept
-                return false;
+        if !filters.is_empty() {
+            let mut exclusion_filters = Vec::new();
+            let mut positive_filters = Vec::new();
+
+            for filter in filters.iter() {
+                let id_lower = filter.id.to_lowercase();
+                let name_lower = filter.name.to_lowercase();
+                if id_lower.contains("hide-static")
+                    || id_lower.contains("no-static")
+                    || name_lower.contains("hide static")
+                    || name_lower.contains("no static")
+                {
+                    exclusion_filters.push(filter);
+                } else {
+                    positive_filters.push(filter);
+                }
+            }
+
+            // 1. All exclusion/gate filters must pass (e.g. if hide-static is active, static files are rejected)
+            for ex in exclusion_filters {
+                if !ex.expr.evaluate(ctx) {
+                    return false;
+                }
+            }
+
+            // 2. If positive inclusion filters are active, traffic matching ANY of them is intercepted (OR semantics)
+            if !positive_filters.is_empty() {
+                let matches_any_positive = positive_filters.iter().any(|f| f.expr.evaluate(ctx));
+                if !matches_any_positive {
+                    return false;
+                }
             }
         }
 
@@ -794,5 +821,86 @@ mod tests {
 
         // Static request should NOT be intercepted (blocked by hide-static filter)
         assert!(!state.should_intercept(InterceptItemType::Request, "api.example.com", "/assets/bundle.js", &static_ctx).await);
+
+        // Test multiple active filters: hide-static (exclusion) + errors-only (positive) + json-traffic (positive)
+        state
+            .update_filters(
+                vec![
+                    (
+                        "hide-static".to_string(),
+                        "Hide Static".to_string(),
+                        "req.ext.nin:['css', 'js', 'png', 'jpg']".to_string(),
+                    ),
+                    (
+                        "errors-only".to_string(),
+                        "Errors Only".to_string(),
+                        "resp.code.ge:400".to_string(),
+                    ),
+                    (
+                        "json-traffic".to_string(),
+                        "JSON Traffic".to_string(),
+                        "preset:\"json-traffic\"".to_string(),
+                    ),
+                ],
+                &presets,
+            )
+            .await;
+
+        let error_html_ctx = InterceptEvalContext {
+            method: "GET",
+            host: "api.example.com",
+            path: "/error",
+            query: None,
+            extension: None,
+            status_code: 500,
+            response_length: 500,
+            response_time_ms: 50,
+            sent_at_ms: 1000,
+            state: "Server Error",
+            is_https: true,
+            raw_request: Some("GET /error HTTP/1.1\r\n\r\n"),
+            raw_response: Some("HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/html\r\n\r\n<h1>Error</h1>"),
+        };
+
+        let success_json_ctx = InterceptEvalContext {
+            method: "GET",
+            host: "api.example.com",
+            path: "/api/data.json",
+            query: None,
+            extension: Some("json"),
+            status_code: 200,
+            response_length: 50,
+            response_time_ms: 50,
+            sent_at_ms: 1000,
+            state: "Success",
+            is_https: true,
+            raw_request: Some("GET /api/data.json HTTP/1.1\r\n\r\n"),
+            raw_response: Some("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{}"),
+        };
+
+        let success_html_ctx = InterceptEvalContext {
+            method: "GET",
+            host: "api.example.com",
+            path: "/index.html",
+            query: None,
+            extension: Some("html"),
+            status_code: 200,
+            response_length: 500,
+            response_time_ms: 50,
+            sent_at_ms: 1000,
+            state: "Success",
+            is_https: true,
+            raw_request: Some("GET /index.html HTTP/1.1\r\n\r\n"),
+            raw_response: Some("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<html></html>"),
+        };
+
+        // 500 HTML matches errors-only positive filter -> INTERCEPT
+        assert!(state.should_intercept(InterceptItemType::Response, "api.example.com", "/error", &error_html_ctx).await);
+
+        // 200 JSON matches json-traffic positive filter -> INTERCEPT
+        assert!(state.should_intercept(InterceptItemType::Response, "api.example.com", "/api/data.json", &success_json_ctx).await);
+
+        // 200 HTML matches neither errors-only nor json-traffic -> BYPASS
+        assert!(!state.should_intercept(InterceptItemType::Response, "api.example.com", "/index.html", &success_html_ctx).await);
     }
 }

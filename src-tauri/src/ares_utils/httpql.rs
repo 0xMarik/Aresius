@@ -293,6 +293,11 @@ impl<'a> Lexer<'a> {
                 continue;
             }
 
+            if word == ":" {
+                tokens.push(Token::Colon);
+                continue;
+            }
+
             // Check if word contains a colon `:`
             // Examples:
             // req.method:"GET"
@@ -300,36 +305,54 @@ impl<'a> Lexer<'a> {
             // resp.code:200
             // resp.code.ge:400
             if let Some(colon_idx) = word.find(':') {
-                let left_part = &word[..colon_idx];
-                let right_part = &word[colon_idx + 1..];
+                if colon_idx > 0 {
+                    let left_part = &word[..colon_idx];
+                    let right_part = &word[colon_idx + 1..];
 
-                let (field_str, header_key, op_str) = parse_field_with_modifiers(left_part);
+                    let (field_str, header_key, op_str) = parse_field_with_modifiers(left_part);
 
-                tokens.push(Token::FieldOp {
-                    field_str,
-                    header_key,
-                    op_str,
-                });
-                tokens.push(Token::Colon);
+                    tokens.push(Token::FieldOp {
+                        field_str,
+                        header_key,
+                        op_str,
+                    });
+                    tokens.push(Token::Colon);
 
-                if !right_part.is_empty() {
-                    // Right part immediately attached (e.g. `resp.code:200` or `req.path.sw:/api`)
-                    if right_part.starts_with('[') && right_part.ends_with(']') {
-                        let inner = &right_part[1..right_part.len() - 1];
-                        let items = parse_comma_items(inner);
-                        tokens.push(Token::ListVal(items));
-                    } else if right_part.eq_ignore_ascii_case("true") {
-                        tokens.push(Token::BoolVal(true));
-                    } else if right_part.eq_ignore_ascii_case("false") {
-                        tokens.push(Token::BoolVal(false));
-                    } else if let Ok(num) = right_part.parse::<i64>() {
-                        tokens.push(Token::NumberVal(num));
-                    } else {
-                        let cleaned = right_part.trim_matches(|c| c == '"' || c == '\'');
-                        tokens.push(Token::StringVal(cleaned.to_string()));
+                    if !right_part.is_empty() {
+                        // Right part immediately attached (e.g. `resp.code:200` or `req.path.sw:/api`)
+                        if right_part.starts_with('[') && right_part.ends_with(']') {
+                            let inner = &right_part[1..right_part.len() - 1];
+                            let items = parse_comma_items(inner);
+                            tokens.push(Token::ListVal(items));
+                        } else if right_part.eq_ignore_ascii_case("true") {
+                            tokens.push(Token::BoolVal(true));
+                        } else if right_part.eq_ignore_ascii_case("false") {
+                            tokens.push(Token::BoolVal(false));
+                        } else if let Ok(num) = right_part.parse::<i64>() {
+                            tokens.push(Token::NumberVal(num));
+                        } else {
+                            let cleaned = right_part.trim_matches(|c| c == '"' || c == '\'');
+                            tokens.push(Token::StringVal(cleaned.to_string()));
+                        }
                     }
+                    continue;
+                } else {
+                    tokens.push(Token::Colon);
+                    let right_part = &word[1..];
+                    if !right_part.is_empty() {
+                        if right_part.eq_ignore_ascii_case("true") {
+                            tokens.push(Token::BoolVal(true));
+                        } else if right_part.eq_ignore_ascii_case("false") {
+                            tokens.push(Token::BoolVal(false));
+                        } else if let Ok(num) = right_part.parse::<i64>() {
+                            tokens.push(Token::NumberVal(num));
+                        } else {
+                            let cleaned = right_part.trim_matches(|c| c == '"' || c == '\'');
+                            tokens.push(Token::StringVal(cleaned.to_string()));
+                        }
+                    }
+                    continue;
                 }
-                continue;
             }
 
             // Check if this is a field without immediate colon (e.g. `req.method : "GET"`)
@@ -340,11 +363,6 @@ impl<'a> Lexer<'a> {
                     header_key,
                     op_str,
                 });
-                continue;
-            }
-
-            if word == ":" {
-                tokens.push(Token::Colon);
                 continue;
             }
 
@@ -695,9 +713,33 @@ impl Parser {
 
                 Ok(HttpqlExpr::Condition(HttpqlCondition { field, op, value }))
             }
-            Token::BareWord(s) => Ok(HttpqlExpr::Bare(s)),
+            Token::BareWord(s) => {
+                if let Some(Token::Colon) = self.peek() {
+                    self.advance(); // consume colon
+                    let value_tok = self
+                        .advance()
+                        .ok_or_else(|| format!("Expected value after field '{}'", s))?;
+                    let value = match value_tok {
+                        Token::StringVal(v) => HttpqlValue::String(v),
+                        Token::NumberVal(n) => HttpqlValue::Number(n),
+                        Token::BoolVal(b) => HttpqlValue::Bool(b),
+                        Token::ListVal(l) => HttpqlValue::List(l),
+                        Token::BareWord(v) => HttpqlValue::String(v),
+                        other => {
+                            return Err(format!("Unexpected value token after colon: {:?}", other));
+                        }
+                    };
+                    let (field_str, header_key, op_str) = parse_field_with_modifiers(&s);
+                    let field = parse_field_type(&field_str, header_key)?;
+                    let op = parse_operator(op_str.as_deref(), &value);
+                    Ok(HttpqlExpr::Condition(HttpqlCondition { field, op, value }))
+                } else {
+                    Ok(HttpqlExpr::Bare(s))
+                }
+            }
             Token::StringVal(s) => Ok(HttpqlExpr::Bare(s)),
             Token::NumberVal(n) => Ok(HttpqlExpr::Bare(n.to_string())),
+            Token::Colon => Err("Unexpected standalone ':'".to_string()),
             other => Err(format!("Unexpected token: {:?}", other)),
         }
     }
@@ -741,7 +783,7 @@ fn parse_field_type(field_str: &str, header_key: Option<String>) -> Result<Httpq
             } else if lower.starts_with("resp.header") {
                 Ok(HttpqlField::RespHeader(header_key))
             } else {
-                Ok(HttpqlField::Bare)
+                Err(format!("Unknown HTTPQL field: '{}'", field_str))
             }
         }
     }
@@ -855,6 +897,21 @@ pub fn parse_httpql_with_presets(
 // -----------------------------------------------------------------------------
 // SQL Compiler for sqlx::QueryBuilder
 // -----------------------------------------------------------------------------
+
+impl HttpqlExpr {
+    pub fn has_regex(&self) -> bool {
+        match self {
+            HttpqlExpr::Condition(cond) => {
+                matches!(cond.op, HttpqlOperator::Regex | HttpqlOperator::Nregex)
+            }
+            HttpqlExpr::Not(inner) => inner.has_regex(),
+            HttpqlExpr::And(list) | HttpqlExpr::Or(list) => {
+                list.iter().any(|item| item.has_regex())
+            }
+            HttpqlExpr::Bare(_) => false,
+        }
+    }
+}
 
 pub fn compile_httpql_to_sql(
     builder: &mut sqlx::QueryBuilder<sqlx::Sqlite>,
@@ -1048,7 +1105,7 @@ fn compile_condition_to_sql(
                     builder.push("(COALESCE(extension, '') = '' OR LOWER(COALESCE(extension, '')) NOT IN ('css', 'js', 'png', 'jpg', 'jpeg', 'gif', 'svg', 'woff', 'woff2', 'ico', 'ttf', 'map', 'webp', 'avif', 'mp4', 'mp3', 'wasm', 'eot', 'otf', 'mjs', 'webmanifest', 'xml', 'txt'))");
                 }
                 _ => {
-                    builder.push("1=1");
+                    builder.push("1=0");
                 }
             }
         }
@@ -1061,12 +1118,55 @@ fn compile_condition_to_sql(
             builder.push_bind(pattern.clone());
             builder.push(" OR method LIKE ");
             builder.push_bind(pattern.clone());
+            builder.push(" OR query LIKE ");
+            builder.push_bind(pattern.clone());
+            builder.push(" OR CAST(status_code AS TEXT) LIKE ");
+            builder.push_bind(pattern.clone());
             builder.push(" OR raw_request LIKE ");
             builder.push_bind(pattern.clone());
             builder.push(" OR raw_response LIKE ");
             builder.push_bind(pattern);
             builder.push(")");
         }
+    }
+}
+
+fn regex_to_sql_like_candidate(re_str: &str) -> String {
+    let mut s = re_str.trim();
+    let anchored_start = s.starts_with('^');
+    if anchored_start {
+        s = &s[1..];
+    }
+    let anchored_end = s.ends_with('$');
+    if anchored_end {
+        s = &s[..s.len() - 1];
+    }
+
+    let mut cleaned = String::new();
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '.' && chars.peek() == Some(&'*') {
+            chars.next();
+            cleaned.push('%');
+        } else if c == '\\' {
+            if let Some(next_c) = chars.next() {
+                cleaned.push(next_c);
+            }
+        } else if c == '(' || c == ')' || c == '[' || c == ']' || c == '+' || c == '?' {
+            // Drop grouping punctuation for broad LIKE candidate filter
+        } else {
+            cleaned.push(c);
+        }
+    }
+    let core = cleaned.trim();
+    if core.is_empty() {
+        return "%".to_string();
+    }
+    match (anchored_start, anchored_end) {
+        (true, true) => core.to_string(),
+        (true, false) => format!("{}%", core),
+        (false, true) => format!("%{}", core),
+        (false, false) => format!("%{}%", core),
     }
 }
 
@@ -1337,14 +1437,14 @@ fn compile_str_field(
         }
         HttpqlOperator::Regex => {
             let s = val_as_string(val);
-            let pattern = format!("%{}%", s);
+            let pattern = regex_to_sql_like_candidate(&s);
             builder.push(col);
             builder.push(" LIKE ");
             builder.push_bind(pattern);
         }
         HttpqlOperator::Nregex => {
             let s = val_as_string(val);
-            let pattern = format!("%{}%", s);
+            let pattern = regex_to_sql_like_candidate(&s);
             builder.push(col);
             builder.push(" NOT LIKE ");
             builder.push_bind(pattern);
@@ -1443,6 +1543,41 @@ fn compile_port_field(
     builder.push_bind(port_num);
 }
 
+fn push_header_line_expr(builder: &mut sqlx::QueryBuilder<sqlx::Sqlite>, col: &str, hname: &str) {
+    let header_prefix = format!("{}:", hname.to_lowercase());
+    builder.push("SUBSTR(");
+    builder.push(col);
+    builder.push(", INSTR(LOWER(");
+    builder.push(col);
+    builder.push("), ");
+    builder.push_bind(header_prefix.clone());
+    builder.push("), CASE WHEN INSTR(SUBSTR(");
+    builder.push(col);
+    builder.push(", INSTR(LOWER(");
+    builder.push(col);
+    builder.push("), ");
+    builder.push_bind(header_prefix.clone());
+    builder.push(")), CHAR(10)) > 0 THEN INSTR(SUBSTR(");
+    builder.push(col);
+    builder.push(", INSTR(LOWER(");
+    builder.push(col);
+    builder.push("), ");
+    builder.push_bind(header_prefix.clone());
+    builder.push(")), CHAR(10)) ELSE LENGTH(");
+    builder.push(col);
+    builder.push(") END)");
+}
+
+fn push_header_val_expr(builder: &mut sqlx::QueryBuilder<sqlx::Sqlite>, col: &str, hname: &str) {
+    let header_prefix = format!("{}:", hname.to_lowercase());
+    let prefix_len = header_prefix.len() as i64 + 1;
+    builder.push("TRIM(SUBSTR(");
+    push_header_line_expr(builder, col, hname);
+    builder.push(", ");
+    builder.push_bind(prefix_len);
+    builder.push("), ' ' || CHAR(13) || CHAR(10))");
+}
+
 fn compile_header_field(
     builder: &mut sqlx::QueryBuilder<sqlx::Sqlite>,
     col: &str,
@@ -1450,27 +1585,217 @@ fn compile_header_field(
     op: HttpqlOperator,
     val: &HttpqlValue,
 ) {
-    let target_val = val_as_string(val);
-
     if let Some(hname) = header_name {
-        let pattern = format!("%{}%{}%", hname, target_val);
+        let hname_lower = hname.to_lowercase();
+        let header_prefix = format!("{}:", hname_lower);
+
         match op {
-            HttpqlOperator::Ne | HttpqlOperator::Ncont => {
+            HttpqlOperator::Cont | HttpqlOperator::Like | HttpqlOperator::Regex => {
+                let target_val = val_as_string(val);
+                let pattern = format!("%{}%", target_val.to_lowercase());
+                builder.push("(INSTR(LOWER(");
                 builder.push(col);
-                builder.push(" NOT LIKE ");
+                builder.push("), ");
+                builder.push_bind(header_prefix.clone());
+                builder.push(") > 0 AND LOWER(");
+                push_header_line_expr(builder, col, &hname_lower);
+                builder.push(") LIKE ");
                 builder.push_bind(pattern);
+                builder.push(")");
+            }
+            HttpqlOperator::Ncont | HttpqlOperator::Nlike | HttpqlOperator::Nregex => {
+                let target_val = val_as_string(val);
+                let pattern = format!("%{}%", target_val.to_lowercase());
+                builder.push("(INSTR(LOWER(");
+                builder.push(col);
+                builder.push("), ");
+                builder.push_bind(header_prefix.clone());
+                builder.push(") = 0 OR LOWER(");
+                push_header_line_expr(builder, col, &hname_lower);
+                builder.push(") NOT LIKE ");
+                builder.push_bind(pattern);
+                builder.push(")");
+            }
+            HttpqlOperator::Eq => match val {
+                HttpqlValue::List(list) => {
+                    if list.is_empty() {
+                        builder.push("1=0");
+                    } else {
+                        builder.push("(INSTR(LOWER(");
+                        builder.push(col);
+                        builder.push("), ");
+                        builder.push_bind(header_prefix.clone());
+                        builder.push(") > 0 AND LOWER(");
+                        push_header_val_expr(builder, col, &hname_lower);
+                        builder.push(") IN (");
+                        let mut sep = builder.separated(", ");
+                        for item in list {
+                            sep.push_bind(item.to_lowercase());
+                        }
+                        builder.push("))");
+                    }
+                }
+                _ => {
+                    let target_val = val_as_string(val).to_lowercase();
+                    builder.push("(INSTR(LOWER(");
+                    builder.push(col);
+                    builder.push("), ");
+                    builder.push_bind(header_prefix.clone());
+                    builder.push(") > 0 AND LOWER(");
+                    push_header_val_expr(builder, col, &hname_lower);
+                    builder.push(") = ");
+                    builder.push_bind(target_val);
+                    builder.push(")");
+                }
+            },
+            HttpqlOperator::Ne => match val {
+                HttpqlValue::List(list) => {
+                    if list.is_empty() {
+                        builder.push("1=1");
+                    } else {
+                        builder.push("(INSTR(LOWER(");
+                        builder.push(col);
+                        builder.push("), ");
+                        builder.push_bind(header_prefix.clone());
+                        builder.push(") = 0 OR LOWER(");
+                        push_header_val_expr(builder, col, &hname_lower);
+                        builder.push(") NOT IN (");
+                        let mut sep = builder.separated(", ");
+                        for item in list {
+                            sep.push_bind(item.to_lowercase());
+                        }
+                        builder.push("))");
+                    }
+                }
+                _ => {
+                    let target_val = val_as_string(val).to_lowercase();
+                    builder.push("(INSTR(LOWER(");
+                    builder.push(col);
+                    builder.push("), ");
+                    builder.push_bind(header_prefix.clone());
+                    builder.push(") = 0 OR LOWER(");
+                    push_header_val_expr(builder, col, &hname_lower);
+                    builder.push(") != ");
+                    builder.push_bind(target_val);
+                    builder.push(")");
+                }
+            },
+            HttpqlOperator::Sw => {
+                let target_val = val_as_string(val).to_lowercase();
+                let pattern = format!("{}%", target_val);
+                builder.push("(INSTR(LOWER(");
+                builder.push(col);
+                builder.push("), ");
+                builder.push_bind(header_prefix.clone());
+                builder.push(") > 0 AND LOWER(");
+                push_header_val_expr(builder, col, &hname_lower);
+                builder.push(") LIKE ");
+                builder.push_bind(pattern);
+                builder.push(")");
+            }
+            HttpqlOperator::Nsw => {
+                let target_val = val_as_string(val).to_lowercase();
+                let pattern = format!("{}%", target_val);
+                builder.push("(INSTR(LOWER(");
+                builder.push(col);
+                builder.push("), ");
+                builder.push_bind(header_prefix.clone());
+                builder.push(") = 0 OR LOWER(");
+                push_header_val_expr(builder, col, &hname_lower);
+                builder.push(") NOT LIKE ");
+                builder.push_bind(pattern);
+                builder.push(")");
+            }
+            HttpqlOperator::Ew => {
+                let target_val = val_as_string(val).to_lowercase();
+                let pattern = format!("%{}", target_val);
+                builder.push("(INSTR(LOWER(");
+                builder.push(col);
+                builder.push("), ");
+                builder.push_bind(header_prefix.clone());
+                builder.push(") > 0 AND LOWER(");
+                push_header_val_expr(builder, col, &hname_lower);
+                builder.push(") LIKE ");
+                builder.push_bind(pattern);
+                builder.push(")");
+            }
+            HttpqlOperator::New => {
+                let target_val = val_as_string(val).to_lowercase();
+                let pattern = format!("%{}", target_val);
+                builder.push("(INSTR(LOWER(");
+                builder.push(col);
+                builder.push("), ");
+                builder.push_bind(header_prefix.clone());
+                builder.push(") = 0 OR LOWER(");
+                push_header_val_expr(builder, col, &hname_lower);
+                builder.push(") NOT LIKE ");
+                builder.push_bind(pattern);
+                builder.push(")");
+            }
+            HttpqlOperator::In => {
+                let list = val_as_list(val);
+                if list.is_empty() {
+                    builder.push("1=0");
+                } else {
+                    builder.push("(INSTR(LOWER(");
+                    builder.push(col);
+                    builder.push("), ");
+                    builder.push_bind(header_prefix.clone());
+                    builder.push(") > 0 AND LOWER(");
+                    push_header_val_expr(builder, col, &hname_lower);
+                    builder.push(") IN (");
+                    let mut sep = builder.separated(", ");
+                    for item in list {
+                        sep.push_bind(item.to_lowercase());
+                    }
+                    builder.push("))");
+                }
+            }
+            HttpqlOperator::Nin => {
+                let list = val_as_list(val);
+                if list.is_empty() {
+                    builder.push("1=1");
+                } else {
+                    builder.push("(INSTR(LOWER(");
+                    builder.push(col);
+                    builder.push("), ");
+                    builder.push_bind(header_prefix.clone());
+                    builder.push(") = 0 OR LOWER(");
+                    push_header_val_expr(builder, col, &hname_lower);
+                    builder.push(") NOT IN (");
+                    let mut sep = builder.separated(", ");
+                    for item in list {
+                        sep.push_bind(item.to_lowercase());
+                    }
+                    builder.push("))");
+                }
             }
             _ => {
+                let target_val = val_as_string(val).to_lowercase();
+                let pattern = format!("%{}%", target_val);
+                builder.push("(INSTR(LOWER(");
                 builder.push(col);
-                builder.push(" LIKE ");
+                builder.push("), ");
+                builder.push_bind(header_prefix.clone());
+                builder.push(") > 0 AND LOWER(");
+                push_header_line_expr(builder, col, &hname_lower);
+                builder.push(") LIKE ");
                 builder.push_bind(pattern);
+                builder.push(")");
             }
         }
     } else {
-        // No specific header name given: match across headers/raw message
+        // No specific header name given
+        let target_val = val_as_string(val);
         let pattern = format!("%{}%", target_val);
         match op {
-            HttpqlOperator::Ne | HttpqlOperator::Ncont => {
+            HttpqlOperator::Ne
+            | HttpqlOperator::Ncont
+            | HttpqlOperator::Nlike
+            | HttpqlOperator::Nregex
+            | HttpqlOperator::Nsw
+            | HttpqlOperator::New
+            | HttpqlOperator::Nin => {
                 builder.push(col);
                 builder.push(" NOT LIKE ");
                 builder.push_bind(pattern);
@@ -1704,7 +2029,7 @@ fn eval_condition<T: HttpTransactionEvaluable>(cond: &HttpqlCondition, item: &T)
                 }
                 "slow" | "slow-requests" => item.eval_response_time_ms() > 1000,
                 "has-params" | "params" => item.eval_query().map(|q| !q.is_empty()).unwrap_or(false),
-                _ => true,
+                _ => false,
             }
         }
         HttpqlField::Bare => {
@@ -1712,6 +2037,10 @@ fn eval_condition<T: HttpTransactionEvaluable>(cond: &HttpqlCondition, item: &T)
             item.eval_host().to_lowercase().contains(&s)
                 || item.eval_path().to_lowercase().contains(&s)
                 || item.eval_method().to_lowercase().contains(&s)
+                || item.eval_query().map(|q| q.to_lowercase().contains(&s)).unwrap_or(false)
+                || item.eval_status_code().to_string().contains(&s)
+                || item.eval_raw_request().map(|r| r.to_lowercase().contains(&s)).unwrap_or(false)
+                || item.eval_raw_response().map(|r| r.to_lowercase().contains(&s)).unwrap_or(false)
         }
     }
 }
@@ -2187,5 +2516,92 @@ mod tests {
         let q16 = parse_httpql("req.ext.nin:[\".png\", \".jpg\", \".css\", \".js\"]").unwrap().unwrap();
         assert!(q16.evaluate(&row));
         assert!(!q16.evaluate(&static_row));
+    }
+
+    #[test]
+    fn test_spaced_colon_syntax() {
+        let q = parse_httpql("resp.code : 200").unwrap().unwrap();
+        assert_eq!(
+            q,
+            HttpqlExpr::Condition(HttpqlCondition {
+                field: HttpqlField::RespCode,
+                op: HttpqlOperator::Eq,
+                value: HttpqlValue::Number(200),
+            })
+        );
+
+        let q2 = parse_httpql("req.method : \"POST\"").unwrap().unwrap();
+        assert_eq!(
+            q2,
+            HttpqlExpr::Condition(HttpqlCondition {
+                field: HttpqlField::ReqMethod,
+                op: HttpqlOperator::Eq,
+                value: HttpqlValue::String("POST".to_string()),
+            })
+        );
+    }
+
+    #[test]
+    fn test_unknown_field_error() {
+        let res = parse_httpql("req.reponse.code:200");
+        assert!(res.is_err());
+        assert!(res.unwrap_err().contains("Unknown HTTPQL field"));
+    }
+
+    #[test]
+    fn test_unknown_preset_fallback() {
+        let q = parse_httpql("preset:\"nonexistent_alias\"").unwrap().unwrap();
+        let mut builder = sqlx::QueryBuilder::<sqlx::Sqlite>::new("SELECT * FROM http_history WHERE ");
+        compile_httpql_to_sql(&mut builder, &q);
+        assert_eq!(builder.sql(), "SELECT * FROM http_history WHERE 1=0");
+    }
+
+    #[test]
+    fn test_header_content_type_cont_single_line() {
+        let js_row = MockRow {
+            id: 10,
+            method: "GET".to_string(),
+            host: "duckduckgo.com".to_string(),
+            path: "/ac/".to_string(),
+            query: None,
+            extension: Some("js".to_string()),
+            status_code: 200,
+            response_length: 118,
+            response_time_ms: 30,
+            sent_at_ms: 1690000000000,
+            state: "Success".to_string(),
+            is_https: true,
+            raw_request: "GET /ac/ HTTP/1.1\r\nHost: duckduckgo.com\r\n\r\n".to_string(),
+            raw_response: "HTTP/1.1 200 OK\r\nContent-Type: application/javascript; charset=UTF-8\r\nContent-Disposition: attachment; filename=\"ac.json\"\r\n\r\n[\"json_data\"]".to_string(),
+        };
+
+        let json_row = MockRow {
+            id: 11,
+            method: "GET".to_string(),
+            host: "duckduckgo.com".to_string(),
+            path: "/api/status".to_string(),
+            query: None,
+            extension: Some("json".to_string()),
+            status_code: 200,
+            response_length: 50,
+            response_time_ms: 20,
+            sent_at_ms: 1690000000000,
+            state: "Success".to_string(),
+            is_https: true,
+            raw_request: "GET /api/status HTTP/1.1\r\nHost: duckduckgo.com\r\n\r\n".to_string(),
+            raw_response: "HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n{\"status\":\"ok\"}".to_string(),
+        };
+
+        let q = parse_httpql("resp.header[\"content-type\"].cont:\"json\"").unwrap().unwrap();
+
+        // In-memory evaluation
+        assert!(!q.evaluate(&js_row), "JS response Content-Type should not match json");
+        assert!(q.evaluate(&json_row), "JSON response Content-Type should match json");
+
+        // SQL compilation
+        let mut builder = sqlx::QueryBuilder::<sqlx::Sqlite>::new("SELECT * FROM http_history WHERE ");
+        compile_httpql_to_sql(&mut builder, &q);
+        let sql = builder.into_sql();
+        assert!(sql.contains("INSTR(LOWER(raw_response)"), "SQL should extract single header line");
     }
 }

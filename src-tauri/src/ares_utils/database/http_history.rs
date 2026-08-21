@@ -362,9 +362,11 @@ pub async fn get_http_history_window(
     query_builder.push(" ORDER BY ");
     query_builder.push(&order_clause);
 
-    if needs_scope_filter {
-        let active_scope = scope.as_ref().unwrap();
-        let compiled_scope = crate::proxy::interceptor::CompiledScope::compile(active_scope);
+    let has_regex = final_httpql.as_ref().map_or(false, |e| e.has_regex());
+    let needs_memory_filter = needs_scope_filter || has_regex;
+
+    if needs_memory_filter {
+        let compiled_scope = scope.as_ref().map(crate::proxy::interceptor::CompiledScope::compile);
         let match_in = filter_mode == "in";
 
         let all_rows = query_builder
@@ -376,8 +378,18 @@ pub async fn get_http_history_window(
         let filtered: Vec<HttpHistorySummaryRowDb> = all_rows
             .into_iter()
             .filter(|row| {
-                let in_scope = compiled_scope.is_in_scope(&row.host, &row.path);
-                in_scope == match_in
+                if let Some(ref sc) = compiled_scope {
+                    let in_scope = sc.is_in_scope(&row.host, &row.path);
+                    if in_scope != match_in {
+                        return false;
+                    }
+                }
+                if let Some(ref expr) = final_httpql {
+                    if has_regex && !expr.evaluate(row) {
+                        return false;
+                    }
+                }
+                true
             })
             .collect();
 
@@ -394,7 +406,7 @@ pub async fn get_http_history_window(
         });
     }
 
-    // 1. Compute total matching rows when not filtering by scope in memory
+    // 1. Compute total matching rows when not filtering by scope/regex in memory
     let mut count_builder = sqlx::QueryBuilder::<sqlx::Sqlite>::new("SELECT COUNT(*) FROM http_history WHERE 1=1");
     if let Some(ref pid) = project_id {
         count_builder.push(" AND project_id = ");
@@ -404,7 +416,6 @@ pub async fn get_http_history_window(
         count_builder.push(" AND ");
         crate::ares_utils::httpql::compile_httpql_to_sql(&mut count_builder, expr);
     }
-
 
     let total: i64 = count_builder
         .build_query_scalar::<i64>()
@@ -500,4 +511,106 @@ pub fn validate_httpql(query: String) -> HttpqlValidationResult {
         },
     }
 }
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HttpqlSandboxTransaction {
+    pub id: Option<u32>,
+    pub method: Option<String>,
+    pub host: Option<String>,
+    pub path: Option<String>,
+    pub query: Option<String>,
+    pub extension: Option<String>,
+    pub status_code: Option<i64>,
+    pub response_length: Option<i64>,
+    pub response_time_ms: Option<i64>,
+    pub sent_at_ms: Option<i64>,
+    pub state: Option<String>,
+    pub is_https: Option<bool>,
+    pub raw_request: Option<String>,
+    pub raw_response: Option<String>,
+}
+
+impl crate::ares_utils::httpql::HttpTransactionEvaluable for HttpqlSandboxTransaction {
+    fn eval_id(&self) -> u32 {
+        self.id.unwrap_or(1)
+    }
+    fn eval_method(&self) -> &str {
+        self.method.as_deref().unwrap_or("GET")
+    }
+    fn eval_host(&self) -> &str {
+        self.host.as_deref().unwrap_or("example.com")
+    }
+    fn eval_path(&self) -> &str {
+        self.path.as_deref().unwrap_or("/")
+    }
+    fn eval_query(&self) -> Option<&str> {
+        self.query.as_deref()
+    }
+    fn eval_ext(&self) -> Option<&str> {
+        self.extension.as_deref()
+    }
+    fn eval_status_code(&self) -> i64 {
+        self.status_code.unwrap_or(200)
+    }
+    fn eval_response_length(&self) -> i64 {
+        self.response_length.unwrap_or(0)
+    }
+    fn eval_response_time_ms(&self) -> i64 {
+        self.response_time_ms.unwrap_or(50)
+    }
+    fn eval_sent_at_ms(&self) -> i64 {
+        self.sent_at_ms.unwrap_or_else(|| chrono::Utc::now().timestamp_millis() as i64)
+    }
+    fn eval_state(&self) -> &str {
+        self.state.as_deref().unwrap_or("Success")
+    }
+    fn eval_is_https(&self) -> bool {
+        self.is_https.unwrap_or(false)
+    }
+    fn eval_raw_request(&self) -> Option<&str> {
+        self.raw_request.as_deref()
+    }
+    fn eval_raw_response(&self) -> Option<&str> {
+        self.raw_response.as_deref()
+    }
+}
+
+/// Evaluates an HTTPQL query against a test transaction in memory using the real HTTPQL engine
+#[tauri::command]
+pub async fn evaluate_httpql_sandbox(
+    db: tauri::State<'_, DbState>,
+    query: String,
+    project_id: Option<String>,
+    test_transaction: HttpqlSandboxTransaction,
+) -> Result<bool, String> {
+    if query.trim().is_empty() {
+        return Ok(true);
+    }
+
+    let mut preset_map = std::collections::HashMap::new();
+    if let Some(ref pid) = project_id {
+        if let Ok(pool) = db.pool().await {
+            if let Ok(rows) = sqlx::query_as::<_, crate::ares_utils::database::preset_filters::DbPresetFilterRow>(
+                "SELECT id, project_id, name, alias, expression, description, badge, apply_in_interception, sort_order, created_at, updated_at FROM preset_filters WHERE project_id = ?"
+            )
+            .bind(pid)
+            .fetch_all(&pool)
+            .await {
+                for r in rows {
+                    preset_map.insert(r.alias.to_lowercase(), r.expression);
+                }
+            }
+        }
+    }
+
+    let expr = crate::ares_utils::httpql::parse_httpql_with_presets(&query, &preset_map)
+        .map_err(|e| format!("HTTPQL Syntax Error: {e}"))?;
+
+    match expr {
+        Some(e) => Ok(e.evaluate(&test_transaction)),
+        None => Ok(true),
+    }
+}
+
 

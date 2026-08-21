@@ -9,7 +9,7 @@ use crate::app_setup::close_splashscreen;
 use crate::ares_utils::certs::certification_installation::install_cert;
 use crate::ares_utils::certs::check_cert_installed::check_cert_installed;
 use crate::ares_utils::database::http_history::{
-    delete_http_history_items, get_http_history, get_http_history_item,
+    delete_http_history_items, evaluate_httpql_sandbox, get_http_history, get_http_history_item,
     get_http_history_summaries, get_http_history_window, validate_httpql,
 };
 use crate::ares_utils::database::projects::create_project;
@@ -152,6 +152,7 @@ pub fn run() {
             get_http_history_summaries,
             delete_http_history_items,
             validate_httpql,
+            evaluate_httpql_sandbox,
             // Scopes
             get_scope_project_data,
             create_scope_db,

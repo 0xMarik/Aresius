@@ -10,6 +10,7 @@ import {
     createLocalFilterDraft,
     saveFilterToDb,
     togglePresetInterception,
+    toggleLocalInterception,
     deleteFilterFromDb,
     resetDefaultFiltersDb,
     fetchFiltersForProject,
@@ -186,6 +187,7 @@ export const FiltersPage: React.FC = () => {
     const handleToggleInterception = async (checked: boolean) => {
         setApplyInInterception(checked);
         if (selectedFilter && projectId) {
+            dispatch(toggleLocalInterception({ projectId, id: selectedFilter.id, applyInInterception: checked }));
             dispatch(togglePresetInterception({
                 projectId,
                 id: selectedFilter.id,
@@ -265,30 +267,39 @@ export const FiltersPage: React.FC = () => {
         });
     };
 
-    // Live Sandbox evaluation
-    const handleTestExpression = () => {
+    // Live Sandbox evaluation using backend HTTPQL engine
+    const handleTestExpression = async () => {
         if (!expression.trim()) {
             setTestResult(true);
             return;
         }
 
-        // Simple client-side evaluator for testing feedback
         try {
-            const exprLower = expression.toLowerCase();
-            let matches = true;
+            const extMatch = testPath.match(/\.([a-zA-Z0-9]+)(?:[?#]|$)/);
+            const testExt = extMatch ? extMatch[1] : null;
 
-            if (exprLower.includes('req.method') && !exprLower.includes(testMethod.toLowerCase())) {
-                matches = false;
-            }
-            if (exprLower.includes('req.host') && !testHost.toLowerCase().includes('example')) {
-                matches = false;
-            }
-            if (exprLower.includes('resp.code') && exprLower.includes('gte:400') && Number(testCode) < 400) {
-                matches = false;
-            }
-
-            setTestResult(matches);
-        } catch {
+            const res = await invoke<boolean>('evaluate_httpql_sandbox', {
+                query: expression,
+                projectId: projectId || null,
+                testTransaction: {
+                    method: testMethod,
+                    host: testHost,
+                    path: testPath,
+                    query: null,
+                    extension: testExt,
+                    statusCode: Number(testCode) || 200,
+                    responseLength: 1024,
+                    responseTimeMs: 45,
+                    sentAtMs: Date.now(),
+                    state: Number(testCode) >= 400 ? 'Client Error' : 'Success',
+                    isHttps: true,
+                    rawRequest: `${testMethod} ${testPath} HTTP/1.1\r\nHost: ${testHost}\r\n\r\n`,
+                    rawResponse: `HTTP/1.1 ${testCode} OK\r\nContent-Type: application/json\r\n\r\n{"status":"ok"}`,
+                },
+            });
+            setTestResult(res);
+        } catch (err) {
+            console.error('Test expression evaluation failed:', err);
             setTestResult(false);
         }
     };
