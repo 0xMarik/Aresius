@@ -15,13 +15,17 @@ interface HttpqlCheatsheetModalProps {
     open: boolean;
     onOpenChange: (open: boolean) => void;
     onSelectQuery: (query: string) => void;
+    presets?: { id: string; label: string; description: string; query: string; badge?: string }[];
 }
 
 export const HttpqlCheatsheetModal: React.FC<HttpqlCheatsheetModalProps> = ({
     open,
     onOpenChange,
     onSelectQuery,
+    presets,
 }) => {
+    const displayPresets = presets && presets.length > 0 ? presets : HTTPQL_PRESETS;
+
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent className="max-w-3xl max-h-[85vh] overflow-hidden flex flex-col p-6">
@@ -43,7 +47,7 @@ export const HttpqlCheatsheetModal: React.FC<HttpqlCheatsheetModalProps> = ({
                             Popular Preset Filters
                         </h3>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                            {HTTPQL_PRESETS.map((preset) => (
+                            {displayPresets.map((preset) => (
                                 <div
                                     key={preset.id}
                                     className="p-2.5 rounded-md border border-border/70 bg-card/60 hover:bg-accent/40 transition-colors flex flex-col justify-between gap-1.5"

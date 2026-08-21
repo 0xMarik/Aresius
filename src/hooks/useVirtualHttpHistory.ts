@@ -16,6 +16,7 @@ export interface UseVirtualHttpHistoryOptions {
     initialLimit?: number;
     activeScope?: Scope | null;
     scopeFilter?: 'all' | 'in' | 'out';
+    applyInterceptionFilters?: boolean;
 }
 
 export function adaptSummaryRow(item: HttpHistorySummaryRow): HttpTransaction {
@@ -48,6 +49,7 @@ export function useVirtualHttpHistory({
     initialLimit = 250,
     activeScope = null,
     scopeFilter = 'in',
+    applyInterceptionFilters = false,
 }: UseVirtualHttpHistoryOptions) {
     const BUFFER = 100;
     const THRESHOLD = 30;
@@ -120,7 +122,8 @@ export function useVirtualHttpHistory({
             currentSorting: SortingState,
             search: string,
             currentScope: Scope | null,
-            currentFilter: 'all' | 'in' | 'out'
+            currentFilter: 'all' | 'in' | 'out',
+            interceptionFiltersEnabled: boolean
         ) => {
             if (!projectId) {
                 setWindowState({ offset: 0, limit, items: [], total: 0 });
@@ -148,6 +151,7 @@ export function useVirtualHttpHistory({
                             deny: currentScope.deny || [],
                         } : null,
                         scopeFilter: currentFilter || 'all',
+                        applyInterceptionFilters: interceptionFiltersEnabled,
                     }
                 );
 
@@ -170,19 +174,22 @@ export function useVirtualHttpHistory({
     const prevScopeFilterRef = useRef(scopeFilter);
     const prevActiveScopeIdRef = useRef(activeScope?.id);
     const prevSearchQueryRef = useRef(searchQuery);
+    const prevApplyInterceptionRef = useRef(applyInterceptionFilters);
 
     useEffect(() => {
         if (
             prevScopeFilterRef.current !== scopeFilter ||
             prevActiveScopeIdRef.current !== activeScope?.id ||
-            prevSearchQueryRef.current !== searchQuery
+            prevSearchQueryRef.current !== searchQuery ||
+            prevApplyInterceptionRef.current !== applyInterceptionFilters
         ) {
             prevScopeFilterRef.current = scopeFilter;
             prevActiveScopeIdRef.current = activeScope?.id;
             prevSearchQueryRef.current = searchQuery;
+            prevApplyInterceptionRef.current = applyInterceptionFilters;
             setWindowState((prev) => ({ ...prev, offset: 0 }));
         }
-    }, [scopeFilter, activeScope?.id, searchQuery]);
+    }, [scopeFilter, activeScope?.id, searchQuery, applyInterceptionFilters]);
 
     // Trigger fetch on parameter change
     useEffect(() => {
@@ -195,7 +202,8 @@ export function useVirtualHttpHistory({
             sorting,
             searchQuery,
             activeScope,
-            scopeFilter
+            scopeFilter,
+            applyInterceptionFilters
         ).finally(() => {
             if (!isCancelled) setIsLoading(false);
         });
@@ -203,7 +211,7 @@ export function useVirtualHttpHistory({
         return () => {
             isCancelled = true;
         };
-    }, [fetchWindow, windowState.offset, windowState.limit, sorting, searchQuery, activeScope, scopeFilter]);
+    }, [fetchWindow, windowState.offset, windowState.limit, sorting, searchQuery, activeScope, scopeFilter, applyInterceptionFilters]);
 
     // Live Proxy Traffic Listener with 100ms throttle
     useEffect(() => {
@@ -233,7 +241,7 @@ export function useVirtualHttpHistory({
                 const isAtTop = curOffset === 0;
 
                 if (isSortedDesc && isAtTop) {
-                    fetchWindow(0, curLimit, curSorting, searchQuery, activeScope, scopeFilter);
+                    fetchWindow(0, curLimit, curSorting, searchQuery, activeScope, scopeFilter, applyInterceptionFilters);
                 } else {
                     // Otherwise update total count smoothly without disrupting scroll position
                     setWindowState((prev) => ({
@@ -255,7 +263,7 @@ export function useVirtualHttpHistory({
             }
             unlistenPromise.then((unlisten) => unlisten());
         };
-    }, [projectId, fetchWindow, searchQuery, activeScope, scopeFilter]);
+    }, [projectId, fetchWindow, searchQuery, activeScope, scopeFilter, applyInterceptionFilters]);
 
     // Lazy fetch full request/response payload when a row is selected
     useEffect(() => {
@@ -327,7 +335,7 @@ export function useVirtualHttpHistory({
                 // Evict deleted items from detail cache
                 ids.forEach((id) => detailCacheRef.current.delete(id));
                 // Refresh current window
-                fetchWindow(windowState.offset, windowState.limit, sorting, searchQuery, activeScope, scopeFilter);
+                fetchWindow(windowState.offset, windowState.limit, sorting, searchQuery, activeScope, scopeFilter, applyInterceptionFilters);
                 if (selectedRequest && ids.includes(selectedRequest)) {
                     setSelectedRequest(null);
                     setSelectedEntity(null);
@@ -336,7 +344,7 @@ export function useVirtualHttpHistory({
                 console.error('Failed to delete history items:', err);
             }
         },
-        [fetchWindow, windowState.offset, windowState.limit, sorting, searchQuery, activeScope, scopeFilter, selectedRequest]
+        [fetchWindow, windowState.offset, windowState.limit, sorting, searchQuery, activeScope, scopeFilter, applyInterceptionFilters, selectedRequest]
     );
 
     return {
@@ -354,6 +362,6 @@ export function useVirtualHttpHistory({
         isLoading,
         isLoadingDetails,
         removeRows,
-        refresh: () => fetchWindow(windowState.offset, windowState.limit, sorting, searchQuery, activeScope, scopeFilter),
+        refresh: () => fetchWindow(windowState.offset, windowState.limit, sorting, searchQuery, activeScope, scopeFilter, applyInterceptionFilters),
     };
 }

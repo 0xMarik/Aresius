@@ -11,7 +11,8 @@ import {
   Logs,
   Crosshair,
   ListTree,
-  ArrowLeftRight
+  ArrowLeftRight,
+  ListFilter,
 } from "lucide-react"
 
 // import { NavMain } from '@/components/nav-main'
@@ -141,6 +142,10 @@ const data = {
     name: "Scope",
     url: "/scope",
     icon: Crosshair
+  }, {
+    name: "Filters",
+    url: "/filters",
+    icon: ListFilter
   }],
   proxy: [{
     name: "Interceptor",

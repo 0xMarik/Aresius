@@ -252,6 +252,7 @@ pub async fn get_http_history_window(
     search: Option<String>,
     scope: Option<crate::proxy::interceptor::ActiveScope>,
     scope_filter: Option<String>,
+    apply_interception_filters: Option<bool>,
 ) -> Result<HttpHistoryWindowResult, String> {
     let pool = db.pool().await?;
 
@@ -287,6 +288,32 @@ pub async fn get_http_history_window(
     let filter_mode = scope_filter.as_deref().unwrap_or("all");
     let needs_scope_filter = scope.is_some() && (filter_mode == "in" || filter_mode == "out");
 
+    // 1. Fetch presets map for this project
+    let mut preset_map = std::collections::HashMap::new();
+    let mut interception_exprs = Vec::new();
+    if let Some(ref pid) = project_id {
+        if let Ok(rows) = sqlx::query_as::<_, crate::ares_utils::database::preset_filters::DbPresetFilterRow>(
+            "SELECT id, project_id, name, alias, expression, description, badge, apply_in_interception, sort_order, created_at, updated_at FROM preset_filters WHERE project_id = ?"
+        )
+        .bind(pid)
+        .fetch_all(&pool)
+        .await {
+            for r in &rows {
+                preset_map.insert(r.alias.to_lowercase(), r.expression.clone());
+            }
+
+            if apply_interception_filters.unwrap_or(false) {
+                for r in rows {
+                    if r.apply_in_interception {
+                        if let Ok(Some(expr)) = crate::ares_utils::httpql::parse_httpql_with_presets(&r.expression, &preset_map) {
+                            interception_exprs.push(expr);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     let mut query_builder = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
         "SELECT id, project_id, host, method, path, query, extension, status_code, response_length, response_time_ms, sent_at_ms, state, is_https, request_auto_patch, request_manual_patch, response_auto_patch, response_manual_patch, request_edit_type, response_edit_type FROM http_history WHERE 1=1"
     );
@@ -297,7 +324,7 @@ pub async fn get_http_history_window(
 
     let parsed_httpql = if let Some(ref q) = search {
         if !q.trim().is_empty() {
-            match crate::ares_utils::httpql::parse_httpql(q) {
+            match crate::ares_utils::httpql::parse_httpql_with_presets(q, &preset_map) {
                 Ok(Some(expr)) => Some(expr),
                 _ => {
                     // Fallback to a single bare expression
@@ -311,7 +338,24 @@ pub async fn get_http_history_window(
         None
     };
 
-    if let Some(ref expr) = parsed_httpql {
+    let final_httpql = match (parsed_httpql, interception_exprs.is_empty()) {
+        (Some(user_expr), true) => Some(user_expr),
+        (None, false) => {
+            if interception_exprs.len() == 1 {
+                Some(interception_exprs.remove(0))
+            } else {
+                Some(crate::ares_utils::httpql::HttpqlExpr::And(interception_exprs))
+            }
+        }
+        (Some(user_expr), false) => {
+            let mut all = interception_exprs;
+            all.push(user_expr);
+            Some(crate::ares_utils::httpql::HttpqlExpr::And(all))
+        }
+        (None, true) => None,
+    };
+
+    if let Some(ref expr) = final_httpql {
         query_builder.push(" AND ");
         crate::ares_utils::httpql::compile_httpql_to_sql(&mut query_builder, expr);
     }
@@ -356,7 +400,7 @@ pub async fn get_http_history_window(
         count_builder.push(" AND project_id = ");
         count_builder.push_bind(pid);
     }
-    if let Some(ref expr) = parsed_httpql {
+    if let Some(ref expr) = final_httpql {
         count_builder.push(" AND ");
         crate::ares_utils::httpql::compile_httpql_to_sql(&mut count_builder, expr);
     }

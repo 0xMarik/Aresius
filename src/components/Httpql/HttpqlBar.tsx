@@ -27,9 +27,12 @@ import {
     Plus,
     Trash2,
 } from 'lucide-react';
-import { HTTPQL_PRESETS, HttpqlPreset } from '@/lib/httpql/httpql';
+import { HTTPQL_PRESETS } from '@/lib/httpql/httpql';
 import { getHttpqlSuggestions, AutocompleteSuggestion } from '@/lib/httpql/autocomplete';
 import HttpqlCheatsheetModal from './HttpqlCheatsheetModal';
+import { useAppSelector } from '@/hooks/redux';
+import { useProjectId } from '@/hooks/useProjectId';
+import { selectAllFilters } from '@/store/slices/filtersSlice';
 
 export interface HttpqlBarProps {
     value: string;
@@ -54,6 +57,32 @@ export const HttpqlBar: React.FC<HttpqlBarProps> = ({
     placeholder = 'Query traffic with HTTPQL (e.g. req.method:"POST" and resp.code.ge:400)...',
     className = '',
 }) => {
+    const projectId = useProjectId();
+    const storeFilters = useAppSelector(selectAllFilters(projectId));
+
+    const effectivePresets = React.useMemo(() => {
+        if (storeFilters && storeFilters.length > 0) {
+            return storeFilters.map((f) => ({
+                id: f.id,
+                label: f.name,
+                alias: f.alias,
+                description: f.description || `Preset filter: ${f.name}`,
+                query: `preset:"${f.alias}"`,
+                expression: f.expression,
+                badge: f.badge || (f.applyInInterception ? 'Interception' : undefined),
+            }));
+        }
+        return HTTPQL_PRESETS.map((p) => ({
+            id: p.id,
+            label: p.label,
+            alias: p.id,
+            description: p.description,
+            query: p.query,
+            expression: p.query,
+            badge: p.badge,
+        }));
+    }, [storeFilters]);
+
     const inputRef = useRef<HTMLInputElement>(null);
     const [inputValue, setInputValue] = useState(value);
     const [isValid, setIsValid] = useState<boolean>(true);
@@ -116,12 +145,17 @@ export const HttpqlBar: React.FC<HttpqlBarProps> = ({
 
     // Handle suggestion trigger
     const updateSuggestions = useCallback((text: string, pos: number) => {
-        const { suggestions: list, startPos, endPos } = getHttpqlSuggestions(text, pos);
+        const dynamicPresets = effectivePresets.map((p) => ({
+            alias: p.alias,
+            name: p.label,
+            description: p.description,
+        }));
+        const { suggestions: list, startPos, endPos } = getHttpqlSuggestions(text, pos, dynamicPresets);
         setSuggestions(list);
         setSelectedIndex(0);
         setShowSuggestions(list.length > 0);
         setReplacementRange({ start: startPos, end: endPos });
-    }, []);
+    }, [effectivePresets]);
 
     const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const newVal = e.target.value;
@@ -200,8 +234,8 @@ export const HttpqlBar: React.FC<HttpqlBarProps> = ({
         }, 10);
     };
 
-    const handleSelectPreset = (preset: HttpqlPreset) => {
-        const isCurrent = inputValue.trim() === preset.query.trim();
+    const handleSelectPreset = (preset: { query: string; expression?: string; label: string }) => {
+        const isCurrent = inputValue.trim() === preset.query.trim() || (preset.expression && inputValue.trim() === preset.expression.trim());
         const nextVal = isCurrent ? '' : preset.query;
         setInputValue(nextVal);
         onChange(nextVal);
@@ -453,8 +487,8 @@ export const HttpqlBar: React.FC<HttpqlBarProps> = ({
                 <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70 shrink-0 mr-0.5">
                     Presets:
                 </span>
-                {HTTPQL_PRESETS.slice(0, 6).map((preset) => {
-                    const isActive = inputValue.trim() === preset.query.trim();
+                {effectivePresets.map((preset) => {
+                    const isActive = inputValue.trim() === preset.query.trim() || (preset.expression && inputValue.trim() === preset.expression.trim());
                     return (
                         <button
                             key={preset.id}
@@ -477,6 +511,7 @@ export const HttpqlBar: React.FC<HttpqlBarProps> = ({
             <HttpqlCheatsheetModal
                 open={cheatsheetOpen}
                 onOpenChange={setCheatsheetOpen}
+                presets={effectivePresets}
                 onSelectQuery={(q) => {
                     setInputValue(q);
                     onChange(q);

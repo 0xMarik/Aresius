@@ -8,6 +8,7 @@ import interceptorReducer from './slices/interceptorSlice';
 import SiteMapReducer from './slices/sitemapSlice'
 import scopeReducer from './slices/scopeSlice'
 import matchReplaceReducer from './slices/matchReplaceSlice'
+import filtersReducer from './slices/filtersSlice'
 
 import { projectDataMiddleware } from './projectDataMiddleware';
 
@@ -32,6 +33,7 @@ const store = configureStore({
     sitemap: SiteMapReducer,
     scope: scopeReducer,
     matchReplace: matchReplaceReducer,
+    filters: filtersReducer,
   },
   middleware: (getDefaultMiddleware) =>
     getDefaultMiddleware({

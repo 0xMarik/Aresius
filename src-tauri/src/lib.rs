@@ -58,6 +58,10 @@ use crate::commands::match_replace::{
     toggle_match_replace_rule,
 };
 use crate::ares_utils::database::sitemap::{get_sitemap_state_db, save_sitemap_state_db};
+use crate::ares_utils::database::preset_filters::{
+    delete_preset_filter_db, get_preset_filters_db, reset_default_preset_filters_db,
+    save_preset_filter_db,
+};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -161,6 +165,11 @@ pub fn run() {
             // Sitemap
             get_sitemap_state_db,
             save_sitemap_state_db,
+            // Preset Filters
+            get_preset_filters_db,
+            save_preset_filter_db,
+            delete_preset_filter_db,
+            reset_default_preset_filters_db,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

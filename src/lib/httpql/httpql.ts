@@ -259,6 +259,33 @@ export const HTTPQL_PRESETS: HttpqlPreset[] = [
     },
 ];
 
+/**
+ * Recursively resolves any preset:"alias" references in an HTTPQL expression string.
+ */
+export function expandHttpqlPresets(
+    query: string,
+    presets: { alias: string; expression: string }[],
+    visited = new Set<string>(),
+    depth = 0
+): string {
+    if (!query || depth > 10) return query;
+
+    const presetRegex = /preset:(?:"([^"]+)"|'([^']+)'|([a-zA-Z0-9_-]+))/gi;
+
+    return query.replace(presetRegex, (fullMatch, q1, q2, unquoted) => {
+        const alias = (q1 || q2 || unquoted || '').toLowerCase();
+        if (!alias || visited.has(alias)) return fullMatch;
+
+        const match = presets.find((p) => p.alias.toLowerCase() === alias);
+        if (!match) return fullMatch;
+
+        visited.add(alias);
+        const expanded = expandHttpqlPresets(`(${match.expression})`, presets, visited, depth + 1);
+        visited.delete(alias);
+        return expanded;
+    });
+}
+
 export const OPERATOR_LABELS: Record<string, { label: string; desc: string }> = {
     ':': { label: ':', desc: 'Exact match / equality shorthand' },
     '.eq:': { label: '.eq:', desc: 'Equal to (case-sensitive)' },

@@ -26,6 +26,7 @@ const Replayer = lazy(() => import("./pages/replayer/replayer"));
 const HTTPHisotry = lazy(() => import("./pages/HttpHistory"));
 const Fuzzer = lazy(() => import("./pages/fuzzer/fuzzer"));
 const MatchAndReplace = lazy(() => import("./pages/match-replace/MatchAndReplace.page"));
+const FiltersPage = lazy(() => import("./pages/filters/Filters.page"));
 
 import store from "./store";
 import { invoke } from "@tauri-apps/api/core";
@@ -142,6 +143,7 @@ export default function App() {
                                     <Route path="/http-history" element={<HTTPHisotry />} />
                                     <Route path="/fuzzer" element={<Fuzzer />} />
                                     <Route path="/match-replace" element={<MatchAndReplace />} />
+                                    <Route path="/filters" element={<FiltersPage />} />
                                 </Routes>
                             </Suspense>
                         </SidebarInset>

@@ -13,7 +13,8 @@ export interface AutocompleteSuggestion {
 
 export function getHttpqlSuggestions(
     input: string,
-    cursorPos: number
+    cursorPos: number,
+    dynamicPresets?: { alias: string; name: string; description?: string }[]
 ): { suggestions: AutocompleteSuggestion[]; startPos: number; endPos: number } {
     const textBefore = input.slice(0, cursorPos);
 
@@ -67,6 +68,36 @@ export function getHttpqlSuggestions(
         // Extract base field
         const baseFieldStr = fieldWithMod.replace(/\[.*?\]/, '').split('.')[0] +
             (fieldWithMod.includes('.') && !fieldWithMod.startsWith('row') ? '.' + fieldWithMod.replace(/\[.*?\]/, '').split('.')[1] : '');
+
+        if (baseFieldStr === 'preset') {
+            const presetsList = dynamicPresets && dynamicPresets.length > 0
+                ? dynamicPresets.map(p => ({ alias: p.alias, label: p.name, desc: p.description || `Preset: ${p.name}` }))
+                : [
+                    { alias: 'hide-static', label: 'Hide Static', desc: 'Hide static assets (images, CSS, JS, fonts, maps)' },
+                    { alias: 'errors-only', label: '4xx / 5xx Errors', desc: 'Filter for client and server error responses' },
+                    { alias: 'success-only', label: '2xx Success', desc: 'Filter for successful responses (200-299)' },
+                    { alias: 'mutating-methods', label: 'POST / PUT / DELETE', desc: 'Filter for mutating HTTP request methods' },
+                    { alias: 'json-only', label: 'JSON Traffic', desc: 'Filter for JSON requests or responses' },
+                    { alias: 'slow-requests', label: 'Slow (>1s)', desc: 'Requests taking longer than 1,000ms' },
+                    { alias: 'has-params', label: 'With Query Params', desc: 'Requests containing URL query parameters' },
+                ];
+
+            const filtered = presetsList
+                .filter(p => p.alias.toLowerCase().includes(partialVal) || p.label.toLowerCase().includes(partialVal))
+                .map(p => ({
+                    id: `val-preset-${p.alias}`,
+                    text: p.alias,
+                    displayText: `${p.alias} (${p.label})`,
+                    replacement: `${fieldWithMod}${op}"${p.alias}" `,
+                    category: 'Value' as const,
+                    description: p.desc,
+                    hasMoreLayers: false,
+                }));
+
+            if (filtered.length > 0) {
+                return { suggestions: filtered, startPos: tokenStart, endPos: tokenEnd };
+            }
+        }
 
         const fieldDef = findFieldDef(baseFieldStr);
 

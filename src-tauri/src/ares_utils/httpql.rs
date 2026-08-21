@@ -1,6 +1,7 @@
 use chrono::{DateTime, NaiveDate, NaiveDateTime};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 
 pub fn parse_datetime_to_ms(s: &str) -> Option<i64> {
     let trimmed = s.trim().trim_matches(|c| c == '"' || c == '\'');
@@ -789,6 +790,65 @@ pub fn parse_httpql(input: &str) -> Result<Option<HttpqlExpr>, String> {
     let tokens = lexer.tokenize()?;
     let mut parser = Parser::new(tokens);
     parser.parse()
+}
+
+pub fn expand_presets_in_expr(
+    expr: HttpqlExpr,
+    presets: &HashMap<String, String>,
+) -> HttpqlExpr {
+    let mut visited = HashSet::new();
+    expand_presets_recursive(expr, presets, &mut visited, 0)
+}
+
+fn expand_presets_recursive(
+    expr: HttpqlExpr,
+    presets: &HashMap<String, String>,
+    visited: &mut HashSet<String>,
+    depth: usize,
+) -> HttpqlExpr {
+    if depth > 15 {
+        return expr;
+    }
+    match expr {
+        HttpqlExpr::Condition(cond) => {
+            if cond.field == HttpqlField::Preset {
+                let val_str = val_as_string(&cond.value).to_lowercase();
+                let preset_name = val_str.replace('_', "-");
+                let preset_alias = preset_name.trim_matches(|c| c == '"' || c == '\'').to_string();
+
+                if !visited.contains(&preset_alias) {
+                    if let Some(target_expr_str) = presets.get(&preset_alias) {
+                        visited.insert(preset_alias.clone());
+                        if let Ok(Some(parsed_sub)) = parse_httpql(target_expr_str) {
+                            let expanded = expand_presets_recursive(parsed_sub, presets, visited, depth + 1);
+                            visited.remove(&preset_alias);
+                            return expanded;
+                        }
+                        visited.remove(&preset_alias);
+                    }
+                }
+            }
+            HttpqlExpr::Condition(cond)
+        }
+        HttpqlExpr::Not(inner) => {
+            HttpqlExpr::Not(Box::new(expand_presets_recursive(*inner, presets, visited, depth + 1)))
+        }
+        HttpqlExpr::And(list) => {
+            HttpqlExpr::And(list.into_iter().map(|e| expand_presets_recursive(e, presets, visited, depth)).collect())
+        }
+        HttpqlExpr::Or(list) => {
+            HttpqlExpr::Or(list.into_iter().map(|e| expand_presets_recursive(e, presets, visited, depth)).collect())
+        }
+        other => other,
+    }
+}
+
+pub fn parse_httpql_with_presets(
+    input: &str,
+    presets: &HashMap<String, String>,
+) -> Result<Option<HttpqlExpr>, String> {
+    let parsed = parse_httpql(input)?;
+    Ok(parsed.map(|expr| expand_presets_in_expr(expr, presets)))
 }
 
 // -----------------------------------------------------------------------------
