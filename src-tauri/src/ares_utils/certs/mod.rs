@@ -211,11 +211,11 @@ pub fn generate_server_cert(
     let issuer = Issuer::from_ca_cert_pem(ca_cert_pem, ca_key_pair)?;
     let cert = params.signed_by(&key_pair, &issuer)?;
 
-    let cert_pem = cert.pem();
+    let leaf_cert_pem = cert.pem();
+    let full_chain_pem = format!("{}\n{}", leaf_cert_pem.trim(), ca_cert_pem.trim());
     let key_pem = key_pair.serialize_pem();
 
-
-    Ok((cert_pem.into_bytes(), key_pem.into_bytes()))
+    Ok((full_chain_pem.into_bytes(), key_pem.into_bytes()))
 }
 
 

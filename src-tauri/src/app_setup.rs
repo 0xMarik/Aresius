@@ -3,7 +3,6 @@ use tauri::Manager;
 use crate::ares_utils::database::projects_catalog::{catalog_db_path, CatalogState};
 use crate::ares_utils::database::{open_project_db, DatabaseType};
 use crate::ares_utils::shutdown_gracefully;
-use crate::proxy::start_http_proxy;
 
 #[tauri::command]
 pub async fn close_splashscreen(app: tauri::AppHandle) -> Result<(), String> {
@@ -18,20 +17,23 @@ pub async fn close_splashscreen(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
-    // Spawn the HTTP proxy in the background.
+    // Open the catalog DB synchronously so it is available before any command or background service runs.
+    let handle = app.handle().clone();
+    let pool = tauri::async_runtime::block_on(async {
+        let path = catalog_db_path(&handle).unwrap();
+        open_project_db(&path, DatabaseType::Catalog).await.unwrap()
+    });
+    handle.manage(CatalogState::new(pool.clone()));
+
+    // Load persisted proxy settings and spawn the HTTP proxy service in the background.
     let app_handle = app.handle().clone();
     tauri::async_runtime::spawn(async move {
-        if let Err(e) = start_http_proxy(app_handle, "0.0.0.0:8080").await {
-            tracing::error!("Proxy error: {}", e);
+        let settings = crate::ares_utils::database::projects_catalog::get_proxy_settings_internal(&pool)
+            .await
+            .unwrap_or_default();
+        if let Err(e) = crate::proxy::start_proxy_service(app_handle, settings).await {
+            tracing::error!("Proxy startup error: {}", e);
         }
-    });
-
-    // Open the catalog DB synchronously so it is available before any command runs.
-    let handle = app.handle().clone();
-    tauri::async_runtime::block_on(async move {
-        let path = catalog_db_path(&handle).unwrap();
-        let pool = open_project_db(&path, DatabaseType::Catalog).await.unwrap();
-        handle.manage(CatalogState::new(pool));
     });
 
     // If splashscreen window doesn't exist, show main window directly

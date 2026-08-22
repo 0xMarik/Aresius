@@ -23,8 +23,62 @@ pub mod interceptor;
 pub mod match_replace;
 pub mod utils;
 
+use crate::ares_utils::database::projects_catalog::{
+    get_proxy_settings_internal, save_proxy_settings_internal, ProxySettings,
+};
+
 pub use interceptor::*;
 pub use match_replace::*;
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProxyStatus {
+    pub is_running: bool,
+    pub bound_address: Option<String>,
+    pub requested_address: String,
+    pub fallback_applied: bool,
+    pub last_error: Option<String>,
+}
+
+impl Default for ProxyStatus {
+    fn default() -> Self {
+        Self {
+            is_running: false,
+            bound_address: None,
+            requested_address: "127.0.0.1:8080".to_string(),
+            fallback_applied: false,
+            last_error: None,
+        }
+    }
+}
+
+pub struct ProxyManager {
+    shutdown_tx: Mutex<Option<tokio::sync::watch::Sender<bool>>>,
+    status: Mutex<ProxyStatus>,
+}
+
+impl ProxyManager {
+    pub fn new() -> Self {
+        Self {
+            shutdown_tx: Mutex::new(None),
+            status: Mutex::new(ProxyStatus::default()),
+        }
+    }
+
+    pub async fn get_status(&self) -> ProxyStatus {
+        self.status.lock().await.clone()
+    }
+
+    pub async fn stop(&self) {
+        let mut tx_guard = self.shutdown_tx.lock().await;
+        if let Some(tx) = tx_guard.take() {
+            let _ = tx.send(true);
+        }
+        let mut status = self.status.lock().await;
+        status.is_running = false;
+        status.bound_address = None;
+    }
+}
 
 /// Hard cap on a single request/response we'll buffer in memory.
 /// Protects against unbounded growth on malformed or malicious framing.
@@ -112,40 +166,231 @@ fn proxy_connection_options() -> ConnectionOptions {
     }
 }
 
-pub async fn start_http_proxy(app_handle: AppHandle, bind_addr: &str) -> std::io::Result<()> {
-    // Initialize CA certificate in CertCache at startup
+async fn try_bind_listener(host: &str, port: u16) -> std::io::Result<tokio::net::TcpListener> {
+    let addr = format!("{}:{}", host, port);
+    tokio::net::TcpListener::bind(&addr).await
+}
+
+async fn bind_with_fallbacks(
+    settings: &ProxySettings,
+) -> Result<(tokio::net::TcpListener, String, bool), std::io::Error> {
+    let primary_host = settings.host.trim();
+    let primary_port = settings.port;
+
+    // 1. Try exact requested host and port
+    match try_bind_listener(primary_host, primary_port).await {
+        Ok(l) => {
+            let addr = format!("{}:{}", primary_host, primary_port);
+            return Ok((l, addr, false));
+        }
+        Err(err) => {
+            tracing::warn!(
+                "Failed to bind proxy listener on {}:{}: {}",
+                primary_host,
+                primary_port,
+                err
+            );
+
+            // 2. Port conflict fallback (sequential port hunting up to +10)
+            if settings.auto_fallback_port && err.kind() == std::io::ErrorKind::AddrInUse {
+                for offset in 1..=10 {
+                    let fallback_port = primary_port.saturating_add(offset);
+                    if let Ok(l) = try_bind_listener(primary_host, fallback_port).await {
+                        tracing::info!(
+                            "Proxy port {} was in use. Fallback to port {} on {}",
+                            primary_port,
+                            fallback_port,
+                            primary_host
+                        );
+                        let addr = format!("{}:{}", primary_host, fallback_port);
+                        return Ok((l, addr, true));
+                    }
+                }
+            }
+
+            // 3. Loopback fallback if primary host was not 127.0.0.1
+            if settings.auto_fallback_loopback
+                && primary_host != "127.0.0.1"
+                && primary_host != "localhost"
+            {
+                tracing::warn!("Attempting fallback to loopback 127.0.0.1 for proxy listener");
+                if let Ok(l) = try_bind_listener("127.0.0.1", primary_port).await {
+                    let addr = format!("127.0.0.1:{}", primary_port);
+                    return Ok((l, addr, true));
+                }
+
+                if settings.auto_fallback_port {
+                    for offset in 1..=10 {
+                        let fallback_port = primary_port.saturating_add(offset);
+                        if let Ok(l) = try_bind_listener("127.0.0.1", fallback_port).await {
+                            let addr = format!("127.0.0.1:{}", fallback_port);
+                            return Ok((l, addr, true));
+                        }
+                    }
+                }
+            }
+
+            Err(err)
+        }
+    }
+}
+
+pub async fn start_proxy_service(
+    app_handle: AppHandle,
+    settings: ProxySettings,
+) -> Result<ProxyStatus, String> {
+    // 1. Ensure CA certificate is initialized in CertCache
     let (ca_cert_pem, key_pair) = generate_ca_cert(&app_handle)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        .map_err(|e| format!("Failed to generate CA certificate: {}", e))?;
     if let Some(cert_cache) = app_handle.try_state::<CertCache>() {
         cert_cache.set_ca(ca_cert_pem, key_pair).await;
     }
-    let connection_options = proxy_connection_options();
 
-    let listener = tokio::net::TcpListener::bind(bind_addr).await?;
-    tracing::info!("MITM Proxy listening on {}", bind_addr);
+    let proxy_manager = match app_handle.try_state::<ProxyManager>() {
+        Some(pm) => pm,
+        None => return Err("ProxyManager state not initialized".to_string()),
+    };
 
-    let app = app_handle.clone();
-    loop {
-        match listener.accept().await {
-            Ok((client_stream, addr)) => {
-                tracing::info!("New connection from: {}", addr);
-                let app = app.clone();
-                let connection_options = connection_options.clone();
-                tokio::spawn(async move {
-                    if let Err(e) = handle_client(
-                        app,
-                        client_stream,
-                        connection_options,
-                    )
-                    .await
-                    {
-                        tracing::error!("Error handling client {}: {}", addr, e);
-                    }
-                });
+    // 2. Stop existing listener if currently running
+    proxy_manager.stop().await;
+
+    // Small delay to allow OS socket release
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let requested_addr = format!("{}:{}", settings.host, settings.port);
+
+    // 3. Bind listener with fallbacks
+    match bind_with_fallbacks(&settings).await {
+        Ok((listener, bound_addr, fallback_applied)) => {
+            tracing::info!("MITM Proxy listening on {}", bound_addr);
+
+            let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
+            {
+                let mut guard = proxy_manager.shutdown_tx.lock().await;
+                *guard = Some(shutdown_tx);
             }
-            Err(e) => tracing::error!("Connection failed: {}", e),
+
+            let status = ProxyStatus {
+                is_running: true,
+                bound_address: Some(bound_addr.clone()),
+                requested_address: requested_addr,
+                fallback_applied,
+                last_error: None,
+            };
+
+            {
+                let mut status_guard = proxy_manager.status.lock().await;
+                *status_guard = status.clone();
+            }
+
+            app_handle.emit("proxy-status-changed", status.clone()).ok();
+
+            let app = app_handle.clone();
+            let connection_options = proxy_connection_options();
+
+            tokio::spawn(async move {
+                loop {
+                    tokio::select! {
+                        accept_res = listener.accept() => {
+                            match accept_res {
+                                Ok((client_stream, addr)) => {
+                                    tracing::info!("New connection from: {}", addr);
+                                    let app = app.clone();
+                                    let connection_options = connection_options.clone();
+                                    tokio::spawn(async move {
+                                        if let Err(e) = handle_client(
+                                            app,
+                                            client_stream,
+                                            connection_options,
+                                        )
+                                        .await
+                                        {
+                                            tracing::error!("Error handling client {}: {}", addr, e);
+                                        }
+                                    });
+                                }
+                                Err(e) => {
+                                    tracing::error!("Proxy connection accept failed: {}", e);
+                                }
+                            }
+                        }
+                        _ = shutdown_rx.changed() => {
+                            if *shutdown_rx.borrow() {
+                                tracing::info!("Proxy listener shutdown received. Stopping listener loop.");
+                                break;
+                            }
+                        }
+                    }
+                }
+            });
+
+            Ok(status)
+        }
+        Err(err) => {
+            let error_msg = format!("Failed to bind proxy listener: {}", err);
+            tracing::error!("{}", error_msg);
+
+            let status = ProxyStatus {
+                is_running: false,
+                bound_address: None,
+                requested_address: requested_addr,
+                fallback_applied: false,
+                last_error: Some(error_msg.clone()),
+            };
+
+            {
+                let mut status_guard = proxy_manager.status.lock().await;
+                *status_guard = status.clone();
+            }
+
+            app_handle.emit("proxy-status-changed", status.clone()).ok();
+            Err(error_msg)
         }
     }
+}
+
+pub async fn start_http_proxy(app_handle: AppHandle, bind_addr: &str) -> std::io::Result<()> {
+    let parts: Vec<&str> = bind_addr.split(':').collect();
+    let host = if !parts.is_empty() { parts[0] } else { "127.0.0.1" };
+    let port = if parts.len() > 1 { parts[1].parse::<u16>().unwrap_or(8080) } else { 8080 };
+
+    let settings = ProxySettings {
+        host: host.to_string(),
+        port,
+        auto_fallback_port: true,
+        auto_fallback_loopback: true,
+    };
+
+    match start_proxy_service(app_handle, settings).await {
+        Ok(_) => Ok(()),
+        Err(e) => Err(std::io::Error::new(std::io::ErrorKind::Other, e)),
+    }
+}
+
+#[tauri::command]
+pub async fn get_proxy_status(
+    proxy_manager: tauri::State<'_, ProxyManager>,
+) -> Result<ProxyStatus, String> {
+    Ok(proxy_manager.get_status().await)
+}
+
+#[tauri::command]
+pub async fn restart_proxy_listener(
+    app: tauri::AppHandle,
+    catalog: tauri::State<'_, crate::ares_utils::database::projects_catalog::CatalogState>,
+) -> Result<ProxyStatus, String> {
+    let settings = get_proxy_settings_internal(catalog.pool()).await?;
+    start_proxy_service(app, settings).await
+}
+
+#[tauri::command]
+pub async fn save_and_apply_proxy_settings(
+    app: tauri::AppHandle,
+    settings: ProxySettings,
+    catalog: tauri::State<'_, crate::ares_utils::database::projects_catalog::CatalogState>,
+) -> Result<ProxyStatus, String> {
+    save_proxy_settings_internal(catalog.pool(), &settings).await?;
+    start_proxy_service(app, settings).await
 }
 
 

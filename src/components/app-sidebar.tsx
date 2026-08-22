@@ -166,7 +166,11 @@ const data = {
       name: "Projects",
       url: "/projects",
       icon: PanelsTopLeft,
-
+    },
+    {
+      name: "Settings",
+      url: "/settings",
+      icon: Settings2,
     },
   ],
 }

@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/menubar"
 import { Avatar, AvatarFallback, AvatarImage } from "./ui/avatar"
 import { useEffect, useRef, useState, useMemo } from "react"
-import { useNavigate } from "react-router-dom"
+import { useNavigate, useLocation } from "react-router-dom"
 import { getCurrentWindow } from "@tauri-apps/api/window"
 import { invoke } from "@tauri-apps/api/core"
 import {
@@ -42,6 +42,7 @@ import {
     ZoomIn,
     ZoomOut,
     Type,
+    Settings,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
@@ -80,6 +81,7 @@ const appWindow = getCurrentWindow()
 
 export default function MenubarDemo() {
     const navigate = useNavigate()
+    const location = useLocation()
     const [isMaximized, setIsMaximized] = useState(false)
     const [isFullscreen, setIsFullscreen] = useState(false)
     const { theme, setTheme } = useTheme()
@@ -849,6 +851,22 @@ export default function MenubarDemo() {
                         </div>
                     )}
                 </div>
+
+                {/* ── Settings Page Button ── */}
+                <button
+                    type="button"
+                    onClick={() => navigate("/settings")}
+                    className={cn(
+                        "flex items-center justify-center h-6 w-6 rounded-md border text-[11px] font-medium transition-all select-none",
+                        location.pathname === "/settings"
+                            ? "border-primary bg-primary/15 text-primary ring-1 ring-primary/30"
+                            : "border-border/50 bg-transparent text-muted-foreground hover:text-foreground hover:bg-muted/40"
+                    )}
+                    title="Settings"
+                    aria-label="Settings"
+                >
+                    <Settings className="w-3.5 h-3.5" />
+                </button>
             </div>
 
             {/* Window controls: minimize, maximize/restore, close */}

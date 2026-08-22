@@ -11,6 +11,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, useNavig
 import { lazy, Suspense, useEffect, useRef } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import { listen } from "@tauri-apps/api/event";
+import { toast } from "sonner";
 import { addToHttpHistory } from "./store/slices/http-historySlice";
 import { useInterceptPoller } from "./hooks/useInterceptPoller";
 import MenubarDemo from "./components/MenuBar";
@@ -44,6 +45,7 @@ const HTTPHisotry = lazy(() => import("./pages/HttpHistory"));
 const Fuzzer = lazy(() => import("./pages/fuzzer/fuzzer"));
 const MatchAndReplace = lazy(() => import("./pages/match-replace/MatchAndReplace.page"));
 const FiltersPage = lazy(() => import("./pages/filters/Filters.page"));
+const SettingsPage = lazy(() => import("./pages/settings/Settings.page"));
 
 interface ReqRes {
     request: string;
@@ -197,6 +199,18 @@ function AppInner() {
         return () => { unlisten.then((f) => f()); };
     }, [dispatch]);
 
+    useEffect(() => {
+        const unlisten = listen<import("@/types/proxySettings.type").ProxyStatus>("proxy-status-changed", (event) => {
+            const payload = event.payload;
+            if (payload?.fallbackApplied && payload?.boundAddress) {
+                toast.warning(`Proxy fallback applied: Listening on ${payload.boundAddress}`, {
+                    description: `Requested address ${payload.requestedAddress} was busy or unavailable.`,
+                });
+            }
+        });
+        return () => { unlisten.then((f) => f()); };
+    }, []);
+
     // ------------------------------------------------------------------
     // Global Keyboard Shortcuts (Zoom / Font Size)
     // ------------------------------------------------------------------
@@ -297,6 +311,7 @@ function AppInner() {
                                 <Route path="/fuzzer" element={<Fuzzer />} />
                                 <Route path="/match-replace" element={<MatchAndReplace />} />
                                 <Route path="/filters" element={<FiltersPage />} />
+                                <Route path="/settings" element={<SettingsPage />} />
                             </Routes>
                         </Suspense>
                     </SidebarInset>

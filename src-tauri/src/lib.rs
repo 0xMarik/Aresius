@@ -19,8 +19,9 @@ use crate::ares_utils::database::http_history::{
 };
 use crate::ares_utils::database::projects::create_project;
 use crate::ares_utils::database::projects_catalog::{
-    delete_project, get_app_state, get_default_project_dir, list_projects, open_project_file,
-    relocate_project, save_app_state, select_project, update_project_details,
+    delete_project, get_app_state, get_default_project_dir, get_proxy_settings_db, list_projects,
+    open_project_file, relocate_project, save_app_state, save_proxy_settings_db, select_project,
+    update_project_details,
 };
 use crate::ares_utils::database::DbState;
 use crate::commands::{cancel_replayer_request, replay_request};
@@ -38,10 +39,11 @@ use crate::ares_utils::database::fuzzer::{
 use crate::fuzzer::rotator::execute_rotator_fuzzing;
 use crate::fuzzer::zipped::execute_zipped_fuzzing;
 use crate::proxy::utils::HistoryIdCounter;
-use crate::proxy::{CertCache, InterceptState};
+use crate::proxy::{CertCache, InterceptState, ProxyManager};
 use crate::proxy::{
     drop_all_intercept_items, drop_intercept_item, forward_intercept_item, get_intercept_queue,
-    get_intercept_settings, set_intercept_settings,
+    get_intercept_settings, get_proxy_status, restart_proxy_listener,
+    save_and_apply_proxy_settings, set_intercept_settings,
 };
 
 use crate::ares_utils::database::replayer::{
@@ -87,11 +89,18 @@ pub fn run() {
         .manage(HistoryIdCounter::new())
         .manage(DbState::new())
         .manage(MatchReplaceEngine::new())
+        .manage(ProxyManager::new())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .setup(app_setup::setup)
         .invoke_handler(tauri::generate_handler![
             close_splashscreen,
+            // Proxy & Settings
+            get_proxy_settings_db,
+            save_proxy_settings_db,
+            get_proxy_status,
+            restart_proxy_listener,
+            save_and_apply_proxy_settings,
             // Match & Replace
             get_match_replace,
             save_match_replace_rule,

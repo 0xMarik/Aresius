@@ -40,6 +40,26 @@ pub struct AppState {
     pub font_size_scale: Option<f64>,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProxySettings {
+    pub host: String,
+    pub port: u16,
+    pub auto_fallback_port: bool,
+    pub auto_fallback_loopback: bool,
+}
+
+impl Default for ProxySettings {
+    fn default() -> Self {
+        Self {
+            host: "127.0.0.1".to_string(),
+            port: 8080,
+            auto_fallback_port: true,
+            auto_fallback_loopback: true,
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // CatalogState managed state wrapper
 // ---------------------------------------------------------------------------
@@ -633,4 +653,96 @@ pub async fn save_app_state(
     }
 
     Ok(())
+}
+
+/// Helper function to load proxy settings directly from catalog DB pool
+pub async fn get_proxy_settings_internal(pool: &SqlitePool) -> Result<ProxySettings, String> {
+    let rows: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT key, value FROM app_state WHERE key IN ('proxy_host', 'proxy_port', 'proxy_auto_fallback_port', 'proxy_auto_fallback_loopback')"
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let mut settings = ProxySettings::default();
+
+    for (key, value) in rows {
+        if let Some(val) = value {
+            match key.as_str() {
+                "proxy_host" => {
+                    let trimmed = val.trim();
+                    if !trimmed.is_empty() {
+                        settings.host = trimmed.to_string();
+                    }
+                }
+                "proxy_port" => {
+                    if let Ok(p) = val.parse::<u16>() {
+                        if p > 0 {
+                            settings.port = p;
+                        }
+                    }
+                }
+                "proxy_auto_fallback_port" => {
+                    settings.auto_fallback_port = val == "true";
+                }
+                "proxy_auto_fallback_loopback" => {
+                    settings.auto_fallback_loopback = val == "true";
+                }
+                _ => {}
+            }
+        }
+    }
+
+    Ok(settings)
+}
+
+/// Helper function to save proxy settings directly to catalog DB pool
+pub async fn save_proxy_settings_internal(pool: &SqlitePool, settings: &ProxySettings) -> Result<(), String> {
+    let host_val = settings.host.trim();
+    let port_val = settings.port.to_string();
+    let fallback_port_val = if settings.auto_fallback_port { "true" } else { "false" };
+    let fallback_loopback_val = if settings.auto_fallback_loopback { "true" } else { "false" };
+
+    sqlx::query("INSERT INTO app_state (key, value) VALUES ('proxy_host', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+        .bind(host_val)
+        .execute(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    sqlx::query("INSERT INTO app_state (key, value) VALUES ('proxy_port', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+        .bind(port_val)
+        .execute(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    sqlx::query("INSERT INTO app_state (key, value) VALUES ('proxy_auto_fallback_port', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+        .bind(fallback_port_val)
+        .execute(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    sqlx::query("INSERT INTO app_state (key, value) VALUES ('proxy_auto_fallback_loopback', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+        .bind(fallback_loopback_val)
+        .execute(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+/// Load persisted Proxy settings from the catalog DB.
+#[tauri::command]
+pub async fn get_proxy_settings_db(
+    catalog: tauri::State<'_, CatalogState>,
+) -> Result<ProxySettings, String> {
+    get_proxy_settings_internal(catalog.pool()).await
+}
+
+/// Persist Proxy settings to the catalog DB.
+#[tauri::command]
+pub async fn save_proxy_settings_db(
+    settings: ProxySettings,
+    catalog: tauri::State<'_, CatalogState>,
+) -> Result<(), String> {
+    save_proxy_settings_internal(catalog.pool(), &settings).await
 }
