@@ -108,7 +108,7 @@ function AppInner() {
             let projects: Project[] = [];
             try {
                 const raw = await invoke<Project[]>("list_projects");
-                projects = raw.map(p => ({ description: "", temporary: false, ...p }));
+                projects = raw.map(p => ({ ...p, description: p.description ?? "", temporary: p.temporary ?? false }));
                 dispatch(setProjects(projects));
             } catch (err) {
                 console.error("Failed to load projects:", err);
@@ -125,7 +125,7 @@ function AppInner() {
 
             // 3. Restore active project (if the file still exists on disk)
             if (saved?.activeProjectId) {
-                const projectStillExists = projects.some(p => p.id === saved!.activeProjectId);
+                const projectStillExists = projects.some(p => p.id === saved!.activeProjectId && p.exists !== false);
                 if (projectStillExists) {
                     try {
                         const updated = await invoke<Project>("select_project", { id: saved.activeProjectId });

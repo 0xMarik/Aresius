@@ -14,6 +14,21 @@ pub const PROJECT_VERSION: &str = "0.1.0";
 pub struct Project {
     pub id: String,
     pub name: String,
+    pub path: String,
+    pub version: String,
+    pub description: String,
+    pub temporary: bool,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub last_opened_at: Option<i64>,
+    pub size_bytes: u64,
+    pub exists: bool,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct ProjectDbRow {
+    pub id: String,
+    pub name: String,
     pub description: String,
     pub temporary: bool,
     pub created_at: i64,
@@ -38,7 +53,7 @@ pub async fn create_project(
     }
 
     if path_buf.exists() {
-        return Err("A file with the same namealready exists at this path".into());
+        return Err("A file with the same name already exists at this path".into());
     }
 
     // 1. Create and open project SQLite database
@@ -55,19 +70,20 @@ pub async fn create_project(
 
     // 3. Populate initial project metadata in project file
     sqlx::query(
-        "INSERT INTO projects (id, name, description, temporary, created_at, updated_at)
-         VALUES (?, ?, '', ?, ?, ?)",
+        "INSERT INTO projects (id, name, description, temporary, created_at, updated_at, version)
+         VALUES (?, ?, '', ?, ?, ?, ?)",
     )
     .bind(&id)
     .bind(&name)
     .bind(is_temp)
     .bind(now)
     .bind(now)
+    .bind(PROJECT_VERSION)
     .execute(&pool)
     .await
     .map_err(|e| format!("Failed to insert project record: {e}"))?;
 
-    let meta = sqlx::query_as::<_, Project>("SELECT * FROM projects WHERE id = ?")
+    let meta = sqlx::query_as::<_, ProjectDbRow>("SELECT id, name, description, temporary, created_at, updated_at FROM projects WHERE id = ?")
         .bind(&id)
         .fetch_one(&pool)
         .await
@@ -96,5 +112,19 @@ pub async fn create_project(
     .await
     .map_err(|e| format!("Failed to catalog project: {e}"))?;
 
-    Ok(meta)
+    let size_bytes = std::fs::metadata(&path_buf).map(|m| m.len()).unwrap_or(0);
+
+    Ok(Project {
+        id: meta.id,
+        name: meta.name,
+        path: path_str,
+        version: PROJECT_VERSION.to_string(),
+        description: meta.description,
+        temporary: meta.temporary,
+        created_at: meta.created_at,
+        updated_at: meta.updated_at,
+        last_opened_at: None,
+        size_bytes,
+        exists: true,
+    })
 }

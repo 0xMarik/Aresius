@@ -22,6 +22,9 @@ pub struct ProjectSummary {
     /// Computed at query time via fs::metadata; not stored in the DB.
     #[sqlx(skip)]
     pub size_bytes: u64,
+    /// Indicates whether the project file currently exists on disk.
+    #[sqlx(skip)]
+    pub exists: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -85,9 +88,11 @@ pub async fn list_projects(
     .await
     .map_err(|e| e.to_string())?;
 
-    // Populate size_bytes from the filesystem (best-effort).
+    // Populate size_bytes and exists from the filesystem.
     for row in &mut rows {
-        row.size_bytes = file_size_bytes(&row.path);
+        let p = std::path::Path::new(&row.path);
+        row.exists = p.is_file();
+        row.size_bytes = if row.exists { file_size_bytes(&row.path) } else { 0 };
     }
 
     Ok(rows)
@@ -110,9 +115,11 @@ pub async fn select_project(
     .ok_or_else(|| format!("Project with ID {} not found in catalog", id))?;
 
     let path = PathBuf::from(&summary.path);
-    if !path.exists() {
+    if !path.exists() || !path.is_file() {
+        summary.exists = false;
+        summary.size_bytes = 0;
         return Err(format!(
-            "Project file does not exist at path: {}",
+            "Project file not found at path: {}\nThe file may have been moved, renamed, or deleted.",
             summary.path
         ));
     }
@@ -136,7 +143,319 @@ pub async fn select_project(
 
     summary.last_opened_at = Some(now);
     summary.updated_at = now;
+    summary.exists = true;
     summary.size_bytes = file_size_bytes(&summary.path);
+
+    Ok(summary)
+}
+
+/// Opens an existing `.ares` project file from disk (via native file picker dialog if file_path is None,
+/// or directly from the specified file_path).
+/// Verifies the file extension and Aresius magic bytes, extracts the metadata from the database,
+/// inserts/updates the project catalog record, mounts the project into DbState, and updates app_state.
+#[tauri::command]
+pub async fn open_project_file(
+    file_path: Option<String>,
+    catalog: tauri::State<'_, CatalogState>,
+    db: tauri::State<'_, DbState>,
+) -> Result<Option<ProjectSummary>, String> {
+    let path = match file_path {
+        Some(p) => PathBuf::from(p),
+        None => {
+            let file = rfd::AsyncFileDialog::new()
+                .add_filter("Aresius Project (*.ares)", &["ares"])
+                .set_title("Open Aresius Project")
+                .pick_file()
+                .await;
+            match file {
+                Some(handle) => handle.path().to_path_buf(),
+                None => return Ok(None),
+            }
+        }
+    };
+
+    if !path.exists() {
+        return Err(format!("File does not exist: {}", path.display()));
+    }
+
+    if !path.is_file() {
+        return Err(format!("Selected path is not a file: {}", path.display()));
+    }
+
+    // Verify extension is .ares
+    let is_ares_ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.eq_ignore_ascii_case("ares"))
+        .unwrap_or(false);
+
+    if !is_ares_ext {
+        return Err(format!(
+            "Invalid file extension. Expected a '.ares' project file, got '{}'",
+            path.extension().and_then(|e| e.to_str()).unwrap_or("none")
+        ));
+    }
+
+    // Open the SQLite database and run project migrations
+    let pool = open_project_db(&path, DatabaseType::Project)
+        .await
+        .map_err(|e| format!("Failed to open project file: {e}"))?;
+
+    // Verify magic bytes (PRAGMA application_id = 0x41524553)
+    verify_ares_file(&pool).await.map_err(|e| {
+        format!("File verification failed: {e}. The file is not a valid Aresius project.")
+    })?;
+
+    // Read the project metadata from the project's own `projects` table
+    let meta_row: Option<(String, String, Option<String>, i64, i64)> = sqlx::query_as(
+        "SELECT id, name, version, created_at, updated_at FROM projects LIMIT 1",
+    )
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| format!("Failed to read project metadata from file: {e}"))?;
+
+    let (id, name, version_opt, created_at, _) = meta_row.ok_or_else(|| {
+        "Invalid project file: no project metadata found in database".to_string()
+    })?;
+
+    let version_str = version_opt.unwrap_or_else(|| "0.1.0".to_string());
+    let path_str = path.to_string_lossy().to_string();
+    let now = sqlx::types::chrono::Utc::now().timestamp_millis();
+
+    // Remove any conflicting records in catalog matching id or path
+    let _ = sqlx::query("DELETE FROM project_catalog WHERE id = ? OR path = ?")
+        .bind(&id)
+        .bind(&path_str)
+        .execute(catalog.pool())
+        .await;
+
+    // Insert into project_catalog
+    sqlx::query(
+        "INSERT INTO project_catalog (id, name, path, version, created_at, updated_at, last_opened_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&id)
+    .bind(&name)
+    .bind(&path_str)
+    .bind(&version_str)
+    .bind(created_at)
+    .bind(now)
+    .bind(now)
+    .execute(catalog.pool())
+    .await
+    .map_err(|e| format!("Failed to catalog project: {e}"))?;
+
+    // Mount/set active project database in DbState
+    db.set(id.clone(), pool).await;
+
+    // Update app_state in catalog DB
+    let _ = sqlx::query(
+        "INSERT INTO app_state (key, value) VALUES ('active_project_id', ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    )
+    .bind(&id)
+    .execute(catalog.pool())
+    .await;
+
+    let size_bytes = file_size_bytes(&path_str);
+
+    Ok(Some(ProjectSummary {
+        id,
+        name,
+        path: path_str,
+        version: version_str,
+        created_at,
+        updated_at: now,
+        last_opened_at: Some(now),
+        size_bytes,
+        exists: true,
+    }))
+}
+
+/// Relocate or update the file path of a catalog project that was moved or renamed.
+/// If `new_path` is None, opens the native file dialog for the user to select the new file location.
+/// Verifies the selected file is a valid .ares project, updates the catalog database,
+/// optionally selects the project, and returns the updated ProjectSummary.
+#[tauri::command]
+pub async fn relocate_project(
+    id: String,
+    new_path: Option<String>,
+    catalog: tauri::State<'_, CatalogState>,
+    db: tauri::State<'_, DbState>,
+) -> Result<Option<ProjectSummary>, String> {
+    let path = match new_path {
+        Some(p) => PathBuf::from(p),
+        None => {
+            let file = rfd::AsyncFileDialog::new()
+                .add_filter("Aresius Project (*.ares)", &["ares"])
+                .set_title("Locate Moved / Renamed Project File")
+                .pick_file()
+                .await;
+            match file {
+                Some(handle) => handle.path().to_path_buf(),
+                None => return Ok(None),
+            }
+        }
+    };
+
+    if !path.exists() || !path.is_file() {
+        return Err(format!("Selected file does not exist: {}", path.display()));
+    }
+
+    let is_ares_ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.eq_ignore_ascii_case("ares"))
+        .unwrap_or(false);
+
+    if !is_ares_ext {
+        return Err(format!(
+            "Invalid file extension. Expected a '.ares' project file, got '{}'",
+            path.extension().and_then(|e| e.to_str()).unwrap_or("none")
+        ));
+    }
+
+    let pool = open_project_db(&path, DatabaseType::Project)
+        .await
+        .map_err(|e| format!("Failed to open project file: {e}"))?;
+
+    verify_ares_file(&pool).await.map_err(|e| {
+        format!("File verification failed: {e}. The file is not a valid Aresius project.")
+    })?;
+
+    // Read metadata inside the relocated database
+    let meta_row: Option<(String, String, Option<String>, i64, i64)> = sqlx::query_as(
+        "SELECT id, name, version, created_at, updated_at FROM projects LIMIT 1",
+    )
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| format!("Failed to read project metadata: {e}"))?;
+
+    let (file_id, name, version_opt, created_at, _) = meta_row.ok_or_else(|| {
+        "Invalid project file: no project metadata found in database".to_string()
+    })?;
+
+    let version_str = version_opt.unwrap_or_else(|| "0.1.0".to_string());
+    let path_str = path.to_string_lossy().to_string();
+    let now = sqlx::types::chrono::Utc::now().timestamp_millis();
+
+    // Remove any catalog entries matching the old id, the new file_id, or the new path
+    let _ = sqlx::query("DELETE FROM project_catalog WHERE id = ? OR id = ? OR path = ?")
+        .bind(&id)
+        .bind(&file_id)
+        .bind(&path_str)
+        .execute(catalog.pool())
+        .await;
+
+    // Insert updated record using the canonical file_id and new path
+    sqlx::query(
+        "INSERT INTO project_catalog (id, name, path, version, created_at, updated_at, last_opened_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&file_id)
+    .bind(&name)
+    .bind(&path_str)
+    .bind(&version_str)
+    .bind(created_at)
+    .bind(now)
+    .bind(now)
+    .execute(catalog.pool())
+    .await
+    .map_err(|e| format!("Failed to update project catalog: {e}"))?;
+
+    // Mount/set active project in DbState
+    db.set(file_id.clone(), pool).await;
+
+    // Update app_state
+    let _ = sqlx::query(
+        "INSERT INTO app_state (key, value) VALUES ('active_project_id', ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    )
+    .bind(&file_id)
+    .execute(catalog.pool())
+    .await;
+
+    let size_bytes = file_size_bytes(&path_str);
+
+    Ok(Some(ProjectSummary {
+        id: file_id,
+        name,
+        path: path_str,
+        version: version_str,
+        created_at,
+        updated_at: now,
+        last_opened_at: Some(now),
+        size_bytes,
+        exists: true,
+    }))
+}
+
+/// Update a project's name (and optional description) in both the catalog DB
+/// and in the project's internal SQLite database.
+#[tauri::command]
+pub async fn update_project_details(
+    id: String,
+    name: String,
+    description: Option<String>,
+    catalog: tauri::State<'_, CatalogState>,
+    db: tauri::State<'_, DbState>,
+) -> Result<ProjectSummary, String> {
+    if name.trim().is_empty() {
+        return Err("Project name cannot be empty".to_string());
+    }
+
+    let trimmed_name = name.trim().to_string();
+    let desc = description.unwrap_or_default();
+    let now = sqlx::types::chrono::Utc::now().timestamp_millis();
+
+    let mut summary = sqlx::query_as::<_, ProjectSummary>(
+        "SELECT id, name, path, version, created_at, updated_at, last_opened_at \
+         FROM project_catalog WHERE id = ?",
+    )
+    .bind(&id)
+    .fetch_optional(catalog.pool())
+    .await
+    .map_err(|e| e.to_string())?
+    .ok_or_else(|| format!("Project with ID {} not found in catalog", id))?;
+
+    // 1. Update project_catalog
+    sqlx::query("UPDATE project_catalog SET name = ?, updated_at = ? WHERE id = ?")
+        .bind(&trimmed_name)
+        .bind(now)
+        .bind(&id)
+        .execute(catalog.pool())
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // 2. Update inside project file if it exists
+    let path = PathBuf::from(&summary.path);
+    if path.exists() && path.is_file() {
+        if db.get_active_id().await.as_deref() == Some(&id) {
+            if let Ok(pool) = db.pool().await {
+                let _ = sqlx::query("UPDATE projects SET name = ?, description = ?, updated_at = ? WHERE id = ?")
+                    .bind(&trimmed_name)
+                    .bind(&desc)
+                    .bind(now)
+                    .bind(&id)
+                    .execute(&pool)
+                    .await;
+            }
+        } else if let Ok(temp_pool) = open_project_db(&path, DatabaseType::Project).await {
+            let _ = sqlx::query("UPDATE projects SET name = ?, description = ?, updated_at = ? WHERE id = ?")
+                .bind(&trimmed_name)
+                .bind(&desc)
+                .bind(now)
+                .bind(&id)
+                .execute(&temp_pool)
+                .await;
+            temp_pool.close().await;
+        }
+    }
+
+    summary.name = trimmed_name;
+    summary.updated_at = now;
+    summary.exists = path.is_file();
+    summary.size_bytes = if summary.exists { file_size_bytes(&summary.path) } else { 0 };
 
     Ok(summary)
 }

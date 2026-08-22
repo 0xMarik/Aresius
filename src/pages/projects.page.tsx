@@ -23,20 +23,38 @@ import {
   useReactTable,
 } from "@tanstack/react-table"
 
+import { useState } from "react"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import { Input } from "@/components/ui/input"
 import { IconGripVertical } from "@tabler/icons-react"
 import { useAppDispatch, useAppSelector } from "@/hooks/redux"
 import { Project } from "@/types/project.type"
 import { HttpHistorySummaryRow } from "@/types/http.type"
-import { setcurrentProjectId, setProjects, deleteProject, updateProject } from "@/store/slices/projectSlice"
+import { addProject, setcurrentProjectId, setProjects, deleteProject, updateProject } from "@/store/slices/projectSlice"
 import { setSiteMapBulk, fetchSitemapStateForProject } from "@/store/slices/sitemapSlice"
 import { fetchScopeDataForProject } from "@/store/slices/scopeSlice"
 import { fetchMatchReplaceDataForProject } from "@/store/slices/matchReplaceSlice"
 import AddProjectDialog from "@/components/add-project-dialog.component"
 import { invoke } from "@tauri-apps/api/core"
 import { toast } from "sonner"
+import { cn } from "@/lib/utils"
 import {
   CheckCircle2,
   FolderOpen,
@@ -45,6 +63,12 @@ import {
   CalendarDays,
   RefreshCw,
   Clock,
+  AlertTriangle,
+  FileQuestion,
+  FileSearch,
+  MoreHorizontal,
+  Copy,
+  Pencil,
 } from "lucide-react"
 
 
@@ -159,14 +183,148 @@ export default function Projects() {
     }
   }
 
-  const handleDelete = async (id: string) => {
+  const handleOpenProject = async () => {
     try {
-      await invoke("delete_project", { id })
-      dispatch(deleteProject(id))
-      toast.success("Project deleted successfully")
+      const opened = await invoke<Project | null>("open_project_file", { filePath: null })
+      if (!opened) return
+
+      const existing = projects.find((p) => p.id === opened.id)
+      if (existing) {
+        dispatch(updateProject(opened))
+      } else {
+        dispatch(addProject(opened))
+      }
+
+      dispatch(setcurrentProjectId(opened.id))
+
+      try {
+        const summaries = await invoke<HttpHistorySummaryRow[]>("get_http_history_summaries", { projectId: opened.id })
+        dispatch(setSiteMapBulk({ items: summaries, projectId: opened.id }))
+      } catch (err) {
+        console.warn("Could not load persisted HTTP history summaries:", err)
+      }
+
+      try { dispatch(fetchScopeDataForProject(opened.id) as any) } catch {}
+      try { dispatch(fetchSitemapStateForProject(opened.id) as any) } catch {}
+      try { dispatch(fetchMatchReplaceDataForProject(opened.id) as any) } catch {}
+
+      toast.success(`Project "${opened.name}" opened successfully`)
+    } catch (err: any) {
+      console.error("Failed to open project file:", err)
+      toast.error(typeof err === "string" ? err : err?.message || "Failed to open project file")
+    }
+  }
+
+  const handleRelocateProject = async (id: string) => {
+    try {
+      const relocated = await invoke<Project | null>("relocate_project", { id, newPath: null })
+      if (!relocated) return
+
+      const updatedList = projects
+        .filter((p) => p.id !== id && p.id !== relocated.id)
+        .concat(relocated)
+      dispatch(setProjects(updatedList))
+      dispatch(setcurrentProjectId(relocated.id))
+
+      try {
+        const summaries = await invoke<HttpHistorySummaryRow[]>("get_http_history_summaries", { projectId: relocated.id })
+        dispatch(setSiteMapBulk({ items: summaries, projectId: relocated.id }))
+      } catch (err) {
+        console.warn("Could not load persisted HTTP history summaries:", err)
+      }
+
+      try { dispatch(fetchScopeDataForProject(relocated.id) as any) } catch {}
+      try { dispatch(fetchSitemapStateForProject(relocated.id) as any) } catch {}
+      try { dispatch(fetchMatchReplaceDataForProject(relocated.id) as any) } catch {}
+
+      toast.success(`Project relocated to "${relocated.path}" and opened successfully`)
+    } catch (err: any) {
+      console.error("Failed to relocate project:", err)
+      toast.error(typeof err === "string" ? err : err?.message || "Failed to relocate project")
+    }
+  }
+
+  const [projectToDelete, setProjectToDelete] = useState<Project | null>(null)
+  const [isDeleting, setIsDeleting] = useState(false)
+
+  const [renamingProjectId, setRenamingProjectId] = useState<string | null>(null)
+  const [renamingName, setRenamingName] = useState("")
+  const [isSavingRename, setIsSavingRename] = useState(false)
+
+  const handleStartRename = (project: Project) => {
+    setRenamingProjectId(project.id)
+    setRenamingName(project.name)
+  }
+
+  const handleCancelRename = () => {
+    setRenamingProjectId(null)
+    setRenamingName("")
+  }
+
+  const handleSaveRename = async (projectId: string) => {
+    const trimmed = renamingName.trim()
+    if (!trimmed) {
+      toast.error("Project name cannot be empty")
+      return
+    }
+
+    const currentProj = projects.find((p) => p.id === projectId)
+    if (currentProj && currentProj.name === trimmed) {
+      setRenamingProjectId(null)
+      return
+    }
+
+    setIsSavingRename(true)
+    try {
+      const updated = await invoke<Project>("update_project_details", {
+        id: projectId,
+        name: trimmed,
+        description: currentProj?.description || "",
+      })
+
+      dispatch(updateProject(updated))
+      setRenamingProjectId(null)
+    } catch (err: any) {
+      console.error("Failed to rename project:", err)
+      toast.error(typeof err === "string" ? err : err?.message || "Failed to rename project")
+    } finally {
+      setIsSavingRename(false)
+    }
+  }
+
+  const handleCopyPath = async (path: string) => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(path)
+      } else {
+        const textarea = document.createElement("textarea")
+        textarea.value = path
+        textarea.style.position = "fixed"
+        textarea.style.opacity = "0"
+        document.body.appendChild(textarea)
+        textarea.select()
+        document.execCommand("copy")
+        document.body.removeChild(textarea)
+      }
+      toast.success("Project path copied to clipboard")
+    } catch {
+      toast.error("Failed to copy path to clipboard")
+    }
+  }
+
+  const confirmDelete = async () => {
+    if (!projectToDelete) return
+    setIsDeleting(true)
+    try {
+      await invoke("delete_project", { id: projectToDelete.id })
+      dispatch(deleteProject(projectToDelete.id))
+      toast.success(`Project "${projectToDelete.name}" deleted successfully`)
+      setProjectToDelete(null)
     } catch (err: any) {
       console.error("Failed to delete project:", err)
       toast.error(typeof err === "string" ? err : "Failed to delete project")
+    } finally {
+      setIsDeleting(false)
     }
   }
 
@@ -186,10 +344,52 @@ export default function Projects() {
       cell: (info) => {
         const project = info.row.original
         const isActive = project.id === currentProjectId
+        const isMissing = project.exists === false
+        const isRenaming = renamingProjectId === project.id
+
+        if (isRenaming) {
+          return (
+            <div
+              className="flex items-center py-0.5"
+              onClick={(e) => e.stopPropagation()}
+              onPointerDown={(e) => e.stopPropagation()}
+            >
+              <Input
+                value={renamingName}
+                onChange={(e) => setRenamingName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault()
+                    handleSaveRename(project.id)
+                  } else if (e.key === "Escape") {
+                    e.preventDefault()
+                    handleCancelRename()
+                  }
+                }}
+                onBlur={() => handleSaveRename(project.id)}
+                autoFocus
+                disabled={isSavingRename}
+                className="h-6 px-2 py-0 text-xs font-medium max-w-[220px]"
+              />
+            </div>
+          )
+        }
+
         return (
           <div className="flex flex-col gap-0.5">
             <div className="flex items-center gap-2">
-              <span className="font-medium text-foreground">{info.getValue()}</span>
+              <span className={cn("font-medium", isMissing ? "text-muted-foreground line-through" : "text-foreground")}>
+                {info.getValue()}
+              </span>
+              {isMissing && (
+                <Badge
+                  variant="destructive"
+                  className="h-4 px-1.5 text-[9.5px] leading-none gap-1 bg-destructive/15 text-destructive border-destructive/30"
+                >
+                  <FileQuestion className="size-2.5" />
+                  missing
+                </Badge>
+              )}
               {project.temporary && (
                 <Badge
                   variant="outline"
@@ -198,7 +398,7 @@ export default function Projects() {
                   temp
                 </Badge>
               )}
-              {isActive && (
+              {isActive && !isMissing && (
                 <Badge
                   className="h-4 px-1.5 text-[10px] leading-none bg-primary/15 text-primary border-primary/30"
                   variant="outline"
@@ -208,7 +408,10 @@ export default function Projects() {
               )}
             </div>
             {project.path && (
-              <span className="text-[10px] font-mono text-muted-foreground/70 truncate max-w-[200px]" title={project.path}>
+              <span
+                className={cn("text-[10px] font-mono truncate max-w-[220px]", isMissing ? "text-destructive/70 italic" : "text-muted-foreground/70")}
+                title={isMissing ? `File not found on disk at: ${project.path}` : project.path}
+              >
                 {project.path}
               </span>
             )}
@@ -279,7 +482,11 @@ export default function Projects() {
       header: "Size",
       cell: ({ row }) => (
         <div className="flex items-center gap-1.5 text-muted-foreground">
-          <span>{formatSize(row.original.sizeBytes)}</span>
+          {row.original.exists === false ? (
+            <span className="text-[10.5px] text-destructive/70 italic">Missing</span>
+          ) : (
+            <span>{formatSize(row.original.sizeBytes)}</span>
+          )}
         </div>
       ),
       size: 80,
@@ -301,10 +508,24 @@ export default function Projects() {
       accessorKey: "id",
       header: "Action",
       cell: (info) => {
-        const isActive = info.getValue() === currentProjectId
+        const project = info.row.original
+        const isActive = project.id === currentProjectId
+        const isMissing = project.exists === false
+
         return (
           <div className="flex items-center gap-1.5">
-            {isActive ? (
+            {isMissing ? (
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 px-2.5 text-[11px] gap-1.5 border-amber-500/40 text-amber-500 hover:bg-amber-500/10 hover:text-amber-400 w-24"
+                onClick={() => handleRelocateProject(project.id)}
+                title="Locate moved or renamed .ares file"
+              >
+                <FileSearch className="size-3" />
+                Locate
+              </Button>
+            ) : isActive ? (
               <Button
                 size="sm"
                 variant="outline"
@@ -324,14 +545,42 @@ export default function Projects() {
                 Select
               </Button>
             )}
-            <Button
-              size="icon"
-              variant="ghost"
-              className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover:opacity-100 transition-opacity"
-              onClick={() => handleDelete(info.getValue())}
-            >
-              <Trash2 className="size-3" />
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-muted"
+                  title="Project options"
+                >
+                  <MoreHorizontal className="size-3.5" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-44">
+                <DropdownMenuItem onClick={() => handleStartRename(project)} className="gap-2 text-xs">
+                  <Pencil className="size-3.5 text-muted-foreground" />
+                  <span>Rename</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => handleCopyPath(project.path)} className="gap-2 text-xs">
+                  <Copy className="size-3.5 text-muted-foreground" />
+                  <span>Copy Path</span>
+                </DropdownMenuItem>
+                {isMissing && (
+                  <DropdownMenuItem onClick={() => handleRelocateProject(project.id)} className="gap-2 text-xs text-amber-500">
+                    <FileSearch className="size-3.5 text-amber-500" />
+                    <span>Relocate File...</span>
+                  </DropdownMenuItem>
+                )}
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onClick={() => setProjectToDelete(project)}
+                  className="gap-2 text-xs text-destructive focus:text-destructive focus:bg-destructive/10"
+                >
+                  <Trash2 className="size-3.5" />
+                  <span>{isMissing ? "Remove from Catalog" : "Delete Project"}</span>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         )
       },
@@ -393,7 +642,12 @@ export default function Projects() {
             </p>
           </div>
         </div>
-        <AddProjectDialog />
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={handleOpenProject} className="gap-1.5 text-xs">
+            <FolderOpen className="size-3.5 text-primary" /> Open (.ares)
+          </Button>
+          <AddProjectDialog />
+        </div>
       </div>
 
       {/* Table */}
@@ -426,7 +680,10 @@ export default function Projects() {
                     <TableCell colSpan={columns.length} className="h-32 text-center">
                       <div className="flex flex-col items-center gap-2 text-muted-foreground">
                         <FolderOpen className="size-8 opacity-30" />
-                        <p className="text-[11px]">No projects yet. Create one to get started.</p>
+                        <p className="text-[11px]">No projects yet. Create one or open an existing .ares file to get started.</p>
+                        <Button variant="outline" size="sm" onClick={handleOpenProject} className="mt-1 gap-1.5 text-xs">
+                          <FolderOpen className="size-3.5 text-primary" /> Open .ares project
+                        </Button>
                       </div>
                     </TableCell>
                   </TableRow>
@@ -444,6 +701,82 @@ export default function Projects() {
           </Table>
         </DndContext>
       </div>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={!!projectToDelete} onOpenChange={(open) => !open && setProjectToDelete(null)}>
+        <DialogContent className="sm:max-w-[420px]">
+          <DialogHeader>
+            <div className="flex items-center gap-2 text-destructive">
+              <AlertTriangle className="size-5 shrink-0" />
+              <DialogTitle>
+                {projectToDelete?.exists === false ? "Remove Missing Project" : "Delete Project"}
+              </DialogTitle>
+            </div>
+            <DialogDescription className="pt-2 text-xs leading-relaxed text-muted-foreground">
+              {projectToDelete?.exists === false ? (
+                <>
+                  The project <strong className="text-foreground">{projectToDelete?.name}</strong> no longer exists at its saved location.
+                  This will remove its record from the catalog.
+                </>
+              ) : (
+                <>
+                  Are you sure you want to delete <strong className="text-foreground">{projectToDelete?.name}</strong>?
+                  This will permanently remove the project and its database file from disk.
+                </>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+
+          {projectToDelete && (
+            <div className="rounded-md border border-border/60 bg-muted/40 p-2.5 text-[11px] flex flex-col gap-1.5">
+              <div className="flex items-start justify-between gap-2">
+                <span className="text-muted-foreground shrink-0">Saved Location:</span>
+                <span className="font-mono text-muted-foreground/80 truncate max-w-[230px]" title={projectToDelete.path}>
+                  {projectToDelete.path}
+                </span>
+              </div>
+              {projectToDelete.exists === false && (
+                <div className="text-destructive font-medium flex items-center gap-1 text-[10.5px]">
+                  <FileQuestion className="size-3 shrink-0" />
+                  <span>File not found on disk (may have been moved or deleted).</span>
+                </div>
+              )}
+              {projectToDelete.id === currentProjectId && (
+                <div className="pt-1 border-t border-border/40 text-amber-500 font-medium flex items-center gap-1.5 text-[10.5px]">
+                  <span>Active project will be closed and deselected.</span>
+                </div>
+              )}
+            </div>
+          )}
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={isDeleting}
+              onClick={() => setProjectToDelete(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              size="sm"
+              disabled={isDeleting}
+              onClick={confirmDelete}
+              className="gap-1.5"
+            >
+              <Trash2 className="size-3.5" />
+              {isDeleting
+                ? "Removing..."
+                : projectToDelete?.exists === false
+                ? "Remove from Catalog"
+                : "Delete Project"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

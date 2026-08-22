@@ -60,7 +60,7 @@ import { useTheme } from "./theme-provider"
 import { useAppDispatch, useAppSelector } from "@/hooks/redux"
 import { useProjectId } from "@/hooks/useProjectId"
 import { selectAllScopes, selectActiveScope, selectActiveScopeId, setActiveScope, fetchScopeDataForProject } from "@/store/slices/scopeSlice"
-import { setcurrentProjectId, updateProject } from "@/store/slices/projectSlice"
+import { addProject, setcurrentProjectId, updateProject } from "@/store/slices/projectSlice"
 import { fetchSitemapStateForProject, setSiteMapBulk } from "@/store/slices/sitemapSlice"
 import { fetchMatchReplaceDataForProject } from "@/store/slices/matchReplaceSlice"
 import { Project } from "@/types/project.type"
@@ -228,8 +228,71 @@ export default function MenubarDemo() {
             } catch (err) {
                 console.warn("Could not load persisted Match & Replace data:", err)
             }
-        } catch (err) {
+        } catch (err: any) {
             console.error("Failed to switch project:", err)
+            const targetProj = projects.find((p) => p.id === id)
+            if (targetProj) {
+                dispatch(updateProject({ ...targetProj, exists: false }))
+            }
+            const msg = typeof err === "string" ? err : err?.message || "Failed to switch project"
+            toast.error(msg, {
+                description: "The project file may have been moved or deleted. Go to Projects to relocate it.",
+            })
+        }
+    }
+
+    const recentProjects = useMemo(() => {
+        return [...projects]
+            .sort((a, b) => (b.lastOpenedAt ?? b.updatedAt ?? 0) - (a.lastOpenedAt ?? a.updatedAt ?? 0))
+            .slice(0, 8)
+    }, [projects])
+
+    const handleOpenProjectFile = async () => {
+        try {
+            const opened = await invoke<Project | null>("open_project_file", { filePath: null })
+            if (!opened) {
+                // User cancelled file dialog
+                return
+            }
+
+            const existing = projects.find((p) => p.id === opened.id)
+            if (existing) {
+                dispatch(updateProject(opened))
+            } else {
+                dispatch(addProject(opened))
+            }
+
+            dispatch(setcurrentProjectId(opened.id))
+
+            try {
+                const summaries = await invoke<HttpHistorySummaryRow[]>("get_http_history_summaries", { projectId: opened.id })
+                dispatch(setSiteMapBulk({ items: summaries, projectId: opened.id }))
+            } catch (err) {
+                console.warn("Could not load persisted HTTP history summaries:", err)
+            }
+
+            try {
+                dispatch(fetchScopeDataForProject(opened.id) as any)
+            } catch (err) {
+                console.warn("Could not load persisted Scope data:", err)
+            }
+
+            try {
+                dispatch(fetchSitemapStateForProject(opened.id) as any)
+            } catch (err) {
+                console.warn("Could not load persisted Sitemap state:", err)
+            }
+
+            try {
+                dispatch(fetchMatchReplaceDataForProject(opened.id) as any)
+            } catch (err) {
+                console.warn("Could not load persisted Match & Replace data:", err)
+            }
+
+            toast.success(`Project "${opened.name}" opened successfully`)
+        } catch (err: any) {
+            console.error("Failed to open project file:", err)
+            toast.error(typeof err === "string" ? err : err?.message || "Failed to open project file")
         }
     }
 
@@ -271,7 +334,7 @@ export default function MenubarDemo() {
         }
     }
 
-    // F11 & Escape key listeners for fullscreen toggle
+    // F11, Escape & Cmd/Ctrl+O key listeners
     useEffect(() => {
         const handleKeyDown = async (e: KeyboardEvent) => {
             if (e.key === "F11") {
@@ -286,11 +349,14 @@ export default function MenubarDemo() {
                         setIsFullscreen(false)
                     }
                 } catch { }
+            } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "o") {
+                e.preventDefault()
+                handleOpenProjectFile()
             }
         }
         window.addEventListener("keydown", handleKeyDown)
         return () => window.removeEventListener("keydown", handleKeyDown)
-    }, [])
+    }, [projects])
 
     const handleMinimize = () => appWindow.minimize()
 
@@ -326,12 +392,12 @@ export default function MenubarDemo() {
                     <MenubarTrigger>File</MenubarTrigger>
                     <MenubarContent>
                         <MenubarGroup>
-                            <MenubarItem className="gap-2">
+                            <MenubarItem onClick={handleOpenProjectFile} className="gap-2">
                                 <FolderOpen className="h-3.5 w-3.5 text-muted-foreground" />
                                 <span>Open Project (.ares)</span>
                                 <MenubarShortcut>⌘O</MenubarShortcut>
                             </MenubarItem>
-                            <MenubarItem className="gap-2">
+                            <MenubarItem onClick={() => navigate("/projects")} className="gap-2">
                                 <Library className="h-3.5 w-3.5 text-muted-foreground" />
                                 <span>Open Project Catalog</span>
                             </MenubarItem>
@@ -340,26 +406,45 @@ export default function MenubarDemo() {
                                     <Clock className="h-3.5 w-3.5 text-muted-foreground" />
                                     <span>Recent Projects</span>
                                 </MenubarSubTrigger>
-                                <MenubarSubContent className="w-48">
+                                <MenubarSubContent className="w-56">
                                     <MenubarGroup>
-                                        <MenubarItem disabled className="text-xs text-muted-foreground italic">
-                                            No recent projects
-                                        </MenubarItem>
+                                        {recentProjects.length === 0 ? (
+                                            <MenubarItem disabled className="text-xs text-muted-foreground italic">
+                                                No recent projects
+                                            </MenubarItem>
+                                        ) : (
+                                            recentProjects.map((proj) => (
+                                                <MenubarItem
+                                                    key={proj.id}
+                                                    onClick={() => handleSwitchProject(proj.id)}
+                                                    className={cn(
+                                                        "gap-2 text-xs flex items-center justify-between",
+                                                        proj.id === currentProjectId && "text-primary font-medium bg-primary/10",
+                                                        proj.exists === false && "opacity-60"
+                                                    )}
+                                                >
+                                                    <div className="flex items-center gap-2 min-w-0">
+                                                        <FolderOpen className={cn("h-3.5 w-3.5 shrink-0", proj.id === currentProjectId ? "text-primary" : "text-muted-foreground")} />
+                                                        <span className={cn("truncate", proj.exists === false && "line-through")}>{proj.name}</span>
+                                                        {proj.exists === false && (
+                                                            <span className="text-[9px] text-destructive shrink-0 font-normal">missing</span>
+                                                        )}
+                                                    </div>
+                                                    {proj.id === currentProjectId && <Check className="w-3 h-3 text-primary shrink-0" />}
+                                                </MenubarItem>
+                                            ))
+                                        )}
                                     </MenubarGroup>
                                 </MenubarSubContent>
                             </MenubarSub>
                         </MenubarGroup>
                         <MenubarSeparator />
                         <MenubarGroup>
-                            <MenubarItem className="gap-2">
+                            <MenubarItem className="gap-2" onClick={() => navigate("/projects")}>
                                 <Save className="h-3.5 w-3.5 text-muted-foreground" />
-                                <span>Save Project in...</span>
-                                <MenubarShortcut>⌘S</MenubarShortcut>
+                                <span>Manage Projects</span>
                             </MenubarItem>
                         </MenubarGroup>
-                        <MenubarItem className="gap-2">
-                            <span>Settings...</span>
-                        </MenubarItem>
                     </MenubarContent>
 
                 </MenubarMenu>
@@ -557,12 +642,18 @@ export default function MenubarDemo() {
                                         onClick={() => handleSwitchProject(proj.id)}
                                         className={cn(
                                             "w-full flex items-center gap-2 px-3 py-1.5 hover:bg-accent text-left transition-colors",
-                                            proj.id === currentProjectId ? "text-primary font-medium bg-primary/10" : "text-foreground"
+                                            proj.id === currentProjectId ? "text-primary font-medium bg-primary/10" : "text-foreground",
+                                            proj.exists === false && "opacity-60"
                                         )}
                                     >
                                         <FolderOpen className={cn("w-3.5 h-3.5 shrink-0", proj.id === currentProjectId ? "text-primary" : "text-muted-foreground")} />
                                         <div className="flex flex-col min-w-0 flex-1">
-                                            <span className="truncate">{proj.name}</span>
+                                            <div className="flex items-center gap-1.5 min-w-0">
+                                                <span className={cn("truncate", proj.exists === false && "line-through text-muted-foreground")}>{proj.name}</span>
+                                                {proj.exists === false && (
+                                                    <span className="text-[9px] text-destructive bg-destructive/10 px-1 rounded font-normal shrink-0">missing</span>
+                                                )}
+                                            </div>
                                             {proj.description && (
                                                 <span className="text-[9.5px] text-muted-foreground truncate">{proj.description}</span>
                                             )}

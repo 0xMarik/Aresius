@@ -3,12 +3,13 @@ export interface Project {
   name: string
   path: string
   version: string
-  description: string
+  description?: string
   createdAt: number
   updatedAt: number
   lastOpenedAt?: number | null
-  temporary: boolean
+  temporary?: boolean
   sizeBytes: number
+  exists?: boolean
 }
 
 export interface WorkspaceState {
