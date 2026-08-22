@@ -15,7 +15,6 @@ import {
     Sliders,
     Save,
     RefreshCw,
-    Zap,
     Keyboard,
     Info,
     Radio,
@@ -197,8 +196,6 @@ export default function SettingsPage() {
             toast.error("Failed to copy address")
         }
     }
-
-    const activeDisplayAddress = status.boundAddress || `${resolvedHost}:${port}`
 
     return (
         <div className="flex flex-col h-full bg-background overflow-hidden">

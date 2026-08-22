@@ -18,7 +18,7 @@ import {
 } from "@/components/ui/sidebar"
 import { RunningDot } from "@/components/ui/RunningDot"
 
-const PUBLIC_ROUTES = ["/projects", "/"]
+const PUBLIC_ROUTES = ["/projects", "/settings", "/"]
 
 interface NavItem {
   name: string

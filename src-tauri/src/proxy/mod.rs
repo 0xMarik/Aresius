@@ -349,6 +349,7 @@ pub async fn start_proxy_service(
     }
 }
 
+#[allow(dead_code)]
 pub async fn start_http_proxy(app_handle: AppHandle, bind_addr: &str) -> std::io::Result<()> {
     let parts: Vec<&str> = bind_addr.split(':').collect();
     let host = if !parts.is_empty() { parts[0] } else { "127.0.0.1" };
