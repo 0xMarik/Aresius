@@ -38,7 +38,6 @@ import {
     RotateCcw,
     Maximize2,
     Minimize2,
-    RotateCw,
     Bug,
     Info,
     Loader2,
@@ -54,6 +53,7 @@ import {
 } from "@/components/ui/dialog"
 import { toast } from "sonner"
 import InstallCertificateDialog from "./InstallCert"
+import AddCustomCertDialog from "./AddCustomCertDialog"
 import AboutDialog from "./AboutDialog"
 import { open } from "@tauri-apps/plugin-shell"
 import { useTheme } from "./theme-provider"
@@ -77,6 +77,7 @@ export default function MenubarDemo() {
 
     // Dialog states
     const [certDialogOpen, setCertDialogOpen] = useState(false)
+    const [customCertDialogOpen, setCustomCertDialogOpen] = useState(false)
     const [aboutDialogOpen, setAboutDialogOpen] = useState(false)
     const [regenerateConfirmOpen, setRegenerateConfirmOpen] = useState(false)
     const [isRegenerating, setIsRegenerating] = useState(false)
@@ -98,28 +99,69 @@ export default function MenubarDemo() {
     const handleCopyCaPath = async () => {
         try {
             const path = (await invoke("get_ca_cert_path")) as string
-            await navigator.clipboard.writeText(path)
+            if (navigator.clipboard?.writeText) {
+                await navigator.clipboard.writeText(path)
+            } else {
+                const textarea = document.createElement("textarea")
+                textarea.value = path
+                textarea.style.position = "fixed"
+                textarea.style.opacity = "0"
+                document.body.appendChild(textarea)
+                textarea.select()
+                document.execCommand("copy")
+                document.body.removeChild(textarea)
+            }
             toast.success("CA Certificate path copied to clipboard")
         } catch (err) {
-            toast.error("Failed to copy CA certificate path")
+            toast.error(typeof err === "string" ? err : "Failed to copy CA certificate path")
         }
     }
 
     const handleExportCaCert = async () => {
         try {
             const pem = (await invoke("get_ca_cert_pem")) as string
+            const defaultFilename = "aresius-ca-cert.pem"
+
+            // 1. Try native File System Access API (Save file picker)
+            if (typeof window !== "undefined" && "showSaveFilePicker" in window) {
+                try {
+                    const handle = await (window as any).showSaveFilePicker({
+                        suggestedName: defaultFilename,
+                        types: [
+                            {
+                                description: "PEM Certificate (*.pem, *.crt)",
+                                accept: {
+                                    "application/x-pem-file": [".pem", ".crt"],
+                                    "text/plain": [".pem", ".crt", ".txt"],
+                                },
+                            },
+                        ],
+                    })
+                    const writable = await handle.createWritable()
+                    await writable.write(pem)
+                    await writable.close()
+                    toast.success("CA Certificate saved successfully")
+                    return
+                } catch (err: unknown) {
+                    if (err instanceof Error && err.name === "AbortError") {
+                        return
+                    }
+                }
+            }
+
+            // 2. Fallback to standard browser download
             const blob = new Blob([pem], { type: "application/x-pem-file" })
             const url = URL.createObjectURL(blob)
             const a = document.createElement("a")
             a.href = url
-            a.download = "aresius-ca-cert.pem"
+            a.download = defaultFilename
             document.body.appendChild(a)
             a.click()
             document.body.removeChild(a)
             URL.revokeObjectURL(url)
             toast.success("CA certificate downloaded")
         } catch (err) {
-            toast.error("Failed to export CA certificate")
+            toast.error(typeof err === "string" ? err : "Failed to export CA certificate")
         }
     }
 
@@ -378,16 +420,7 @@ export default function MenubarDemo() {
                                 <MenubarShortcut>F11</MenubarShortcut>
                             </MenubarItem>
                         </MenubarGroup>
-                        <MenubarSeparator />
-                        <MenubarGroup>
-                            <MenubarItem onClick={() => window.location.reload()} className="gap-2 justify-between">
-                                <span className="flex items-center gap-2">
-                                    <RotateCw className="h-3.5 w-3.5 text-muted-foreground" />
-                                    Reload
-                                </span>
-                                <MenubarShortcut>⌘R</MenubarShortcut>
-                            </MenubarItem>
-                        </MenubarGroup>
+
                     </MenubarContent>
                 </MenubarMenu>
 
@@ -406,17 +439,21 @@ export default function MenubarDemo() {
                                 <Shield className="h-3.5 w-3.5 text-primary" />
                                 <span>Install Certificate</span>
                             </MenubarItem>
-                            <MenubarItem className="gap-2">
+                            <MenubarItem
+                                className="gap-2 cursor-pointer"
+                                onSelect={() => {
+                                    setCustomCertDialogOpen(true)
+                                }}
+                            >
                                 <Upload className="h-3.5 w-3.5 text-muted-foreground" />
-                                <span>Import Custom Root CA...</span>
+                                <span>Add a Custom Certificate</span>
                             </MenubarItem>
                         </MenubarGroup>
                         <MenubarSeparator />
                         <MenubarGroup>
                             <MenubarItem
-                                className="gap-2"
-                                onSelect={(event) => {
-                                    event.preventDefault()
+                                className="gap-2 cursor-pointer"
+                                onSelect={() => {
                                     handleExportCaCert()
                                 }}
                             >
@@ -424,9 +461,8 @@ export default function MenubarDemo() {
                                 <span>Export Root CA Certificate</span>
                             </MenubarItem>
                             <MenubarItem
-                                className="gap-2"
-                                onSelect={(event) => {
-                                    event.preventDefault()
+                                className="gap-2 cursor-pointer"
+                                onSelect={() => {
                                     handleCopyCaPath()
                                 }}
                             >
@@ -609,39 +645,39 @@ export default function MenubarDemo() {
                                 <span className="ml-auto flex items-center">{activeScopeId === null && <Check className="w-2.5 h-2.5" />}</span>
                             </button>
 
-                        {allScopes.length > 0 && (
-                            <div className="my-1 h-px bg-border/50 mx-2" />
-                        )}
+                            {allScopes.length > 0 && (
+                                <div className="my-1 h-px bg-border/50 mx-2" />
+                            )}
 
-                        {allScopes.map((scope) => (
-                            <button
-                                key={scope.id}
-                                type="button"
-                                onClick={() => {
-                                    if (projectId) dispatch(setActiveScope({ scopeId: scope.id, projectId }))
-                                    setScopeDropdownOpen(false)
-                                }}
-                                className={cn(
-                                    "w-full flex items-center gap-2 px-3 py-1.5 hover:bg-accent text-left transition-colors",
-                                    scope.id === activeScopeId ? "text-foreground font-medium" : "text-muted-foreground"
-                                )}
-                            >
-                                <span
-                                    className="w-2 h-2 rounded-full shrink-0 ring-1 ring-inset ring-white/20"
-                                    style={{ backgroundColor: scope.color }}
-                                />
-                                <span className="flex-1 truncate">{scope.name}</span>
-                                {scope.id === activeScopeId && <Check className="w-2.5 h-2.5 ml-auto shrink-0" />}
-                            </button>
-                        ))}
+                            {allScopes.map((scope) => (
+                                <button
+                                    key={scope.id}
+                                    type="button"
+                                    onClick={() => {
+                                        if (projectId) dispatch(setActiveScope({ scopeId: scope.id, projectId }))
+                                        setScopeDropdownOpen(false)
+                                    }}
+                                    className={cn(
+                                        "w-full flex items-center gap-2 px-3 py-1.5 hover:bg-accent text-left transition-colors",
+                                        scope.id === activeScopeId ? "text-foreground font-medium" : "text-muted-foreground"
+                                    )}
+                                >
+                                    <span
+                                        className="w-2 h-2 rounded-full shrink-0 ring-1 ring-inset ring-white/20"
+                                        style={{ backgroundColor: scope.color }}
+                                    />
+                                    <span className="flex-1 truncate">{scope.name}</span>
+                                    {scope.id === activeScopeId && <Check className="w-2.5 h-2.5 ml-auto shrink-0" />}
+                                </button>
+                            ))}
 
-                        {allScopes.length === 0 && (
-                            <div className="px-3 py-2 text-muted-foreground/50 text-center">
-                                No scopes defined
-                            </div>
-                        )}
-                    </div>
-                )}
+                            {allScopes.length === 0 && (
+                                <div className="px-3 py-2 text-muted-foreground/50 text-center">
+                                    No scopes defined
+                                </div>
+                            )}
+                        </div>
+                    )}
                 </div>
             </div>
 
@@ -678,6 +714,7 @@ export default function MenubarDemo() {
             </div>
 
             <InstallCertificateDialog open={certDialogOpen} onOpenChange={setCertDialogOpen} />
+            <AddCustomCertDialog open={customCertDialogOpen} onOpenChange={setCustomCertDialogOpen} />
             <AboutDialog open={aboutDialogOpen} onOpenChange={setAboutDialogOpen} />
 
             {/* ── Regenerate CA Confirmation Dialog ── */}

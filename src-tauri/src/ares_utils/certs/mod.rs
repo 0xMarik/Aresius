@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Result};
+use base64::Engine;
 use rcgen::{
     CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, Issuer, KeyPair,
     KeyUsagePurpose,
@@ -288,6 +289,193 @@ pub async fn open_cert_manager(app: tauri::AppHandle) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+#[derive(serde::Serialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomCertInfo {
+    pub subject: String,
+    pub issuer: String,
+    pub not_before: String,
+    pub not_after: String,
+    pub serial: String,
+    pub is_ca: bool,
+    pub key_algorithm: String,
+}
+
+pub async fn validate_and_apply_ca_cert(
+    app: &AppHandle,
+    cert_cache: &crate::proxy::CertCache,
+    cert_pem: &str,
+    key_pem: &str,
+) -> Result<CustomCertInfo, String> {
+    let mut cert_reader = BufReader::new(cert_pem.as_bytes());
+    let certs: Vec<CertificateDer> = rustls_pemfile::certs(&mut cert_reader)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("Failed to parse Certificate PEM: {e}"))?;
+
+    if certs.is_empty() {
+        return Err("No valid X.509 certificate found in PEM data.".into());
+    }
+
+    let cert_der = certs[0].as_ref();
+    let (_, parsed_cert) = x509_parser::parse_x509_certificate(cert_der)
+        .map_err(|e| format!("Failed to parse X.509 Certificate: {e}"))?;
+
+    // 1. Check BasicConstraints: is_ca must be true
+    let basic_constraints = parsed_cert
+        .basic_constraints()
+        .map_err(|e| format!("Error reading Basic Constraints extension: {e}"))?;
+
+    match basic_constraints {
+        Some(bc) => {
+            if !bc.value.ca {
+                return Err("Certificate is not configured as a Certificate Authority (BasicConstraints CA must be true to sign HTTPS traffic).".into());
+            }
+        }
+        None => {
+            return Err("Certificate lacks BasicConstraints extension (must be a CA certificate).".into());
+        }
+    }
+
+    // 2. Check KeyUsage if present
+    if let Ok(Some(ku)) = parsed_cert.key_usage() {
+        if !ku.value.key_cert_sign() {
+            return Err("Certificate KeyUsage does not permit certificate signing (keyCertSign bit is missing).".into());
+        }
+    }
+
+    // 3. Check Validity Period
+    let now = chrono::Utc::now().timestamp();
+    let not_before = parsed_cert.validity().not_before.timestamp();
+    let not_after = parsed_cert.validity().not_after.timestamp();
+
+    if now < not_before {
+        return Err(format!(
+            "Certificate is not yet valid (valid from {}).",
+            parsed_cert.validity().not_before
+        ));
+    }
+    if now > not_after {
+        return Err(format!(
+            "Certificate has expired on {}.",
+            parsed_cert.validity().not_after
+        ));
+    }
+
+    // 4. Parse Private Key
+    let key_pair = KeyPair::from_pem(key_pem)
+        .map_err(|e| format!("Failed to parse private key PEM: {e}"))?;
+
+    // 5. Verify Key matches Certificate by creating an Issuer and signing a test server certificate
+    let issuer = Issuer::from_ca_cert_pem(cert_pem, &key_pair)
+        .map_err(|e| format!("Private key does not match certificate or failed to construct CA issuer: {e}"))?;
+
+    let test_params = CertificateParams::new(vec!["test.aresius.local".to_string()])
+        .map_err(|e| format!("Failed to initialize test certificate params: {e}"))?;
+    let test_key = KeyPair::generate()
+        .map_err(|e| format!("Failed to generate test key: {e}"))?;
+    let _test_signed = test_params
+        .signed_by(&test_key, &issuer)
+        .map_err(|e| format!("CA certificate and private key cannot sign child certificates: {e}"))?;
+
+    // 6. Verification passed! Discard old certificate and apply new certificate
+    let paths = CaCertPaths::new(app).map_err(|e| e.to_string())?;
+
+    // Remove old CA certificate from OS trust store if previously installed
+    if paths.cert_path.exists() {
+        if let Err(e) = crate::ares_utils::certs::certification_installation::remove_cert_from_os_store(&paths.cert_path).await {
+            tracing::warn!("Failed to remove old certificate from OS trust store: {}", e);
+        }
+    }
+
+    // Write new CA cert and key files
+    fs::write(&paths.cert_path, cert_pem.trim())
+        .map_err(|e| format!("Failed to write CA certificate file: {e}"))?;
+    fs::write(&paths.key_path, key_pem.trim())
+        .map_err(|e| format!("Failed to write CA key file: {e}"))?;
+
+    // Invalidate and update proxy TLS acceptor cache
+    cert_cache.set_ca(cert_pem.to_string(), key_pair).await;
+    tracing::info!("Custom CA certificate successfully installed and proxy cache updated.");
+
+    let subject = parsed_cert.subject().to_string();
+    let issuer_str = parsed_cert.issuer().to_string();
+    let not_before_str = parsed_cert.validity().not_before.to_string();
+    let not_after_str = parsed_cert.validity().not_after.to_string();
+    let serial = parsed_cert.raw_serial_as_string();
+    let key_algo = parsed_cert.signature_algorithm.algorithm.to_string();
+
+    Ok(CustomCertInfo {
+        subject,
+        issuer: issuer_str,
+        not_before: not_before_str,
+        not_after: not_after_str,
+        serial,
+        is_ca: true,
+        key_algorithm: key_algo,
+    })
+}
+
+#[tauri::command]
+pub async fn import_custom_cert_pem(
+    app: tauri::AppHandle,
+    cert_cache: tauri::State<'_, crate::proxy::CertCache>,
+    cert_pem: String,
+    key_pem: String,
+) -> Result<CustomCertInfo, String> {
+    let cert_pem = cert_pem.trim();
+    let key_pem = key_pem.trim();
+
+    if cert_pem.is_empty() {
+        return Err("Certificate PEM content is empty.".into());
+    }
+    if key_pem.is_empty() {
+        return Err("Private Key PEM content is empty.".into());
+    }
+
+    validate_and_apply_ca_cert(&app, &cert_cache, cert_pem, key_pem).await
+}
+
+#[tauri::command]
+pub async fn import_custom_cert_p12(
+    app: tauri::AppHandle,
+    cert_cache: tauri::State<'_, crate::proxy::CertCache>,
+    p12_base64: String,
+    password: String,
+) -> Result<CustomCertInfo, String> {
+    let p12_bytes = base64::engine::general_purpose::STANDARD
+        .decode(p12_base64.trim())
+        .map_err(|e| format!("Invalid Base64 encoding for PKCS#12 archive: {e}"))?;
+
+    let pfx = p12::PFX::parse(&p12_bytes)
+        .map_err(|e| format!("Failed to parse PKCS#12 / PFX structure: {e:?}"))?;
+
+    let cert_bags = pfx
+        .cert_x509_bags(&password)
+        .map_err(|e| format!("Failed to decrypt PKCS#12 certificate (incorrect password?): {e:?}"))?;
+
+    if cert_bags.is_empty() {
+        return Err("No X.509 certificates found inside the PKCS#12 archive.".into());
+    }
+
+    let key_bags = pfx
+        .key_bags(&password)
+        .map_err(|e| format!("Failed to decrypt PKCS#12 private key (incorrect password?): {e:?}"))?;
+
+    if key_bags.is_empty() {
+        return Err("No private key found inside the PKCS#12 archive.".into());
+    }
+
+    let cert_der = &cert_bags[0];
+    let cert_b64 = base64::engine::general_purpose::STANDARD.encode(cert_der);
+    let cert_pem = format!("-----BEGIN CERTIFICATE-----\n{}\n-----END CERTIFICATE-----\n", cert_b64);
+
+    let key_der = &key_bags[0];
+    let key_b64 = base64::engine::general_purpose::STANDARD.encode(key_der);
+    let key_pem = format!("-----BEGIN PRIVATE KEY-----\n{}\n-----END PRIVATE KEY-----\n", key_b64);
+
+    validate_and_apply_ca_cert(&app, &cert_cache, &cert_pem, &key_pem).await
 }
 
 
