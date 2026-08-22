@@ -1,5 +1,8 @@
 use anyhow::{anyhow, Result};
-use rcgen::{CertificateParams, DistinguishedName, DnType, Issuer, KeyPair};
+use rcgen::{
+    CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, Issuer, KeyPair,
+    KeyUsagePurpose,
+};
 use rustls::{pki_types::CertificateDer, ServerConfig};
 use rustls_pemfile;
 use std::fs;
@@ -11,6 +14,8 @@ use tokio_rustls::TlsAcceptor;
 
 pub mod certification_installation;
 pub mod check_cert_installed;
+#[cfg(target_os = "windows")]
+pub mod win_crypto;
 
 pub struct CaCertPaths {
     pub cert_path: PathBuf,
@@ -39,6 +44,31 @@ impl CaCertPaths {
     }
 }
 
+pub fn ensure_ca_cert_exists(app_handle: &AppHandle) -> anyhow::Result<CaCertPaths> {
+    let ca_paths = CaCertPaths::new(app_handle)?;
+    if !ca_paths.exists() {
+        generate_ca_cert(app_handle)?;
+    }
+    Ok(ca_paths)
+}
+
+pub fn read_cert_der_from_file(cert_path: &std::path::Path) -> Result<Vec<u8>, String> {
+    if !cert_path.exists() {
+        return Err("Certificate file does not exist".into());
+    }
+    let file = fs::File::open(cert_path).map_err(|e| format!("Failed to open cert file: {e}"))?;
+    let mut reader = BufReader::new(file);
+    let certs = rustls_pemfile::certs(&mut reader)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("Failed to parse PEM certificate: {e}"))?;
+    let der = certs
+        .into_iter()
+        .next()
+        .ok_or_else(|| "No certificate found in PEM file".to_string())?;
+    Ok(der.to_vec())
+}
+
+
 pub fn generate_ca_cert(app_handle: &AppHandle) -> anyhow::Result<(String, KeyPair)> {
     let ca_paths = CaCertPaths::new(&app_handle)?;
 
@@ -50,7 +80,7 @@ pub fn generate_ca_cert(app_handle: &AppHandle) -> anyhow::Result<(String, KeyPa
         );
 
         // Read the existing key
-        let key_pem = fs::read_to_string(ca_paths.key_path)?;
+        let key_pem = fs::read_to_string(&ca_paths.key_path)?;
         // Parse the key pair
         let key_pair = KeyPair::from_pem(&key_pem)?;
 
@@ -61,37 +91,71 @@ pub fn generate_ca_cert(app_handle: &AppHandle) -> anyhow::Result<(String, KeyPa
         Issuer::from_ca_cert_pem(&cert_pem, &key_pair)
             .map_err(|e| anyhow!("Failed to parse existing CA certificate: {}", e))?;
 
-        return Ok((cert_pem, key_pair));
+        // Check if certificate has expired or is not yet valid
+        let der = read_cert_der_from_file(&ca_paths.cert_path).map_err(|e| anyhow!("{e}"))?;
+        match x509_parser::parse_x509_certificate(&der) {
+            Ok((_, parsed_cert)) => {
+                let validity = parsed_cert.validity();
+                let not_before = validity.not_before.timestamp();
+                let not_after = validity.not_after.timestamp();
+                let now_unix = chrono::Utc::now().timestamp();
+
+                if now_unix < not_before || now_unix > not_after {
+                    tracing::warn!(
+                        "Existing CA certificate is outside its validity window (expired or not yet valid). Regenerating fresh CA certificate..."
+                    );
+                } else {
+                    return Ok((cert_pem, key_pair));
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to parse X.509 validity for existing CA certificate ({e}). Regenerating fresh CA certificate..."
+                );
+            }
+        }
     }
 
-    // Generate new CA certificate if it doesn't exist
+    // Generate new CA certificate if it doesn't exist or is invalid/expired
     tracing::info!("Generating new CA certificate...");
 
     let mut params = CertificateParams::default();
 
-    // Set up Distinguished Name with all fields
+    // Set up Distinguished Name with all fields - Country code MUST be 2 characters (ISO 3166-1)
     params.distinguished_name = DistinguishedName::new();
+    params.distinguished_name.push(DnType::CountryName, "US");
     params
         .distinguished_name
-        .push(DnType::CountryName, "Aresius");
+        .push(DnType::StateOrProvinceName, "California");
     params
         .distinguished_name
-        .push(DnType::StateOrProvinceName, "Aresius");
-    params
-        .distinguished_name
-        .push(DnType::LocalityName, "Aresius");
+        .push(DnType::LocalityName, "San Francisco");
     params
         .distinguished_name
         .push(DnType::OrganizationName, "Aresius");
     params
         .distinguished_name
-        .push(DnType::OrganizationalUnitName, "Aresius CA");
+        .push(DnType::OrganizationalUnitName, "Aresius Security");
     params
         .distinguished_name
         .push(DnType::CommonName, "Aresius CA");
 
     // Mark as CA certificate
     params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+    params.key_usages = vec![
+        KeyUsagePurpose::KeyCertSign,
+        KeyUsagePurpose::CrlSign,
+        KeyUsagePurpose::DigitalSignature,
+    ];
+
+    use chrono::Datelike;
+    let now = chrono::Utc::now();
+    let day = now.day().min(28) as u8;
+    let month = now.month() as u8;
+    let year = now.year();
+
+    params.not_before = rcgen::date_time_ymd(year - 1, month, day);
+    params.not_after = rcgen::date_time_ymd(year + 10, month, day);
 
     // Generate key pair
     let key_pair = KeyPair::generate()?;
@@ -108,9 +172,8 @@ pub fn generate_ca_cert(app_handle: &AppHandle) -> anyhow::Result<(String, KeyPa
 
     tracing::info!("CA certificate generated: {}", ca_paths.cert_path.display());
     tracing::info!("CA private key saved: {}", ca_paths.key_path.display());
-    tracing::info!("Install this in Chrome: Settings > Privacy > Security > Manage certificates");
 
-    Ok((cert.pem(), key_pair))
+    Ok((ca_cert_pem, key_pair))
 }
 
 // Generate server certificate signed by CA
@@ -127,17 +190,108 @@ pub fn generate_server_cert(
         .distinguished_name
         .push(DnType::OrganizationName, "Aresius");
     params.is_ca = rcgen::IsCa::NoCa;
+    params.key_usages = vec![
+        KeyUsagePurpose::DigitalSignature,
+        KeyUsagePurpose::KeyEncipherment,
+    ];
+    params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
+
+    use chrono::Datelike;
+    let now = chrono::Utc::now();
+    let day = now.day().min(28) as u8;
+    let month = now.month() as u8;
+    let year = now.year();
+
+    params.not_before = rcgen::date_time_ymd(year - 1, month, day);
+    params.not_after = rcgen::date_time_ymd(year + 1, month, day);
 
     let key_pair = KeyPair::generate()?;
     // Create issuer reference
-    let issuer = Issuer::from_ca_cert_pem(&ca_cert_pem, &ca_key_pair)?;
+    let issuer = Issuer::from_ca_cert_pem(ca_cert_pem, ca_key_pair)?;
     let cert = params.signed_by(&key_pair, &issuer)?;
 
     let cert_pem = cert.pem();
     let key_pem = key_pair.serialize_pem();
 
+
     Ok((cert_pem.into_bytes(), key_pem.into_bytes()))
 }
+
+
+pub fn regenerate_ca_cert_files(app_handle: &AppHandle) -> anyhow::Result<(String, KeyPair)> {
+    let ca_paths = CaCertPaths::new(app_handle)?;
+    if ca_paths.cert_path.exists() {
+        let _ = fs::remove_file(&ca_paths.cert_path);
+    }
+    if ca_paths.key_path.exists() {
+        let _ = fs::remove_file(&ca_paths.key_path);
+    }
+    generate_ca_cert(app_handle)
+}
+
+#[tauri::command]
+pub async fn regenerate_ca_cert(
+    app: tauri::AppHandle,
+    cert_cache: tauri::State<'_, crate::proxy::CertCache>,
+) -> Result<(), String> {
+    let paths = CaCertPaths::new(&app).map_err(|e| e.to_string())?;
+
+    // Automatically remove the old CA certificate from the OS trust store first
+    if paths.cert_path.exists() {
+        if let Err(e) = crate::ares_utils::certs::certification_installation::remove_cert_from_os_store(&paths.cert_path).await {
+            tracing::warn!("Failed to remove old certificate from OS trust store: {}", e);
+        }
+    }
+
+    let (cert_pem, key_pair) = regenerate_ca_cert_files(&app).map_err(|e| e.to_string())?;
+    cert_cache.set_ca(cert_pem, key_pair).await;
+    tracing::info!("Old CA certificate removed from OS store, fresh certificate generated, and proxy cache cleared.");
+    Ok(())
+}
+
+
+#[tauri::command]
+pub async fn get_ca_cert_path(app: tauri::AppHandle) -> Result<String, String> {
+    let paths = ensure_ca_cert_exists(&app).map_err(|e| e.to_string())?;
+    Ok(paths.cert_path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+pub async fn get_ca_cert_pem(app: tauri::AppHandle) -> Result<String, String> {
+    let paths = ensure_ca_cert_exists(&app).map_err(|e| e.to_string())?;
+    fs::read_to_string(&paths.cert_path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn open_cert_manager(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+
+    #[cfg(target_os = "windows")]
+    {
+        app.opener()
+            .open_path("certmgr.msc", None::<&str>)
+            .map_err(|e| format!("failed to open certmgr.msc: {e}"))?;
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        app.opener()
+            .open_path("/System/Applications/Utilities/Keychain Access.app", None::<&str>)
+            .map_err(|e| format!("failed to open Keychain Access: {e}"))?;
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        app.opener()
+            .open_path("/usr/local/share/ca-certificates", None::<&str>)
+            .map_err(|e| format!("failed to open certificate directory: {e}"))?;
+    }
+
+    Ok(())
+}
+
+
+
 
 pub fn create_tls_acceptor(cert_pem: &[u8], key_pem: &[u8]) -> Result<TlsAcceptor> {
     // Parse certificates

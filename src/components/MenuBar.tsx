@@ -41,7 +41,18 @@ import {
     RotateCw,
     Bug,
     Info,
+    Loader2,
 } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+} from "@/components/ui/dialog"
+import { toast } from "sonner"
 import InstallCertificateDialog from "./InstallCert"
 import AboutDialog from "./AboutDialog"
 import { open } from "@tauri-apps/plugin-shell"
@@ -67,6 +78,50 @@ export default function MenubarDemo() {
     // Dialog states
     const [certDialogOpen, setCertDialogOpen] = useState(false)
     const [aboutDialogOpen, setAboutDialogOpen] = useState(false)
+    const [regenerateConfirmOpen, setRegenerateConfirmOpen] = useState(false)
+    const [isRegenerating, setIsRegenerating] = useState(false)
+
+    const handleRegenerateCA = async () => {
+        setIsRegenerating(true)
+        try {
+            await invoke("regenerate_ca_cert")
+            setRegenerateConfirmOpen(false)
+            toast.success("CA Certificate regenerated successfully")
+            setCertDialogOpen(true)
+        } catch (err) {
+            toast.error(typeof err === "string" ? err : "Failed to regenerate CA certificate")
+        } finally {
+            setIsRegenerating(false)
+        }
+    }
+
+    const handleCopyCaPath = async () => {
+        try {
+            const path = (await invoke("get_ca_cert_path")) as string
+            await navigator.clipboard.writeText(path)
+            toast.success("CA Certificate path copied to clipboard")
+        } catch (err) {
+            toast.error("Failed to copy CA certificate path")
+        }
+    }
+
+    const handleExportCaCert = async () => {
+        try {
+            const pem = (await invoke("get_ca_cert_pem")) as string
+            const blob = new Blob([pem], { type: "application/x-pem-file" })
+            const url = URL.createObjectURL(blob)
+            const a = document.createElement("a")
+            a.href = url
+            a.download = "aresius-ca-cert.pem"
+            document.body.appendChild(a)
+            a.click()
+            document.body.removeChild(a)
+            URL.revokeObjectURL(url)
+            toast.success("CA certificate downloaded")
+        } catch (err) {
+            toast.error("Failed to export CA certificate")
+        }
+    }
 
     // Project state
     const { projects, currentProjectId } = useAppSelector((state) => state.workspacestate)
@@ -358,18 +413,36 @@ export default function MenubarDemo() {
                         </MenubarGroup>
                         <MenubarSeparator />
                         <MenubarGroup>
-                            <MenubarItem className="gap-2">
+                            <MenubarItem
+                                className="gap-2"
+                                onSelect={(event) => {
+                                    event.preventDefault()
+                                    handleExportCaCert()
+                                }}
+                            >
                                 <Download className="h-3.5 w-3.5 text-muted-foreground" />
                                 <span>Export Root CA Certificate</span>
                             </MenubarItem>
-                            <MenubarItem className="gap-2">
+                            <MenubarItem
+                                className="gap-2"
+                                onSelect={(event) => {
+                                    event.preventDefault()
+                                    handleCopyCaPath()
+                                }}
+                            >
                                 <ClipboardCopy className="h-3.5 w-3.5 text-muted-foreground" />
                                 <span>Copy CA File Path to Clipboard</span>
                             </MenubarItem>
                         </MenubarGroup>
                         <MenubarSeparator />
                         <MenubarGroup>
-                            <MenubarItem className="gap-2 text-destructive focus:text-destructive">
+                            <MenubarItem
+                                className="gap-2 text-destructive focus:text-destructive cursor-pointer"
+                                onSelect={(event) => {
+                                    event.preventDefault()
+                                    setRegenerateConfirmOpen(true)
+                                }}
+                            >
                                 <RotateCcw className="h-3.5 w-3.5" />
                                 <span>Regenerate / Reset CA Certificates</span>
                             </MenubarItem>
@@ -606,6 +679,41 @@ export default function MenubarDemo() {
 
             <InstallCertificateDialog open={certDialogOpen} onOpenChange={setCertDialogOpen} />
             <AboutDialog open={aboutDialogOpen} onOpenChange={setAboutDialogOpen} />
+
+            {/* ── Regenerate CA Confirmation Dialog ── */}
+            <Dialog open={regenerateConfirmOpen} onOpenChange={setRegenerateConfirmOpen}>
+                <DialogContent className="sm:max-w-[460px]">
+                    <DialogHeader className="gap-1">
+                        <DialogTitle className="flex items-center gap-2 text-destructive">
+                            <RotateCcw className="size-5 shrink-0" />
+                            Regenerate / Reset CA Certificates?
+                        </DialogTitle>
+                        <DialogDescription className="text-sm pt-2 text-muted-foreground">
+                            This will permanently delete the current Aresius Root CA certificate and private key, and generate a new one.
+                            <br /><br />
+                            Active proxy TLS sessions will be invalidated, and you will need to install and trust the new certificate in your operating system / browser store.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <DialogFooter className="gap-2 sm:gap-0 mt-4">
+                        <Button
+                            variant="outline"
+                            onClick={() => setRegenerateConfirmOpen(false)}
+                            disabled={isRegenerating}
+                        >
+                            Cancel
+                        </Button>
+                        <Button
+                            variant="destructive"
+                            onClick={handleRegenerateCA}
+                            disabled={isRegenerating}
+                            className="gap-2"
+                        >
+                            {isRegenerating && <Loader2 className="size-4 animate-spin" />}
+                            {isRegenerating ? "Regenerating..." : "Regenerate Certificate"}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
         </div>
     )
 }

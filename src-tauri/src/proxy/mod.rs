@@ -62,16 +62,42 @@ struct HttpHistoryPayload {
 } 
 
 pub struct CertCache {
+    pub ca: Mutex<Option<(String, Arc<KeyPair>)>>,
     pub acceptors: Mutex<HashMap<String, tokio_rustls::TlsAcceptor>>,
 }
 
 impl CertCache {
     pub fn new() -> Self {
         Self {
+            ca: Mutex::new(None),
             acceptors: Mutex::new(HashMap::new()),
         }
     }
+
+    pub async fn set_ca(&self, cert_pem: String, key_pair: KeyPair) {
+        let mut ca_lock = self.ca.lock().await;
+        *ca_lock = Some((cert_pem, Arc::new(key_pair)));
+        let mut acceptors_lock = self.acceptors.lock().await;
+        acceptors_lock.clear();
+    }
+
+    pub async fn get_ca(&self, app_handle: &AppHandle) -> std::io::Result<(String, Arc<KeyPair>)> {
+        let mut ca_lock = self.ca.lock().await;
+        if let Some(ref ca) = *ca_lock {
+            return Ok((ca.0.clone(), ca.1.clone()));
+        }
+        let handle = app_handle.clone();
+        let (cert_pem, key_pair) = tokio::task::spawn_blocking(move || generate_ca_cert(&handle))
+            .await
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        let key_pair = Arc::new(key_pair);
+        *ca_lock = Some((cert_pem.clone(), key_pair.clone()));
+        Ok((cert_pem, key_pair))
+    }
 }
+
+
 
 /// Options for the `HttpConnection`s used on both proxy legs (CONNECT
 /// tunnels and plain HTTP). `auto_decode` is deliberately `false`: the
@@ -87,10 +113,12 @@ fn proxy_connection_options() -> ConnectionOptions {
 }
 
 pub async fn start_http_proxy(app_handle: AppHandle, bind_addr: &str) -> std::io::Result<()> {
-    // Generate CA certificate once at startup
+    // Initialize CA certificate in CertCache at startup
     let (ca_cert_pem, key_pair) = generate_ca_cert(&app_handle)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-    let key_pair = Arc::new(key_pair);
+    if let Some(cert_cache) = app_handle.try_state::<CertCache>() {
+        cert_cache.set_ca(ca_cert_pem, key_pair).await;
+    }
     let connection_options = proxy_connection_options();
 
     let listener = tokio::net::TcpListener::bind(bind_addr).await?;
@@ -101,16 +129,12 @@ pub async fn start_http_proxy(app_handle: AppHandle, bind_addr: &str) -> std::io
         match listener.accept().await {
             Ok((client_stream, addr)) => {
                 tracing::info!("New connection from: {}", addr);
-                let ca_cert_pem = ca_cert_pem.clone();
-                let key_pair = key_pair.clone();
                 let app = app.clone();
                 let connection_options = connection_options.clone();
                 tokio::spawn(async move {
                     if let Err(e) = handle_client(
                         app,
                         client_stream,
-                        ca_cert_pem,
-                        key_pair,
                         connection_options,
                     )
                     .await
@@ -123,6 +147,7 @@ pub async fn start_http_proxy(app_handle: AppHandle, bind_addr: &str) -> std::io
         }
     }
 }
+
 
 fn now_ms() -> u128 {
     SystemTime::now()
@@ -193,8 +218,6 @@ fn resync_edited_message(modified_message: &str) -> Vec<u8> {
 async fn handle_client(
     app_handle: AppHandle,
     mut client_stream: TcpStream,
-    ca_cert_pem: String,
-    ca_key_pair: Arc<KeyPair>,
     connection_options: ConnectionOptions,
 ) -> std::io::Result<()> {
     let mut buffer = [0u8; 65536];
@@ -211,8 +234,6 @@ async fn handle_client(
             app_handle,
             client_stream,
             &request,
-            ca_cert_pem,
-            ca_key_pair,
             connection_options,
         )
         .await
@@ -231,8 +252,6 @@ async fn handle_connect(
     app_handle: AppHandle,
     mut client_stream: TcpStream,
     request: &str,
-    ca_cert_pem: String,
-    ca_key_pair: Arc<KeyPair>,
     connection_options: ConnectionOptions,
 ) -> std::io::Result<()> {
     let target = request
@@ -250,8 +269,7 @@ async fn handle_connect(
         .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
         .await?;
 
-    let acceptor =
-        get_or_create_tls_acceptor(&app_handle, &domain, &ca_cert_pem, &ca_key_pair).await?;
+    let acceptor = get_or_create_tls_acceptor(&app_handle, &domain).await?;
 
     // Perform TLS handshake with client
     let mut client_tls = acceptor.accept(client_stream).await?;
@@ -800,8 +818,6 @@ async fn handle_connect(
 async fn get_or_create_tls_acceptor(
     app_handle: &AppHandle,
     domain: &str,
-    ca_cert_pem: &str,
-    ca_key_pair: &Arc<KeyPair>,
 ) -> std::io::Result<tokio_rustls::TlsAcceptor> {
     let cert_cache: tauri::State<CertCache> = app_handle.state();
 
@@ -813,8 +829,7 @@ async fn get_or_create_tls_acceptor(
         return Ok(acceptor);
     }
 
-    let ca_cert_pem = ca_cert_pem.to_string();
-    let ca_key_pair = ca_key_pair.clone();
+    let (ca_cert_pem, ca_key_pair) = cert_cache.get_ca(app_handle).await?;
     let domain_owned = domain.to_string();
 
     let acceptor = tokio::task::spawn_blocking(move || -> std::io::Result<tokio_rustls::TlsAcceptor> {
@@ -831,6 +846,7 @@ async fn get_or_create_tls_acceptor(
 
     Ok(acceptor)
 }
+
 
 /// Plain HTTP gets the same intercept/log/modify/decode treatment as HTTPS.
 async fn handle_http_request(

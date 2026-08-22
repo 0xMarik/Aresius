@@ -1,101 +1,133 @@
-use crate::ares_utils::certs::CaCertPaths;
+use crate::ares_utils::certs::{read_cert_der_from_file, CaCertPaths};
+#[cfg(target_os = "macos")]
+use sha1::{Digest, Sha1};
 
-use tokio::process::Command;
-
-#[cfg(target_os = "windows")]
-const CREATE_NO_WINDOW: u32 = 0x08000000;
-
-#[cfg(target_os = "windows")]
-fn no_window_command(program: &str) -> Command {
-    let mut cmd = Command::new(program);
-    cmd.creation_flags(CREATE_NO_WINDOW);
-    cmd
+#[cfg(target_os = "macos")]
+fn get_der_fingerprint_hex(der: &[u8]) -> String {
+    let mut hasher = Sha1::new();
+    hasher.update(der);
+    let result = hasher.finalize();
+    result.iter().map(|b| format!("{:02X}", b)).collect()
 }
 
-#[cfg(not(target_os = "windows"))]
-fn no_window_command(program: &str) -> Command {
-    Command::new(program)
-}
-
-// shared helper — requires openssl on PATH (or bundle/vendor it, see note below)
-async fn get_cert_fingerprint(cert_path: &std::path::Path) -> Result<String, String> {
-    let output = no_window_command("openssl")
-        .args(["x509", "-noout", "-fingerprint", "-sha1", "-in"])
-        .arg(cert_path)
-        .output()
-        .await
-        .map_err(|e| format!("failed to run openssl: {e}"))?;
-
-    if !output.status.success() {
-        return Err(format!(
-            "openssl failed to read cert: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    // format: "sha1 Fingerprint=AA:BB:CC:..."
-    stdout
-        .split('=')
-        .nth(1)
-        .map(|s| s.trim().to_uppercase())
-        .ok_or_else(|| "unexpected openssl output format".to_string())
+fn check_cert_in_native_roots(der_bytes: &[u8]) -> bool {
+    let native_certs = rustls_native_certs::load_native_certs();
+    native_certs.certs.iter().any(|c| c.as_ref() == der_bytes)
 }
 
 #[cfg(target_os = "windows")]
 #[tauri::command]
 pub async fn check_cert_installed(app: tauri::AppHandle) -> Result<bool, String> {
-    let paths = CaCertPaths::new(&app).map_err(|e| e.to_string())?;
-    let fingerprint = get_cert_fingerprint(&paths.cert_path).await?;
-    let fingerprint_no_colons = fingerprint.replace(':', "");
+    let paths = match CaCertPaths::new(&app) {
+        Ok(p) => p,
+        Err(_) => return Ok(false),
+    };
 
-    let output = Command::new("certutil")
-        .args(["-user", "-store", "Root", &fingerprint_no_colons])
-        .creation_flags(CREATE_NO_WINDOW)
-        .output()
-        .await
-        .map_err(|e| format!("failed to spawn certutil: {e}"))?;
+    if !paths.cert_path.exists() {
+        return Ok(false);
+    }
 
-    Ok(output.status.success())
+    let der_bytes = match read_cert_der_from_file(&paths.cert_path) {
+        Ok(der) => der,
+        Err(_) => return Ok(false),
+    };
+
+    // Fast path: In-process trust verification via rustls-native-certs
+    if check_cert_in_native_roots(&der_bytes) {
+        return Ok(true);
+    }
+
+    // Direct Windows CryptoAPI check (pure Rust FFI, no CLI subprocess)
+    Ok(crate::ares_utils::certs::win_crypto::win_cert_store::is_ca_in_user_root_store(&der_bytes))
 }
 
 #[cfg(target_os = "macos")]
 #[tauri::command]
 pub async fn check_cert_installed(app: tauri::AppHandle) -> Result<bool, String> {
-    let paths = CaCertPaths::new(&app).map_err(|e| e.to_string())?;
-    let fingerprint = get_cert_fingerprint(&paths.cert_path).await?;
+    let paths = match CaCertPaths::new(&app) {
+        Ok(p) => p,
+        Err(_) => return Ok(false),
+    };
 
-    let home = std::env::var("HOME").map_err(|e| format!("could not resolve HOME: {e}"))?;
-    let keychain = format!("{home}/Library/Keychains/login.keychain-db");
+    if !paths.cert_path.exists() {
+        return Ok(false);
+    }
 
-    let output = Command::new("security")
+    let der_bytes = match read_cert_der_from_file(&paths.cert_path) {
+        Ok(der) => der,
+        Err(_) => return Ok(false),
+    };
+
+    if check_cert_in_native_roots(&der_bytes) {
+        return Ok(true);
+    }
+
+    let fingerprint_hex = get_der_fingerprint_hex(&der_bytes);
+    let home = std::env::var("HOME").unwrap_or_default();
+    let mut keychain = format!("{home}/Library/Keychains/login.keychain-db");
+    if !std::path::Path::new(&keychain).exists() {
+        keychain = format!("{home}/Library/Keychains/login.keychain");
+    }
+
+    let output = tokio::process::Command::new("security")
         .args(["find-certificate", "-Z", "-a", &keychain])
         .output()
-        .await
-        .map_err(|e| format!("failed to spawn security: {e}"))?;
+        .await;
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let normalized_fp = fingerprint.replace(':', "");
-    let found = stdout
-        .lines()
-        .filter(|l| l.trim_start().starts_with("SHA-1 hash:"))
-        .any(|l| l.replace(' ', "").to_uppercase().ends_with(&normalized_fp));
+    if let Ok(res) = output {
+        let stdout = String::from_utf8_lossy(&res.stdout);
+        for line in stdout.lines() {
+            let trimmed = line.trim();
+            if let Some(hash_part) = trimmed.strip_prefix("SHA-1 hash:") {
+                let normalized = hash_part.replace([' ', ':', '\t'], "").to_uppercase();
+                if normalized == fingerprint_hex {
+                    return Ok(true);
+                }
+            }
+        }
+    }
 
-    Ok(found)
+    Ok(false)
 }
 
 #[cfg(target_os = "linux")]
 #[tauri::command]
 pub async fn check_cert_installed(app: tauri::AppHandle) -> Result<bool, String> {
-    let paths = CaCertPaths::new(&app).map_err(|e| e.to_string())?;
-    let dest = std::path::Path::new("/usr/local/share/ca-certificates/mycert.crt");
+    let paths = match CaCertPaths::new(&app) {
+        Ok(p) => p,
+        Err(_) => return Ok(false),
+    };
 
-    if !dest.exists() {
+    if !paths.cert_path.exists() {
         return Ok(false);
     }
 
-    let source_fp = get_cert_fingerprint(&paths.cert_path).await?;
-    let dest_fp = get_cert_fingerprint(dest).await?;
+    let der_bytes = match read_cert_der_from_file(&paths.cert_path) {
+        Ok(der) => der,
+        Err(_) => return Ok(false),
+    };
 
-    Ok(source_fp == dest_fp)
+    if check_cert_in_native_roots(&der_bytes) {
+        return Ok(true);
+    }
+
+    let dest = std::path::Path::new("/usr/local/share/ca-certificates/aresius-ca.crt");
+    if dest.exists() {
+        if let Ok(dest_der) = read_cert_der_from_file(dest) {
+            if dest_der == der_bytes {
+                return Ok(true);
+            }
+        }
+    }
+
+    Ok(false)
 }
+
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+#[tauri::command]
+pub async fn check_cert_installed(_app: tauri::AppHandle) -> Result<bool, String> {
+    Ok(false)
+}
+
+
+

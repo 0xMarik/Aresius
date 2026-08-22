@@ -6,8 +6,11 @@ mod proxy;
 mod types;
 
 use crate::app_setup::close_splashscreen;
-use crate::ares_utils::certs::certification_installation::install_cert;
+use crate::ares_utils::certs::certification_installation::{install_cert, uninstall_cert};
 use crate::ares_utils::certs::check_cert_installed::check_cert_installed;
+use crate::ares_utils::certs::{
+    get_ca_cert_path, get_ca_cert_pem, open_cert_manager, regenerate_ca_cert,
+};
 use crate::ares_utils::database::http_history::{
     delete_http_history_items, evaluate_httpql_sandbox, get_http_history, get_http_history_item,
     get_http_history_state_db, get_http_history_summaries, get_http_history_window,
@@ -139,7 +142,12 @@ pub fn run() {
             save_interceptor_settings_db,
             // Certificates
             install_cert,
+            uninstall_cert,
             check_cert_installed,
+            open_cert_manager,
+            regenerate_ca_cert,
+            get_ca_cert_path,
+            get_ca_cert_pem,
             // Projects
             create_project,
             list_projects,

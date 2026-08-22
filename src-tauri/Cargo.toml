@@ -44,3 +44,5 @@ chrono = { version = "0.4", features = ["serde"] }
 base64 = "0.22"
 diffy = "0.4"
 similar = "2.6"
+sha1 = "0.10"
+x509-parser = "0.17"
