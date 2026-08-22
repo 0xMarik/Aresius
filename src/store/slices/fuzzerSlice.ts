@@ -6,6 +6,8 @@ import { deleteProject, setcurrentProjectId } from './projectSlice';
 import { invoke } from '@tauri-apps/api/core';
 import { validateUrl } from '@/components/ValidateUrlInput';
 
+export const DEFAULT_FUZZER_RAW_REQUEST = 'GET / HTTP/1.1\r\nHost: example.com\r\n\r\n';
+
 export const defaultFuzzerState = (): FuzzerState => ({
   fuzzerSessions: [],
   activeSessionIndex: null,
@@ -66,7 +68,7 @@ export const fuzzerSlice = createSlice({
           numThreads: 1,
           delayMs: 0,
           fuzzingAttackType: FuzzingAttackType.ROTATOR,
-          rawRequest: rawRequest || 'GET / HTTP/1.1\r\n\r\n',
+          rawRequest: rawRequest || DEFAULT_FUZZER_RAW_REQUEST,
           metadata: {
             targetUrl: url,
             urlIsValid,
@@ -726,7 +728,7 @@ export const fetchFuzzerDataForProject = (projectId: string) => async (dispatch:
             numThreads: s.numThreads || 1,
             delayMs: s.delayMs || 0,
             fuzzingAttackType: (s.attackType as FuzzingAttackType) || FuzzingAttackType.ROTATOR,
-            rawRequest: s.rawRequest || 'GET / HTTP/1.1\r\n\r\n',
+            rawRequest: s.rawRequest || DEFAULT_FUZZER_RAW_REQUEST,
             pipelineScope: (s.pipelineScope as PipelineScope) || 'all',
             pipelineRules: sessionPipelineRules,
             setConnectionKeepAlive: s.setConnectionKeepAlive !== undefined && s.setConnectionKeepAlive !== null ? Boolean(s.setConnectionKeepAlive) : true,
@@ -805,7 +807,7 @@ export const fetchFuzzerDataForProject = (projectId: string) => async (dispatch:
               numThreads: configSnapshot?.numThreads || s.numThreads || 1,
               delayMs: configSnapshot?.delayMs !== undefined ? configSnapshot.delayMs : (s.delayMs || 0),
               fuzzingAttackType: configSnapshot?.fuzzingAttackType || s.attackType || 'rotator',
-              rawRequest: hasValidRawRequest ? configSnapshot.rawRequest : (s.rawRequest || 'GET / HTTP/1.1\r\n\r\n'),
+              rawRequest: hasValidRawRequest ? configSnapshot.rawRequest : (s.rawRequest || DEFAULT_FUZZER_RAW_REQUEST),
               pipelineScope: configSnapshot?.pipelineScope || s.pipelineScope || 'all',
               pipelineRules: configSnapshot?.pipelineRules || sessionPipelineRules,
               setConnectionKeepAlive: configSnapshot?.setConnectionKeepAlive !== undefined ? Boolean(configSnapshot.setConnectionKeepAlive) : (s.setConnectionKeepAlive !== undefined && s.setConnectionKeepAlive !== null ? Boolean(s.setConnectionKeepAlive) : true),

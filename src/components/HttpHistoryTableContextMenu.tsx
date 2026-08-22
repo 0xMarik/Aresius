@@ -10,7 +10,7 @@ import { Copy, Braces, Trash2, Send } from 'lucide-react';
 import { RowContextMenuContext } from './Table';
 import { useAppDispatch } from '@/hooks/redux';
 import { useProjectId } from '@/hooks/useProjectId';
-import { addFuzzSession } from '@/store/slices/fuzzerSlice';
+import { addFuzzSession, DEFAULT_FUZZER_RAW_REQUEST } from '@/store/slices/fuzzerSlice';
 import { SendToRepeaterSubmenu } from './ContextMenu/SendToReplayer';
 import { invoke } from '@tauri-apps/api/core';
 import { HttpHistory } from '@/types/http.type';
@@ -42,7 +42,7 @@ function ContextMenuSendToFuzzer({ row }: { row: any }) {
         dispatch(
             addFuzzSession({
                 name: 'From history',
-                rawRequest: rawRequest || 'GET / HTTP/1.1\r\n\r\n',
+                rawRequest: rawRequest || DEFAULT_FUZZER_RAW_REQUEST,
                 targetUrl,
                 isItFuzzerPage: false,
                 projectId,

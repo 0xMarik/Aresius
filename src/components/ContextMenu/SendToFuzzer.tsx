@@ -1,6 +1,6 @@
 import { ContextMenuItem } from '../ui/context-menu'
 import { Send } from 'lucide-react'
-import { addFuzzSession } from '@/store/slices/fuzzerSlice';
+import { addFuzzSession, DEFAULT_FUZZER_RAW_REQUEST } from '@/store/slices/fuzzerSlice';
 import { useAppDispatch } from '@/hooks/redux';
 import { useProjectId } from '@/hooks/useProjectId';
 import { invoke } from '@tauri-apps/api/core';
@@ -18,7 +18,7 @@ const SendToFuzzer = ({ rawRequest, host }: { rawRequest: string, host: string }
                 projectId,
                 name: "From history",
                 targetUrl,
-                rawRequest: rawRequest || 'GET / HTTP/1.1\r\n\r\n',
+                rawRequest: rawRequest || DEFAULT_FUZZER_RAW_REQUEST,
             });
         } catch (e) {
             console.error('Failed to create fuzzer session in DB:', e);
