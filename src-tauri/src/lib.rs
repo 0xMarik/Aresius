@@ -19,7 +19,8 @@ use crate::ares_utils::database::http_history::{
 };
 use crate::ares_utils::database::projects::create_project;
 use crate::ares_utils::database::projects_catalog::{
-    delete_project, get_default_project_dir, list_projects, select_project,
+    delete_project, get_app_state, get_default_project_dir, list_projects, save_app_state,
+    select_project,
 };
 use crate::ares_utils::database::DbState;
 use crate::commands::{cancel_replayer_request, replay_request};
@@ -157,6 +158,8 @@ pub fn run() {
             select_project,
             delete_project,
             get_default_project_dir,
+            get_app_state,
+            save_app_state,
             // HTTP History
             get_http_history,
             get_http_history_window,

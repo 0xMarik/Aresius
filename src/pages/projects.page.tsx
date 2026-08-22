@@ -47,12 +47,12 @@ import {
   Clock,
 } from "lucide-react"
 
-const APP_VERSION = "0.1.0"
 
-function getProjectSize(project: Project): string {
-  const seed = project.id.charCodeAt(0) + (project.id.length > 4 ? project.id.charCodeAt(4) : 0)
-  const kb = ((seed % 900) + 100).toFixed(0)
-  return `${kb} KB`
+/** Format raw bytes into a human-readable KB / MB string. */
+function formatSize(bytes: number): string {
+  if (bytes === 0) return "—"
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
 function DragHandle({ id }: { id: string }) {
@@ -160,15 +160,6 @@ export default function Projects() {
   }
 
   const handleDelete = async (id: string) => {
-    if (id === currentProjectId) {
-      toast.error("Cannot delete the active project. ", {
-        id: "active-project-delete-error",
-        description: "Please select or switch to another project first.",
-        position: "top-center"
-      })
-      return
-    }
-
     try {
       await invoke("delete_project", { id })
       dispatch(deleteProject(id))
@@ -288,7 +279,7 @@ export default function Projects() {
       header: "Size",
       cell: ({ row }) => (
         <div className="flex items-center gap-1.5 text-muted-foreground">
-          <span>{getProjectSize(row.original)}</span>
+          <span>{formatSize(row.original.sizeBytes)}</span>
         </div>
       ),
       size: 80,
@@ -296,12 +287,12 @@ export default function Projects() {
     {
       id: "version",
       header: "Version",
-      cell: () => (
+      cell: ({ row }) => (
         <Badge
           variant="outline"
           className="h-4.5 px-1.5 text-[10px] leading-none font-mono border-muted-foreground/30 text-muted-foreground"
         >
-          v{APP_VERSION}
+          v{row.original.version}
         </Badge>
       ),
       size: 80,
@@ -318,7 +309,7 @@ export default function Projects() {
                 size="sm"
                 variant="outline"
                 disabled
-                className="h-7 px-2.5 text-[11px] gap-1.5 border-primary/40 text-primary bg-primary/5"
+                className="h-7 px-2.5 text-[11px] gap-1.5 border-primary/40 text-primary bg-primary/5 w-24"
               >
                 <CheckCircle2 className="size-3" />
                 Selected
@@ -326,7 +317,7 @@ export default function Projects() {
             ) : (
               <Button
                 size="sm"
-                className="h-7 px-2.5 text-[11px] gap-1.5"
+                className="h-7 px-2.5 text-[11px] gap-1.5 w-24"
                 onClick={() => changeCurrentProject(info.getValue())}
               >
                 <FolderOpen className="size-3" />

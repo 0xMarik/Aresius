@@ -6,6 +6,9 @@ use crate::ares_utils::database::{
     open_project_db, projects_catalog::CatalogState, stamp_ares_file, DatabaseType,
 };
 
+/// The version stamped into every newly-created project.
+pub const PROJECT_VERSION: &str = "0.1.0";
+
 #[derive(Debug, sqlx::FromRow, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Project {
@@ -76,16 +79,17 @@ pub async fn create_project(
     // 4. Close the project pool (project is only mounted when selected)
     pool.close().await;
 
-    // 5. Register project in catalog database
+    // 5. Register project in catalog database (including version)
     let path_str = path_buf.to_string_lossy().to_string();
     sqlx::query(
-        "INSERT INTO project_catalog (id, name, path, created_at, updated_at, last_opened_at)
-         VALUES (?, ?, ?, ?, ?, NULL)
+        "INSERT INTO project_catalog (id, name, path, version, created_at, updated_at, last_opened_at)
+         VALUES (?, ?, ?, ?, ?, ?, NULL)
          ON CONFLICT(path) DO UPDATE SET updated_at = excluded.updated_at",
     )
     .bind(&id)
     .bind(&name)
     .bind(&path_str)
+    .bind(PROJECT_VERSION)
     .bind(now)
     .bind(now)
     .execute(catalog.pool())

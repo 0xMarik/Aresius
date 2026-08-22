@@ -67,12 +67,12 @@ impl DbState {
         *guard = Some((id, pool));
     }
 
-    // pub async fn close(&self) {
-    //     let mut guard = self.0.write().await;
-    //     if let Some((_, old)) = guard.take() {
-    //         old.close().await;
-    //     }
-    // }
+    pub async fn close(&self) {
+        let mut guard = self.0.write().await;
+        if let Some((_, old)) = guard.take() {
+            old.close().await;
+        }
+    }
 
     pub async fn get_active_id(&self) -> Option<String> {
         self.0.read().await.as_ref().map(|(id, _)| id.clone())

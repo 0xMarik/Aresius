@@ -9,6 +9,7 @@ import SiteMapReducer from './slices/sitemapSlice'
 import scopeReducer from './slices/scopeSlice'
 import matchReplaceReducer from './slices/matchReplaceSlice'
 import filtersReducer from './slices/filtersSlice'
+import appStateReducer from './slices/appStateSlice'
 
 import { projectDataMiddleware } from './projectDataMiddleware';
 
@@ -34,6 +35,7 @@ const store = configureStore({
     scope: scopeReducer,
     matchReplace: matchReplaceReducer,
     filters: filtersReducer,
+    appState: appStateReducer,
   },
   middleware: (getDefaultMiddleware) =>
     getDefaultMiddleware({
