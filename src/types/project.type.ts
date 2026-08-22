@@ -21,4 +21,5 @@ export interface AppState {
   sidebarCollapsed: boolean
   activeProjectId: string | null
   lastPage: string
+  fontSizeScale?: number
 }

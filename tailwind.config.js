@@ -65,9 +65,6 @@ module.exports = {
 				ring: 'hsl(var(--sidebar-ring))',
 			},
   		},
-		fontSize: {
-        	base: ['10px', '1'],
-      	},
   	}
   },
   plugins: [require("tailwindcss-animate")],

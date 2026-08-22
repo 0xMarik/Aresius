@@ -384,7 +384,7 @@ export const FiltersPage: React.FC = () => {
             <div className="flex-1 min-h-0 relative">
                 <ResizablePanelGroup direction="horizontal" autoSaveId="discovery-filters-layout">
                     {/* ── LEFT COLUMN: Filter List ── */}
-                    <ResizablePanel defaultSize={35} minSize={25} maxSize={50}>
+                    <ResizablePanel defaultSize={15} minSize={15} maxSize={50}>
                         <div className="flex flex-col h-full border-r border-border bg-card/20">
                             {/* Search box */}
                             <div className="p-2.5 border-b border-border/70 bg-card/40">
@@ -485,7 +485,7 @@ export const FiltersPage: React.FC = () => {
                     <ResizableHandle withHandle />
 
                     {/* ── RIGHT COLUMN: Filter Editor & Sandbox ── */}
-                    <ResizablePanel defaultSize={65} minSize={40}>
+                    <ResizablePanel defaultSize={85} minSize={50}>
                         {selectedFilter ? (
                             <div className="flex flex-col h-full bg-background overflow-y-auto">
                                 {/* Editor Header */}

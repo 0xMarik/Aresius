@@ -3,13 +3,18 @@ import { deleteProject, setcurrentProjectId } from './slices/projectSlice';
 import { fetchReplayerDataForProject } from './slices/replayerSlice';
 import { fetchFuzzerDataForProject } from './slices/fuzzerSlice';
 import { fetchFiltersForProject } from './slices/filtersSlice';
-import { persistAppState, setActiveProjectId } from './slices/appStateSlice';
+import {
+  persistAppState,
+  setActiveProjectId,
+  setFontSizeScale,
+  increaseFontSize,
+  decreaseFontSize,
+  resetFontSize,
+} from './slices/appStateSlice';
 
 /**
  * Middleware that intercepts project changes (setcurrentProjectId, deleteProject)
- * to perform transient state cleanup or side effects when switching or deleting projects.
- * Immediately pre-loads Replayer, Fuzzer, and Preset Filters data for the selected project into Redux.
- * Also persists the new activeProjectId to the catalog DB.
+ * and app state updates (font size / zoom) to perform side effects and persist to catalog DB.
  */
 export const projectDataMiddleware: Middleware = (store) => (next) => (action) => {
   const result = next(action);
@@ -24,12 +29,13 @@ export const projectDataMiddleware: Middleware = (store) => (next) => (action) =
       (store.dispatch as any)(fetchFiltersForProject(projectId));
     }
 
-    // Persist to DB (includes sidebar + lastPage from current state)
+    // Persist to DB (includes sidebar + lastPage + font size scale)
     const s = store.getState() as any;
     persistAppState({
       sidebarCollapsed: s.appState.sidebarCollapsed,
       activeProjectId: projectId,
       lastPage: s.appState.lastPage,
+      fontSizeScale: s.appState.fontSizeScale,
     });
   } else if (deleteProject.match(action)) {
     const s = store.getState() as any;
@@ -40,8 +46,22 @@ export const projectDataMiddleware: Middleware = (store) => (next) => (action) =
         sidebarCollapsed: s.appState.sidebarCollapsed,
         activeProjectId: null,
         lastPage: s.appState.lastPage,
+        fontSizeScale: s.appState.fontSizeScale,
       });
     }
+  } else if (
+    setFontSizeScale.match(action) ||
+    increaseFontSize.match(action) ||
+    decreaseFontSize.match(action) ||
+    resetFontSize.match(action)
+  ) {
+    const s = store.getState() as any;
+    persistAppState({
+      sidebarCollapsed: s.appState.sidebarCollapsed,
+      activeProjectId: s.appState.activeProjectId,
+      lastPage: s.appState.lastPage,
+      fontSizeScale: s.appState.fontSizeScale,
+    });
   }
   return result;
 };

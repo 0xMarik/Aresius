@@ -30,6 +30,9 @@ import {
     persistAppState,
     setLastPage,
     setSidebarCollapsed,
+    increaseFontSize,
+    decreaseFontSize,
+    resetFontSize,
 } from "./store/slices/appStateSlice";
 
 const Projects = lazy(() => import("./pages/projects.page"));
@@ -195,6 +198,67 @@ function AppInner() {
     }, [dispatch]);
 
     // ------------------------------------------------------------------
+    // Global Keyboard Shortcuts (Zoom / Font Size)
+    // ------------------------------------------------------------------
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            const isModifier = e.ctrlKey || e.metaKey;
+            if (!isModifier) return;
+
+            const isZoomIn =
+                e.key === "=" ||
+                e.key === "+" ||
+                e.key === "Add" ||
+                e.code === "Equal" ||
+                e.code === "NumpadAdd";
+
+            const isZoomOut =
+                e.key === "-" ||
+                e.key === "_" ||
+                e.key === "Subtract" ||
+                e.code === "Minus" ||
+                e.code === "NumpadSubtract";
+
+            const isZoomReset =
+                e.key === "0" ||
+                e.code === "Digit0" ||
+                e.code === "Numpad0";
+
+            if (isZoomIn) {
+                e.preventDefault();
+                e.stopPropagation();
+                dispatch(increaseFontSize(0.05));
+            } else if (isZoomOut) {
+                e.preventDefault();
+                e.stopPropagation();
+                dispatch(decreaseFontSize(0.05));
+            } else if (isZoomReset) {
+                e.preventDefault();
+                e.stopPropagation();
+                dispatch(resetFontSize());
+            }
+        };
+
+        const handleWheel = (e: WheelEvent) => {
+            if (e.ctrlKey || e.metaKey) {
+                e.preventDefault();
+                if (e.deltaY < 0) {
+                    dispatch(increaseFontSize(0.05));
+                } else if (e.deltaY > 0) {
+                    dispatch(decreaseFontSize(0.05));
+                }
+            }
+        };
+
+        window.addEventListener("keydown", handleKeyDown, { capture: true });
+        window.addEventListener("wheel", handleWheel, { passive: false });
+        return () => {
+            window.removeEventListener("keydown", handleKeyDown, { capture: true });
+            window.removeEventListener("wheel", handleWheel);
+        };
+    }, [dispatch]);
+
+    // ------------------------------------------------------------------
     // Sidebar toggle handler
     // ------------------------------------------------------------------
     const handleSidebarOpenChange = (open: boolean) => {
@@ -204,20 +268,23 @@ function AppInner() {
     };
 
     return (
-        <div className="flex flex-col h-screen h-full [&_*]:text-[12px] w-full overflow-hidden">
+        <div className="flex flex-col h-screen w-full overflow-hidden">
             <MenubarDemo />
             <div className="flex-1 min-h-0 relative">
                 <SidebarProvider
                     className="h-full min-h-0"
                     style={{
-                        "--sidebar-width": "10rem",
+                        "--sidebar-width": "11rem",
                         "--sidebar-width-icon": "3rem",
                     } as React.CSSProperties}
                     open={!sidebarCollapsed}
                     onOpenChange={handleSidebarOpenChange}
                 >
                     <AppSidebar />
-                    <SidebarInset className="min-h-0 overflow-auto flex flex-col">
+                    <SidebarInset
+                        className="min-h-0 overflow-auto flex flex-col"
+                        style={{ zoom: "var(--font-scale, 1)" } as React.CSSProperties}
+                    >
                         <Suspense fallback={null}>
                             <Routes>
                                 <Route path="/" element={<Navigate to="/projects" replace />} />

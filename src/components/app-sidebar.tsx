@@ -28,6 +28,7 @@ import { useAppSelector } from "@/hooks/redux"
 import { useProjectId } from "@/hooks/useProjectId"
 import { selectFuzzerState } from "@/store/slices/fuzzerSlice"
 import { selectReplayerState } from "@/store/slices/replayerSlice"
+import { selectInterceptor } from "@/store/slices/interceptorSlice"
 
 // This is sample data.
 const data = {
@@ -175,11 +176,25 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const projectId = useProjectId();
   const fstate = useAppSelector(selectFuzzerState(projectId));
   const rstate = useAppSelector(selectReplayerState(projectId));
+  const interceptorState = useAppSelector(selectInterceptor(projectId));
 
   const fuzzerReceivedSession = fstate.receivedSession;
   const replayerReceivedSession = rstate.receivedSession;
   const isFuzzRunning = fstate.fuzzerSessions.some((session) =>
     session.fuzzingHistory.some((h) => h.runState?.status === 'running')
+  );
+
+  const interceptorReceivedCount = interceptorState.receivedCount;
+
+  const proxyItems = React.useMemo(
+    () =>
+      data.proxy.map((item) => {
+        if (item.name === "Interceptor") {
+          return { ...item, badge: interceptorReceivedCount }
+        }
+        return item;
+      }),
+    [interceptorReceivedCount]
   );
 
   const testingItems = React.useMemo(
@@ -201,7 +216,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     <Sidebar collapsible="icon" variant="sidebar" {...props}>
       <SidebarContent>
         <NavProjects name="Discovery" items={data.discovery} />
-        <NavProjects name="Proxy" items={data.proxy} />
+        <NavProjects name="Proxy" items={proxyItems} />
         <NavProjects name="Testing" items={testingItems} />
         <NavProjects name="Workspace" items={data.workspace} />
       </SidebarContent>

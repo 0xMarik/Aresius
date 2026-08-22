@@ -40,6 +40,7 @@ interface InterceptorState {
     selectedId: string | null;
     pollIntervalMs: number;
     isPolling: boolean;
+    receivedCount: number;
 }
 
 // ─── Per-project map ────────────────────────────────────────────────────────────
@@ -57,6 +58,7 @@ const defaultInterceptorState = (): InterceptorState => ({
     selectedId: null,
     pollIntervalMs: 500,
     isPolling: true,
+    receivedCount: 0,
 });
 
 const initialState: InterceptorByProject = {};
@@ -72,6 +74,21 @@ const interceptorSlice = createSlice({
     reducers: {
         setQueue: (state, action: PayloadAction<{ items: InterceptItem[]; projectId: string }>) => {
             const bucket = getBucket(state, action.payload.projectId);
+            const isItInterceptorPage =
+                typeof window !== 'undefined' && window.location.pathname.startsWith('/interceptor');
+
+            if (isItInterceptorPage) {
+                bucket.receivedCount = 0;
+            } else {
+                const newItemsCount = action.payload.items.length;
+                const oldItemsCount = bucket.queue.length;
+                if (newItemsCount > oldItemsCount) {
+                    bucket.receivedCount += (newItemsCount - oldItemsCount);
+                } else if (newItemsCount === 0) {
+                    bucket.receivedCount = 0;
+                }
+            }
+
             bucket.queue = action.payload.items;
             if (bucket.queue.length > 0) {
                 if (!bucket.selectedId || !bucket.queue.some(i => i.id === bucket.selectedId)) {
@@ -80,6 +97,10 @@ const interceptorSlice = createSlice({
             } else {
                 bucket.selectedId = null;
             }
+        },
+        resetInterceptorReceivedCount: (state, action: PayloadAction<string>) => {
+            const bucket = getBucket(state, action.payload);
+            bucket.receivedCount = 0;
         },
         setSettings: (state, action: PayloadAction<{ settings: InterceptSettings; projectId: string }>) => {
             getBucket(state, action.payload.projectId).settings = action.payload.settings;
@@ -112,6 +133,7 @@ const interceptorSlice = createSlice({
             const bucket = getBucket(state, action.payload);
             bucket.queue = [];
             bucket.selectedId = null;
+            bucket.receivedCount = 0;
         },
     },
     extraReducers: (builder) => {
@@ -123,6 +145,7 @@ const interceptorSlice = createSlice({
 
 export const {
     setQueue,
+    resetInterceptorReceivedCount,
     setSettings,
     toggleRequestsIntercept,
     toggleResponsesIntercept,

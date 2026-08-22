@@ -43,6 +43,7 @@ import {
     setSelectedId,
     removeQueueItem,
     clearQueue,
+    resetInterceptorReceivedCount,
     selectInterceptor,
     InterceptItem,
 } from '@/store/slices/interceptorSlice';
@@ -208,6 +209,12 @@ const InterceptorPage: React.FC = () => {
     const selectedId = interceptorState.selectedId;
     const activeScope = useAppSelector(selectActiveScope(projectId));
     const { updateSettings } = useInterceptSettings();
+
+    useEffect(() => {
+        if (projectId) {
+            dispatch(resetInterceptorReceivedCount(projectId));
+        }
+    }, [dispatch, projectId]);
 
     // const [activeTab, setActiveTab] = useState<'requests' | 'responses'>('requests');
     const [actionLoading, setActionLoading] = useState<boolean>(false);

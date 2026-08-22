@@ -5,7 +5,6 @@ import {
     MenubarItem,
     MenubarMenu,
     MenubarSeparator,
-    MenubarShortcut,
     MenubarSub,
     MenubarSubContent,
     MenubarSubTrigger,
@@ -30,7 +29,6 @@ import {
     FolderOpen,
     Library,
     Clock,
-    Save,
     Shield,
     Upload,
     Download,
@@ -41,6 +39,9 @@ import {
     Bug,
     Info,
     Loader2,
+    ZoomIn,
+    ZoomOut,
+    Type,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
@@ -63,6 +64,14 @@ import { selectAllScopes, selectActiveScope, selectActiveScopeId, setActiveScope
 import { addProject, setcurrentProjectId, updateProject } from "@/store/slices/projectSlice"
 import { fetchSitemapStateForProject, setSiteMapBulk } from "@/store/slices/sitemapSlice"
 import { fetchMatchReplaceDataForProject } from "@/store/slices/matchReplaceSlice"
+import {
+    setFontSizeScale,
+    increaseFontSize,
+    decreaseFontSize,
+    resetFontSize,
+} from "@/store/slices/appStateSlice"
+import { isMac } from "@/lib/platform"
+import { Kbd, KbdGroup } from "@/components/ui/kbd"
 import { Project } from "@/types/project.type"
 import { HttpHistorySummaryRow } from "@/types/http.type"
 import { cn } from "@/lib/utils"
@@ -173,6 +182,8 @@ export default function MenubarDemo() {
 
     // Scope state
     const dispatch = useAppDispatch()
+    const fontSizeScale = useAppSelector((state) => state.appState.fontSizeScale ?? 1.0)
+    const zoomPercent = Math.round(fontSizeScale * 100)
     const projectId = useProjectId()
     const allScopes = useAppSelector(selectAllScopes(projectId))
     const activeScope = useAppSelector(selectActiveScope(projectId))
@@ -392,10 +403,16 @@ export default function MenubarDemo() {
                     <MenubarTrigger>File</MenubarTrigger>
                     <MenubarContent>
                         <MenubarGroup>
-                            <MenubarItem onClick={handleOpenProjectFile} className="gap-2">
-                                <FolderOpen className="h-3.5 w-3.5 text-muted-foreground" />
-                                <span>Open Project (.ares)</span>
-                                <MenubarShortcut>⌘O</MenubarShortcut>
+                            <MenubarItem onClick={handleOpenProjectFile} className="gap-2 justify-between">
+                                <span className="flex items-center gap-2">
+                                    <FolderOpen className="h-3.5 w-3.5 text-muted-foreground" />
+                                    <span>Open Project (.ares)</span>
+                                </span>
+                                <KbdGroup>
+                                    <Kbd>{isMac ? "⌘" : "Ctrl"}</Kbd>
+                                    {!isMac && <span>+</span>}
+                                    <Kbd>O</Kbd>
+                                </KbdGroup>
                             </MenubarItem>
                             <MenubarItem onClick={() => navigate("/projects")} className="gap-2">
                                 <Library className="h-3.5 w-3.5 text-muted-foreground" />
@@ -438,13 +455,7 @@ export default function MenubarDemo() {
                                 </MenubarSubContent>
                             </MenubarSub>
                         </MenubarGroup>
-                        <MenubarSeparator />
-                        <MenubarGroup>
-                            <MenubarItem className="gap-2" onClick={() => navigate("/projects")}>
-                                <Save className="h-3.5 w-3.5 text-muted-foreground" />
-                                <span>Manage Projects</span>
-                            </MenubarItem>
-                        </MenubarGroup>
+
                     </MenubarContent>
 
                 </MenubarMenu>
@@ -453,7 +464,73 @@ export default function MenubarDemo() {
                 {/* ── View Menu ── */}
                 <MenubarMenu>
                     <MenubarTrigger>View</MenubarTrigger>
-                    <MenubarContent className="w-52">
+                    <MenubarContent className="w-56">
+                        <MenubarGroup>
+                            <MenubarItem onClick={() => dispatch(increaseFontSize(0.05))} className="gap-2 justify-between">
+                                <span className="flex items-center gap-2">
+                                    <ZoomIn className="h-3.5 w-3.5 text-muted-foreground" />
+                                    Zoom In
+                                </span>
+                                <KbdGroup>
+                                    <Kbd>{isMac ? "⌘" : "Ctrl"}</Kbd>
+                                    {!isMac && <span>+</span>}
+                                    <Kbd>+</Kbd>
+                                </KbdGroup>
+                            </MenubarItem>
+                            <MenubarItem onClick={() => dispatch(decreaseFontSize(0.05))} className="gap-2 justify-between">
+                                <span className="flex items-center gap-2">
+                                    <ZoomOut className="h-3.5 w-3.5 text-muted-foreground" />
+                                    Zoom Out
+                                </span>
+                                <KbdGroup>
+                                    <Kbd>{isMac ? "⌘" : "Ctrl"}</Kbd>
+                                    {!isMac && <span>+</span>}
+                                    <Kbd>-</Kbd>
+                                </KbdGroup>
+                            </MenubarItem>
+                            <MenubarItem onClick={() => dispatch(resetFontSize())} className="gap-2 justify-between">
+                                <span className="flex items-center gap-2">
+                                    <RotateCcw className="h-3.5 w-3.5 text-muted-foreground" />
+                                    Actual Size ({zoomPercent}%)
+                                </span>
+                                <KbdGroup>
+                                    <Kbd>{isMac ? "⌘" : "Ctrl"}</Kbd>
+                                    {!isMac && <span>+</span>}
+                                    <Kbd>0</Kbd>
+                                </KbdGroup>
+                            </MenubarItem>
+                        </MenubarGroup>
+                        <MenubarSeparator />
+                        <MenubarGroup>
+                            <MenubarSub>
+                                <MenubarSubTrigger className="gap-2">
+                                    <Type className="h-4 w-4 text-muted-foreground" />
+                                    Font Size Scale
+                                </MenubarSubTrigger>
+                                <MenubarSubContent className="w-44">
+                                    {[
+                                        { label: "Small (85%)", value: 0.85 },
+                                        { label: "Default (100%)", value: 1.00 },
+                                        { label: "Medium (115%)", value: 1.15 },
+                                        { label: "Large (130%)", value: 1.30 },
+                                        { label: "Extra Large (150%)", value: 1.50 },
+                                    ].map((preset) => {
+                                        const isSelected = Math.abs(fontSizeScale - preset.value) < 0.03
+                                        return (
+                                            <MenubarItem
+                                                key={preset.value}
+                                                onClick={() => dispatch(setFontSizeScale(preset.value))}
+                                                className="flex items-center justify-between"
+                                            >
+                                                <span>{preset.label}</span>
+                                                {isSelected && <Check className="h-3.5 w-3.5 text-primary" />}
+                                            </MenubarItem>
+                                        )
+                                    })}
+                                </MenubarSubContent>
+                            </MenubarSub>
+                        </MenubarGroup>
+                        <MenubarSeparator />
                         <MenubarGroup>
                             <MenubarSub>
                                 <MenubarSubTrigger className="gap-2">
@@ -502,7 +579,9 @@ export default function MenubarDemo() {
                                     )}
                                     {isFullscreen ? "Exit Fullscreen" : "Toggle Fullscreen"}
                                 </span>
-                                <MenubarShortcut>F11</MenubarShortcut>
+                                <KbdGroup>
+                                    <Kbd>F11</Kbd>
+                                </KbdGroup>
                             </MenubarItem>
                         </MenubarGroup>
 

@@ -70,8 +70,17 @@ export function NavProjects({ name, items, defaultOpen = true }: NavProjectsProp
               return (
                 <SidebarMenuItem key={item.name} className="relative">
                   {/* Collapsed-mode dot — absolutely positioned on the li, icon stays unwrapped */}
-                  {item.isRunning && isCollapsed && (
+                  {item.isRunning && isCollapsed && !item.badge && (
                     <RunningDot className="pointer-events-none absolute top-1 right-1 z-10" />
+                  )}
+                  {/* Collapsed-mode badge counter */}
+                  {!!item.badge && item.badge > 0 && isCollapsed && (
+                    <span
+                      className="pointer-events-none absolute -top-0.5 -right-0.5 z-20 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-sidebar-primary px-0.5 text-[8.5px] font-semibold leading-none text-sidebar-primary-foreground shadow-sm ring-1 ring-sidebar"
+                      aria-label={`${item.badge} new`}
+                    >
+                      {item.badge > 99 ? "99+" : item.badge}
+                    </span>
                   )}
                   <SidebarMenuButton asChild isActive={isActive} tooltip={item.name}>
                     <Link

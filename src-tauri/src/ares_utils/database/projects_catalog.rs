@@ -37,6 +37,7 @@ pub struct AppState {
     pub sidebar_collapsed: bool,
     pub active_project_id: Option<String>,
     pub last_page: String,
+    pub font_size_scale: Option<f64>,
 }
 
 // ---------------------------------------------------------------------------
@@ -539,7 +540,7 @@ pub async fn get_app_state(
 ) -> Result<AppState, String> {
     // Read all rows at once.
     let rows: Vec<(String, Option<String>)> =
-        sqlx::query_as("SELECT key, value FROM app_state WHERE key IN ('sidebar_collapsed', 'active_project_id', 'last_page')")
+        sqlx::query_as("SELECT key, value FROM app_state WHERE key IN ('sidebar_collapsed', 'active_project_id', 'last_page', 'font_size_scale')")
             .fetch_all(catalog.pool())
             .await
             .map_err(|e| e.to_string())?;
@@ -547,6 +548,7 @@ pub async fn get_app_state(
     let mut sidebar_collapsed = false;
     let mut active_project_id: Option<String> = None;
     let mut last_page = "/projects".to_string();
+    let mut font_size_scale: Option<f64> = None;
 
     for (key, value) in rows {
         match key.as_str() {
@@ -563,6 +565,11 @@ pub async fn get_app_state(
                     }
                 }
             }
+            "font_size_scale" => {
+                if let Some(v) = value {
+                    font_size_scale = v.parse::<f64>().ok();
+                }
+            }
             _ => {}
         }
     }
@@ -571,6 +578,7 @@ pub async fn get_app_state(
         sidebar_collapsed,
         active_project_id,
         last_page,
+        font_size_scale,
     })
 }
 
@@ -611,6 +619,18 @@ pub async fn save_app_state(
     .execute(catalog.pool())
     .await
     .map_err(|e| e.to_string())?;
+
+    if let Some(scale) = state.font_size_scale {
+        sqlx::query(
+            "INSERT INTO app_state (key, value) VALUES (?, ?)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        )
+        .bind("font_size_scale")
+        .bind(scale.to_string())
+        .execute(catalog.pool())
+        .await
+        .map_err(|e| e.to_string())?;
+    }
 
     Ok(())
 }

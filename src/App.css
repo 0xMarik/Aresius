@@ -2,9 +2,12 @@
 @tailwind components;
 @tailwind utilities;
 
-
 @layer base {
   :root {
+    --font-scale: 1;
+    --base-font-size: 14px;
+    --root-font-size: calc(var(--base-font-size) * var(--font-scale, 1));
+
     --background: 36 33% 96%;          /* #FAF7F2 */
     --foreground: 150 8% 12%;          /* #1B211E */
 
@@ -101,6 +104,9 @@
     scrollbar-width: thin;
     scrollbar-color: hsl(var(--muted-foreground) / 0.3) transparent;
   }
+  html {
+    font-size: var(--root-font-size);
+  }
   html,
   body,
   #root {
@@ -112,6 +118,11 @@
   }
   body {
     @apply bg-background text-foreground;
+  }
+
+  /* CodeMirror editor dynamic font scaling */
+  .cm-editor {
+    font-size: calc(12px * var(--font-scale, 1)) !important;
   }
 
   /* Code-editor style custom scrollbar */
