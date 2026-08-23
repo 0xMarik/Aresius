@@ -43,6 +43,7 @@ import {
     ZoomOut,
     Type,
     Settings,
+    Radio,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
@@ -61,6 +62,7 @@ import { open } from "@tauri-apps/plugin-shell"
 import { useTheme } from "./theme-provider"
 import { useAppDispatch, useAppSelector } from "@/hooks/redux"
 import { useProjectId } from "@/hooks/useProjectId"
+import { useProxyStatus } from "@/hooks/useProxyStatus"
 import { selectAllScopes, selectActiveScope, selectActiveScopeId, setActiveScope, fetchScopeDataForProject } from "@/store/slices/scopeSlice"
 import { addProject, setcurrentProjectId, updateProject } from "@/store/slices/projectSlice"
 import { fetchSitemapStateForProject, setSiteMapBulk } from "@/store/slices/sitemapSlice"
@@ -176,6 +178,12 @@ export default function MenubarDemo() {
         }
     }
 
+    // Proxy state
+    const { status: proxyStatus, setStatus: setProxyStatus } = useProxyStatus()
+    const [proxyDropdownOpen, setProxyDropdownOpen] = useState(false)
+    const proxyDropdownRef = useRef<HTMLDivElement>(null)
+    const [isRestartingProxy, setIsRestartingProxy] = useState(false)
+
     // Project state
     const { projects, currentProjectId } = useAppSelector((state) => state.workspacestate)
     const activeProject = useMemo(() => projects.find((p) => p.id === currentProjectId) || null, [projects, currentProjectId])
@@ -195,7 +203,7 @@ export default function MenubarDemo() {
 
     // Close dropdowns on outside click
     useEffect(() => {
-        if (!scopeDropdownOpen && !projectDropdownOpen) return
+        if (!scopeDropdownOpen && !projectDropdownOpen && !proxyDropdownOpen) return
         const handler = (e: MouseEvent) => {
             if (scopeDropdownRef.current && !scopeDropdownRef.current.contains(e.target as Node)) {
                 setScopeDropdownOpen(false)
@@ -203,10 +211,53 @@ export default function MenubarDemo() {
             if (projectDropdownRef.current && !projectDropdownRef.current.contains(e.target as Node)) {
                 setProjectDropdownOpen(false)
             }
+            if (proxyDropdownRef.current && !proxyDropdownRef.current.contains(e.target as Node)) {
+                setProxyDropdownOpen(false)
+            }
         }
         document.addEventListener("mousedown", handler)
         return () => document.removeEventListener("mousedown", handler)
-    }, [scopeDropdownOpen, projectDropdownOpen])
+    }, [scopeDropdownOpen, projectDropdownOpen, proxyDropdownOpen])
+
+    const handleCopyProxySocket = async (e?: React.MouseEvent) => {
+        if (e) e.stopPropagation()
+        if (!proxyStatus.boundAddress) return
+        try {
+            if (navigator.clipboard?.writeText) {
+                await navigator.clipboard.writeText(proxyStatus.boundAddress)
+            } else {
+                const textarea = document.createElement("textarea")
+                textarea.value = proxyStatus.boundAddress
+                textarea.style.position = "fixed"
+                textarea.style.opacity = "0"
+                document.body.appendChild(textarea)
+                textarea.select()
+                document.execCommand("copy")
+                document.body.removeChild(textarea)
+            }
+            toast.success(`Copied proxy socket ${proxyStatus.boundAddress} to clipboard`)
+        } catch {
+            toast.error("Failed to copy proxy address")
+        }
+    }
+
+    const handleRestartProxy = async () => {
+        setIsRestartingProxy(true)
+        try {
+            const newStatus = await invoke<import("@/types/proxySettings.type").ProxyStatus>("restart_proxy_listener")
+            setProxyStatus(newStatus)
+            if (newStatus.fallbackApplied) {
+                toast.warning(`Proxy active with fallback on ${newStatus.boundAddress}`)
+            } else {
+                toast.success(`Proxy listening on ${newStatus.boundAddress}`)
+            }
+        } catch (err) {
+            const msg = typeof err === "string" ? err : "Failed to restart proxy listener"
+            toast.error(msg)
+        } finally {
+            setIsRestartingProxy(false)
+        }
+    }
 
     const handleSwitchProject = async (id: string) => {
         setProjectDropdownOpen(false)
@@ -682,8 +733,166 @@ export default function MenubarDemo() {
                 </MenubarMenu>
             </Menubar>
 
-            {/* ── Project & Scope Switchers ── */}
+            {/* ── Project, Proxy & Scope Switchers ── */}
             <div className="ml-auto flex items-center shrink-0 gap-1.5 mr-2">
+                {/* ── Proxy Socket Indicator & Dropdown ── */}
+                <div className="relative" ref={proxyDropdownRef}>
+                    <button
+                        type="button"
+                        onClick={() => {
+                            setProxyDropdownOpen((v) => !v)
+                            setProjectDropdownOpen(false)
+                            setScopeDropdownOpen(false)
+                        }}
+                        className={cn(
+                            "flex items-center gap-1.5 h-6 px-2 rounded-md border text-[11px] font-medium transition-all select-none",
+                            proxyStatus.isRunning
+                                ? proxyStatus.fallbackApplied
+                                    ? "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20"
+                                    : "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20"
+                                : "border-destructive/30 bg-destructive/10 text-destructive hover:bg-destructive/15"
+                        )}
+                        title={
+                            proxyStatus.isRunning
+                                ? `Proxy Active: ${proxyStatus.boundAddress}${proxyStatus.fallbackApplied ? " (Fallback active)" : ""}`
+                                : "Proxy Offline"
+                        }
+                    >
+                        {proxyStatus.isRunning ? (
+                            <span className="relative flex h-2 w-2 shrink-0">
+                                {proxyStatus.fallbackApplied ? (
+                                    <span className="h-2 w-2 rounded-full bg-amber-500" />
+                                ) : (
+                                    <>
+                                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                                        <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+                                    </>
+                                )}
+                            </span>
+                        ) : (
+                            <span className="h-2 w-2 rounded-full shrink-0 bg-destructive" />
+                        )}
+
+                        <span className="font-mono text-[10.5px] tracking-tight">
+                            {proxyStatus.isRunning && proxyStatus.boundAddress
+                                ? proxyStatus.boundAddress
+                                : "Proxy Off"}
+                        </span>
+                        <ChevronDown className="w-2.5 h-2.5 opacity-60 shrink-0" />
+                    </button>
+
+                    {/* Proxy dropdown */}
+                    {proxyDropdownOpen && (
+                        <div className="absolute top-full right-0 mt-1 z-50 w-64 rounded-md border border-border bg-popover shadow-xl py-1 text-[11px] divide-y divide-border/30">
+                            <div className="px-3 py-2">
+                                <div className="flex items-center justify-between">
+                                    <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground select-none">
+                                        Proxy Listener
+                                    </span>
+                                    <span
+                                        className={cn(
+                                            "inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9.5px] font-medium",
+                                            proxyStatus.isRunning
+                                                ? proxyStatus.fallbackApplied
+                                                    ? "bg-amber-500/15 text-amber-500"
+                                                    : "bg-emerald-500/15 text-emerald-500"
+                                                : "bg-destructive/15 text-destructive"
+                                        )}
+                                    >
+                                        <span
+                                            className={cn(
+                                                "w-1.5 h-1.5 rounded-full",
+                                                proxyStatus.isRunning
+                                                    ? proxyStatus.fallbackApplied
+                                                        ? "bg-amber-500"
+                                                        : "bg-emerald-500"
+                                                    : "bg-destructive"
+                                            )}
+                                        />
+                                        {proxyStatus.isRunning
+                                            ? proxyStatus.fallbackApplied
+                                                ? "Fallback Port"
+                                                : "Listening"
+                                            : "Offline"}
+                                    </span>
+                                </div>
+
+                                {proxyStatus.isRunning && proxyStatus.boundAddress ? (
+                                    <div className="mt-2 flex items-center justify-between rounded bg-muted/50 p-1.5 border border-border/40">
+                                        <div className="min-w-0 pr-2">
+                                            <div className="text-[9.5px] text-muted-foreground">Socket Address</div>
+                                            <div className="font-mono text-xs font-semibold text-foreground truncate">
+                                                {proxyStatus.boundAddress}
+                                            </div>
+                                        </div>
+                                        <Button
+                                            type="button"
+                                            variant="ghost"
+                                            size="sm"
+                                            className="h-6 px-2 text-[10px] gap-1 shrink-0"
+                                            onClick={handleCopyProxySocket}
+                                        >
+                                            <ClipboardCopy className="w-3 h-3" />
+                                            Copy
+                                        </Button>
+                                    </div>
+                                ) : (
+                                    <div className="mt-2 text-xs text-destructive">
+                                        {proxyStatus.lastError || "Proxy server is not running"}
+                                    </div>
+                                )}
+
+                                {proxyStatus.fallbackApplied && (
+                                    <div className="mt-1.5 text-[10px] text-amber-500/90 leading-tight">
+                                        Requested {proxyStatus.requestedAddress} was busy; fell back to {proxyStatus.boundAddress}.
+                                    </div>
+                                )}
+                            </div>
+
+                            <div className="p-1">
+                                {proxyStatus.boundAddress && (
+                                    <button
+                                        type="button"
+                                        onClick={handleCopyProxySocket}
+                                        className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-accent rounded transition-colors"
+                                    >
+                                        <ClipboardCopy className="w-3.5 h-3.5 text-primary" />
+                                        <span>Copy Socket Address</span>
+                                    </button>
+                                )}
+
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setProxyDropdownOpen(false)
+                                        navigate("/settings")
+                                    }}
+                                    className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-accent rounded transition-colors"
+                                >
+                                    <Settings className="w-3.5 h-3.5 text-primary" />
+                                    <span>Proxy Settings...</span>
+                                </button>
+
+                                {!proxyStatus.isRunning && (
+                                    <button
+                                        type="button"
+                                        disabled={isRestartingProxy}
+                                        onClick={handleRestartProxy}
+                                        className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-primary hover:bg-accent rounded transition-colors"
+                                    >
+                                        {isRestartingProxy ? (
+                                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                        ) : (
+                                            <RotateCcw className="w-3.5 h-3.5" />
+                                        )}
+                                        <span>{isRestartingProxy ? "Starting..." : "Start Proxy Listener"}</span>
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+                    )}
+                </div>
+
                 {/* ── Project Dropdown Switcher ── */}
                 <div className="relative" ref={projectDropdownRef}>
                     <button
@@ -691,6 +900,7 @@ export default function MenubarDemo() {
                         onClick={() => {
                             setProjectDropdownOpen((v) => !v)
                             setScopeDropdownOpen(false)
+                            setProxyDropdownOpen(false)
                         }}
                         className={cn(
                             "flex items-center gap-1.5 h-6 px-2 rounded-md border text-[11px] font-medium transition-all select-none",
@@ -774,6 +984,7 @@ export default function MenubarDemo() {
                         onClick={() => {
                             setScopeDropdownOpen((v) => !v)
                             setProjectDropdownOpen(false)
+                            setProxyDropdownOpen(false)
                         }}
                         className={cn(
                             "flex items-center gap-1.5 h-6 px-2 rounded-md border text-[11px] font-medium transition-all select-none",
