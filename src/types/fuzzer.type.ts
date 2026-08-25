@@ -16,6 +16,11 @@ export interface FuzzerRequest {
     errorMessage?: string;
     connectionDropped?: boolean;
     workerId?: number;
+    statusCode?: number;
+    responseLength?: number;
+    responseTimeMs?: number;
+    chunkId?: number;
+    chunkIndex?: number;
 }
 
 export type FuzzRunStatus = 'idle' | 'running' | 'completed' | 'cancelled' | 'connection_dropped';

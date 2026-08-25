@@ -79,7 +79,6 @@ pub struct FuzzerRequestDb {
     pub run_id: String,
     pub worker_id: Option<i64>,
     pub payload: Option<String>,
-    pub raw_response: Option<String>,
     pub status_code: Option<i64>,
     pub response_length: Option<i64>,
     pub response_time_ms: Option<i64>,
@@ -88,6 +87,18 @@ pub struct FuzzerRequestDb {
     pub error_message: Option<String>,
     pub connection_dropped: bool,
     pub sort_order: i64,
+    pub chunk_id: Option<i64>,
+    pub chunk_index: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct FuzzerChunkDb {
+    pub id: i64,
+    pub run_id: String,
+    pub compressed_data: Vec<u8>,
+    pub uncompressed_bytes: i64,
+    pub item_count: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -804,37 +815,111 @@ pub async fn batch_insert_fuzzer_requests(
     Ok(())
 }
 
+#[derive(Debug, Clone)]
+pub struct FuzzerCompletedItemMeta {
+    pub id: String,
+    pub status_code: Option<i64>,
+    pub response_length: i64,
+    pub response_time_ms: i64,
+    pub worker_id: Option<u32>,
+}
+
+/// Insert a compressed response chunk into `fuzzer_chunks` and update the requests in a single transaction
+pub async fn insert_fuzzer_chunk_and_update_requests(
+    pool: &SqlitePool,
+    run_id: &str,
+    compressed_data: &[u8],
+    uncompressed_bytes: i64,
+    items: &[FuzzerCompletedItemMeta],
+) -> Result<i64, String> {
+    if items.is_empty() {
+        return Ok(0);
+    }
+
+    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+
+    let chunk_id = sqlx::query(
+        "INSERT INTO fuzzer_chunks (run_id, compressed_data, uncompressed_bytes, item_count)
+         VALUES (?, ?, ?, ?)"
+    )
+    .bind(run_id)
+    .bind(compressed_data)
+    .bind(uncompressed_bytes)
+    .bind(items.len() as i64)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| e.to_string())?
+    .last_insert_rowid();
+
+    for (idx, item) in items.iter().enumerate() {
+        sqlx::query(
+            "UPDATE fuzzer_requests
+             SET status_code = ?,
+                 response_length = ?,
+                 response_time_ms = ?,
+                 status = 'completed',
+                 error_message = NULL,
+                 connection_dropped = 0,
+                 chunk_id = ?,
+                 chunk_index = ?,
+                 worker_id = COALESCE(?, worker_id)
+             WHERE run_id = ? AND id = ?"
+        )
+        .bind(item.status_code)
+        .bind(item.response_length)
+        .bind(item.response_time_ms)
+        .bind(chunk_id)
+        .bind(idx as i64)
+        .bind(item.worker_id.map(|w| w as i64))
+        .bind(run_id)
+        .bind(&item.id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+    }
+
+    tx.commit().await.map_err(|e| e.to_string())?;
+    Ok(chunk_id)
+}
+
+/// Fetch the raw compressed blob for a chunk from `fuzzer_chunks`
+pub async fn fetch_fuzzer_chunk_blob(
+    pool: &SqlitePool,
+    chunk_id: i64,
+) -> Result<Option<Vec<u8>>, String> {
+    let blob: Option<Vec<u8>> = sqlx::query_scalar(
+        "SELECT compressed_data FROM fuzzer_chunks WHERE id = ?"
+    )
+    .bind(chunk_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    Ok(blob)
+}
+
 /// Update a single completed fuzzer request in SQLite
-pub async fn update_fuzzer_request_completed(
+pub async fn update_fuzzer_request_completed_single(
     pool: &SqlitePool,
     run_id: &str,
     request_id: &str,
-    req_res: &ReqRes,
+    raw_response: &str,
+    worker_id: Option<u32>,
+    response_time_ms: u128,
 ) -> Result<(), String> {
-    let status_code = parse_status_code(&req_res.response);
-    let response_len = req_res.response.len() as i64;
-    let resp_time = req_res.response_time as i64;
+    let status_code = parse_status_code(raw_response);
+    let response_len = raw_response.len() as i64;
+    let resp_time = response_time_ms as i64;
 
-    sqlx::query(
-        "UPDATE fuzzer_requests
-         SET raw_response = ?,
-             status_code = ?,
-             response_length = ?,
-             response_time_ms = ?,
-             status = 'completed',
-             error_message = NULL,
-             connection_dropped = 0
-         WHERE run_id = ? AND id = ?",
-    )
-    .bind(&req_res.response)
-    .bind(status_code)
-    .bind(response_len)
-    .bind(resp_time)
-    .bind(run_id)
-    .bind(request_id)
-    .execute(pool)
-    .await
-    .map_err(|e| e.to_string())?;
+    let compressed = crate::fuzzer::chunk_manager::compress_chunk(&[raw_response.to_string()])?;
+    let items = [FuzzerCompletedItemMeta {
+        id: request_id.to_string(),
+        status_code,
+        response_length: response_len,
+        response_time_ms: resp_time,
+        worker_id,
+    }];
+    insert_fuzzer_chunk_and_update_requests(pool, run_id, &compressed, raw_response.len() as i64, &items).await?;
 
     Ok(())
 }

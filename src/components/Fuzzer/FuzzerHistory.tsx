@@ -130,11 +130,11 @@ export function enrichFuzzerRow(
 ): EnrichedFuzzerRow {
     const rawReqStr = row.rawRequest ?? '';
     const rawRespStr = row.response?.rawResponse ?? (row.response as any)?.response ?? '';
-    const respTime = row.response?.responseTime ?? (row.response as any)?.responseTime ?? (row.response as any)?.response_time ?? 0;
+    const respTime = row.responseTimeMs ?? row.response?.responseTime ?? (row.response as any)?.responseTime ?? (row.response as any)?.response_time;
 
-    const normalizedResponse = (row.response || rawRespStr) ? {
+    const normalizedResponse = (row.response || rawRespStr || respTime !== undefined) ? {
         rawResponse: rawRespStr,
-        responseTime: Number(respTime),
+        responseTime: respTime !== undefined ? Number(respTime) : 0,
     } : null;
 
     const parsedRequest = parseRequest(rawReqStr || fuzzConfigSnapshot?.rawRequest || '');
@@ -154,13 +154,16 @@ export function enrichFuzzerRow(
             ? (payloadValues[0]?.value ?? '')
             : payloadValues.map((p) => p.value).join(',  '));
 
+    const statusCode = row.statusCode ?? parsedResponse?.statusCode;
+    const contentLength = row.responseLength ?? rawRespStr.length;
+
     return {
         ...row,
         response: normalizedResponse,
         parsedRequest,
         parsedResponse,
-        contentLength: rawRespStr.length,
-        statusCode: parsedResponse?.statusCode,
+        contentLength,
+        statusCode,
         targetUrl: fuzzConfigSnapshot?.metadata?.targetUrl ?? '',
         payloadValues,
         payloadPreview,
@@ -253,24 +256,24 @@ export const fuzzerColumns: ColumnDef<EnrichedFuzzerRow, any>[] = [
             return <span className={`text-[12px] font-semibold ${codeColor(value, selected)}`}>{value ?? '—'}</span>;
         },
     }),
-    columnHelper.accessor((row) => row.response?.responseTime, {
+    columnHelper.accessor((row) => row.responseTimeMs ?? row.response?.responseTime, {
         id: 'duration',
         header: 'Duration',
         size: 84,
         cell: (info) => {
             const selected = isRowSelected(info);
             const value = info.getValue();
-            return <span className={`text-[12px] tabular-nums ${selected ? 'text-primary-foreground/80' : 'text-muted-foreground'}`}>{value !== undefined ? `${value}ms` : '—'}</span>;
+            return <span className={`text-[12px] tabular-nums ${selected ? 'text-primary-foreground/80' : 'text-muted-foreground'}`}>{value !== undefined && value !== null ? `${value}ms` : '—'}</span>;
         },
     }),
-    columnHelper.accessor('contentLength', {
+    columnHelper.accessor((row) => row.responseLength ?? row.contentLength, {
         id: 'length',
         header: 'Length',
         size: 84,
         cell: (info) => {
             const selected = isRowSelected(info);
             const value = info.getValue();
-            return <span className={`text-[12px] tabular-nums ${selected ? 'text-primary-foreground/80' : 'text-muted-foreground'}`}>{value > 0 ? `${value}B` : '—'}</span>;
+            return <span className={`text-[12px] tabular-nums ${selected ? 'text-primary-foreground/80' : 'text-muted-foreground'}`}>{value !== undefined && value > 0 ? `${value}B` : '—'}</span>;
         },
     }),
     columnHelper.accessor('requestDate', {
@@ -460,12 +463,12 @@ function FuzzerHistoryBody({
         }
 
         const foundInWindow = enrichedRows.find((r) => r.id === focusedId);
-        if (foundInWindow && foundInWindow.rawRequest) {
+        if (foundInWindow && foundInWindow.rawRequest && (foundInWindow.response?.rawResponse || foundInWindow.status !== 'completed')) {
             setFetchedFocusedResult(foundInWindow);
             return;
         }
 
-        if (fetchedFocusedResult && fetchedFocusedResult.id === focusedId && fetchedFocusedResult.rawRequest) {
+        if (fetchedFocusedResult && fetchedFocusedResult.id === focusedId && fetchedFocusedResult.rawRequest && (fetchedFocusedResult.response?.rawResponse || fetchedFocusedResult.status !== 'completed')) {
             return;
         }
 
@@ -664,7 +667,7 @@ function FuzzerHistoryBody({
                                                     )}
                                                 </div>
                                             ) : (
-                                                <CodeMirrorEditor value={focusedResult.response?.rawResponse || 'No response available'} />
+                                                <CodeMirrorEditor value={focusedResult.response?.rawResponse || (focusedResult.response as any)?.response || 'No response available'} />
                                             )}
                                         </div>
                                     </div>

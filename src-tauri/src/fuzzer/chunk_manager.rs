@@ -1,0 +1,140 @@
+use std::collections::{HashMap, VecDeque};
+use std::sync::{Arc, Mutex, OnceLock};
+
+/// Compresses a slice of raw response strings using Zstandard (level 3).
+pub fn compress_chunk(responses: &[String]) -> Result<Vec<u8>, String> {
+    let serialized = serde_json::to_vec(responses).map_err(|e| e.to_string())?;
+    zstd::encode_all(serialized.as_slice(), 3).map_err(|e| e.to_string())
+}
+
+/// Decompresses a Zstandard-compressed blob back into response strings.
+pub fn decompress_chunk(compressed_data: &[u8]) -> Result<Vec<String>, String> {
+    let decompressed = zstd::decode_all(compressed_data).map_err(|e| e.to_string())?;
+    serde_json::from_slice(&decompressed).map_err(|e| e.to_string())
+}
+
+/// In-memory LRU cache for decompressed response chunks.
+pub struct ChunkCache {
+    capacity: usize,
+    order: VecDeque<i64>,
+    entries: HashMap<i64, Arc<Vec<String>>>,
+}
+
+impl ChunkCache {
+    pub fn new(capacity: usize) -> Self {
+        Self {
+            capacity,
+            order: VecDeque::with_capacity(capacity),
+            entries: HashMap::with_capacity(capacity),
+        }
+    }
+
+    pub fn get(&mut self, chunk_id: i64) -> Option<Arc<Vec<String>>> {
+        if let Some(entry) = self.entries.get(&chunk_id).cloned() {
+            if let Some(pos) = self.order.iter().position(|&id| id == chunk_id) {
+                self.order.remove(pos);
+                self.order.push_back(chunk_id);
+            }
+            Some(entry)
+        } else {
+            None
+        }
+    }
+
+    pub fn insert(&mut self, chunk_id: i64, chunk: Vec<String>) -> Arc<Vec<String>> {
+        if self.entries.contains_key(&chunk_id) {
+            let arc = Arc::new(chunk);
+            self.entries.insert(chunk_id, arc.clone());
+            if let Some(pos) = self.order.iter().position(|&id| id == chunk_id) {
+                self.order.remove(pos);
+            }
+            self.order.push_back(chunk_id);
+            return arc;
+        }
+
+        if self.entries.len() >= self.capacity {
+            if let Some(evicted_id) = self.order.pop_front() {
+                self.entries.remove(&evicted_id);
+            }
+        }
+
+        let arc = Arc::new(chunk);
+        self.entries.insert(chunk_id, arc.clone());
+        self.order.push_back(chunk_id);
+        arc
+    }
+
+    pub fn clear(&mut self) {
+        self.order.clear();
+        self.entries.clear();
+    }
+}
+
+static CHUNK_CACHE: OnceLock<Mutex<ChunkCache>> = OnceLock::new();
+
+pub fn get_chunk_cache() -> &'static Mutex<ChunkCache> {
+    CHUNK_CACHE.get_or_init(|| Mutex::new(ChunkCache::new(32)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_chunk_compression_roundtrip() {
+        let responses = vec![
+            "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nServer: nginx\r\n\r\n<html><body>Page 1</body></html>".to_string(),
+            "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nServer: nginx\r\n\r\n<html><body>Page 2</body></html>".to_string(),
+            "HTTP/1.1 404 Not Found\r\nContent-Type: text/html\r\nServer: nginx\r\n\r\n<html><body>Not Found</body></html>".to_string(),
+        ];
+
+        let compressed = compress_chunk(&responses).expect("compression failed");
+        assert!(!compressed.is_empty());
+
+        let decompressed = decompress_chunk(&compressed).expect("decompression failed");
+        assert_eq!(decompressed, responses);
+    }
+
+    #[test]
+    fn test_chunk_compression_efficiency() {
+        // Create 100 similar HTTP responses
+        let mut responses = Vec::new();
+        for i in 0..100 {
+            responses.push(format!(
+                "HTTP/1.1 200 OK\r\nServer: Apache/2.4.41\r\nContent-Type: application/json\r\nDate: Tue, 25 Aug 2026 12:00:00 GMT\r\n\r\n{{\"status\":\"success\",\"id\":{},\"message\":\"User data retrieved successfully\"}}",
+                i
+            ));
+        }
+
+        let uncompressed_size: usize = responses.iter().map(|s| s.len()).sum();
+        let compressed = compress_chunk(&responses).expect("compression failed");
+
+        // Assert at least 70% compression on repetitive HTTP responses
+        let ratio = compressed.len() as f64 / uncompressed_size as f64;
+        assert!(ratio < 0.3, "Expected compression ratio < 0.3, got {}", ratio);
+
+        let decompressed = decompress_chunk(&compressed).expect("decompression failed");
+        assert_eq!(decompressed.len(), 100);
+        assert_eq!(decompressed[50], responses[50]);
+    }
+
+    #[test]
+    fn test_lru_cache_operations() {
+        let mut cache = ChunkCache::new(2);
+
+        let chunk1 = vec!["resp1".to_string()];
+        let chunk2 = vec!["resp2".to_string()];
+        let chunk3 = vec!["resp3".to_string()];
+
+        cache.insert(1, chunk1);
+        cache.insert(2, chunk2);
+
+        assert!(cache.get(1).is_some());
+        // Inserting chunk 3 should evict chunk 2 because chunk 1 was recently accessed
+        cache.insert(3, chunk3);
+
+        assert!(cache.get(1).is_some());
+        assert!(cache.get(2).is_none());
+        assert!(cache.get(3).is_some());
+    }
+}
