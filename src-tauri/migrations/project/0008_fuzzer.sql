@@ -63,7 +63,7 @@ CREATE TABLE fuzzer_requests (
     id                  TEXT    NOT NULL, -- fuzzRequestId
     run_id              TEXT    NOT NULL REFERENCES fuzzer_runs(id) ON DELETE CASCADE,
     worker_id           INTEGER,
-    raw_request         TEXT    NOT NULL,
+    payload             TEXT,
     raw_response        TEXT,
     status_code         INTEGER,
     response_length     INTEGER,

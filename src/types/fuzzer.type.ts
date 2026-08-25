@@ -8,7 +8,7 @@ export type FuzzerRequestStatus = 'pending' | 'completed' | 'error' | 'cancelled
 export interface FuzzerRequest {
     id?: number;
     fuzzRequestId: string;
-    rawRequest: string;
+    rawRequest?: string;
     payload?: string;
     response: FuzzerResponse | null;
     requestDate: string;

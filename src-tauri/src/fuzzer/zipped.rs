@@ -44,7 +44,7 @@ fn build_zipped_fuzz_requests(session: &FuzzerSession) -> Vec<FuzzTarget> {
         targets.push(FuzzTarget {
             id: format!("{}", i),
             request: formatted_request,
-            payload: Some(payload_parts.join(", ")),
+            payload: serde_json::to_string(&payload_parts).ok(),
         });
     }
 

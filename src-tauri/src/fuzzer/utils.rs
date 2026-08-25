@@ -1,4 +1,4 @@
-use crate::types::HighlightRange;
+use crate::types::{HighlightRange, SessionPayload};
 
 pub fn building_raw_request(
     raw_request: &str,
@@ -85,9 +85,87 @@ pub fn format_fuzz_request(
     format!("{}{}{}", formatted_headers, terminator, body_part)
 }
 
+/// Reconstructs a complete raw HTTP request on the fly from the snapshot template and payload.
+pub fn reconstruct_fuzzer_request(
+    config: &SessionPayload,
+    payload: Option<&str>,
+    target_id: &str,
+) -> String {
+    let raw_request = &config.raw_request;
+    if config.parameters.is_empty() {
+        let keep_alive = config.set_connection_keep_alive.unwrap_or(true);
+        let update_cl = config.update_content_length.unwrap_or(true);
+        return format_fuzz_request(raw_request, keep_alive, update_cl);
+    }
+
+    let attack_type = config
+        .fuzzing_attack_type
+        .as_deref()
+        .unwrap_or("rotator")
+        .to_lowercase();
+
+    let keep_alive = config.set_connection_keep_alive.unwrap_or(true);
+    let update_cl = config.update_content_length.unwrap_or(true);
+
+    let mut modified = raw_request.clone();
+
+    match attack_type.as_str() {
+        "rotator" => {
+            let param_idx = target_id
+                .split('-')
+                .next()
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(0);
+
+            if let Some(param) = config.parameters.get(param_idx) {
+                let val = payload.unwrap_or(&param.highlight_range.original_text);
+                modified = building_raw_request(&modified, val, &param.highlight_range);
+            }
+        }
+        "echo" => {
+            let mut sorted_params: Vec<_> = config.parameters.iter().collect();
+            sorted_params.sort_by(|a, b| b.highlight_range.byte_from.cmp(&a.highlight_range.byte_from));
+
+            for param in sorted_params {
+                let val = payload.unwrap_or(&param.highlight_range.original_text);
+                modified = building_raw_request(&modified, val, &param.highlight_range);
+            }
+        }
+        "zipped" | "combinatorial" => {
+            let payload_list: Vec<String> = if let Some(p_str) = payload {
+                if let Ok(list) = serde_json::from_str::<Vec<String>>(p_str) {
+                    list
+                } else {
+                    p_str.split(", ").map(|s| s.to_string()).collect()
+                }
+            } else {
+                Vec::new()
+            };
+
+            let mut sorted_params: Vec<_> = config.parameters.iter().enumerate().collect();
+            sorted_params.sort_by(|a, b| b.1.highlight_range.byte_from.cmp(&a.1.highlight_range.byte_from));
+
+            for (param_idx, param) in sorted_params {
+                let default_val = &param.highlight_range.original_text;
+                let val = payload_list.get(param_idx).map(|s| s.as_str()).unwrap_or(default_val);
+                modified = building_raw_request(&modified, val, &param.highlight_range);
+            }
+        }
+        _ => {
+            if let Some(first_param) = config.parameters.first() {
+                let val = payload.unwrap_or(&first_param.highlight_range.original_text);
+                modified = building_raw_request(&modified, val, &first_param.highlight_range);
+            }
+        }
+    }
+
+    format_fuzz_request(&modified, keep_alive, update_cl)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::{FuzzerParameter, PayloadMetadata};
 
     #[test]
     fn test_format_fuzz_request_content_length() {
@@ -115,5 +193,101 @@ mod tests {
         let formatted = format_fuzz_request(raw, true, true);
         assert!(formatted.contains("Connection: keep-alive"));
         assert!(formatted.contains("Content-Length: 27"));
+    }
+
+    #[test]
+    fn test_reconstruct_rotator_fuzzer_request() {
+        let raw = "GET /user?id=123 HTTP/1.1\r\nHost: example.com\r\n\r\n";
+        let from = 13; // byte index of '123'
+        let to = 16;
+        let config = SessionPayload {
+            raw_request: raw.to_string(),
+            parameters: vec![FuzzerParameter {
+                payload_source: "manual".to_string(),
+                values: vec!["999".to_string()],
+                highlight_range: HighlightRange {
+                    id: "param1".to_string(),
+                    from: 13,
+                    to: 16,
+                    byte_from: from,
+                    byte_to: to,
+                    original_text: "123".to_string(),
+                    is_active: true,
+                },
+                pipeline_rules: None,
+            }],
+            metadata: PayloadMetadata {
+                target_url: "http://example.com".to_string(),
+                url_is_valid: Some(true),
+            },
+            delay_ms: 0,
+            fuzzing_attack_type: Some("rotator".to_string()),
+            num_threads: Some(1),
+            pipeline_scope: Some("all".to_string()),
+            pipeline_rules: None,
+            set_connection_keep_alive: Some(true),
+            update_content_length: Some(true),
+        };
+
+        let reconstructed = reconstruct_fuzzer_request(&config, Some("999"), "0-0");
+        assert!(reconstructed.starts_with("GET /user?id=999 HTTP/1.1"));
+        assert!(reconstructed.contains("Connection: keep-alive"));
+    }
+
+    #[test]
+    fn test_reconstruct_combinatorial_fuzzer_request() {
+        let raw = "POST /login HTTP/1.1\r\nHost: example.com\r\n\r\nuser=USER&pass=PASS";
+        // byte range of USER: from 48 to 52
+        // byte range of PASS: from 58 to 62
+        let config = SessionPayload {
+            raw_request: raw.to_string(),
+            parameters: vec![
+                FuzzerParameter {
+                    payload_source: "manual".to_string(),
+                    values: vec!["admin".to_string()],
+                    highlight_range: HighlightRange {
+                        id: "p1".to_string(),
+                        from: 48,
+                        to: 52,
+                        byte_from: 48,
+                        byte_to: 52,
+                        original_text: "USER".to_string(),
+                        is_active: true,
+                    },
+                    pipeline_rules: None,
+                },
+                FuzzerParameter {
+                    payload_source: "manual".to_string(),
+                    values: vec!["secret123".to_string()],
+                    highlight_range: HighlightRange {
+                        id: "p2".to_string(),
+                        from: 58,
+                        to: 62,
+                        byte_from: 58,
+                        byte_to: 62,
+                        original_text: "PASS".to_string(),
+                        is_active: true,
+                    },
+                    pipeline_rules: None,
+                },
+            ],
+            metadata: PayloadMetadata {
+                target_url: "http://example.com".to_string(),
+                url_is_valid: Some(true),
+            },
+            delay_ms: 0,
+            fuzzing_attack_type: Some("combinatorial".to_string()),
+            num_threads: Some(1),
+            pipeline_scope: Some("all".to_string()),
+            pipeline_rules: None,
+            set_connection_keep_alive: Some(true),
+            update_content_length: Some(true),
+        };
+
+        let json_payload = serde_json::to_string(&vec!["admin", "secret123"]).unwrap();
+        let reconstructed = reconstruct_fuzzer_request(&config, Some(&json_payload), "0");
+        assert!(reconstructed.contains("user=admin&pass=secret123"));
+        assert!(reconstructed.contains("Content-Length: 25"));
+        assert!(reconstructed.contains("Connection: keep-alive"));
     }
 }

@@ -65,7 +65,7 @@ fn build_combinatorial_fuzz_requests(session: &FuzzerSession) -> Vec<FuzzTarget>
         targets.push(FuzzTarget {
             id: format!("{}", combo_idx),
             request: formatted_request,
-            payload: Some(transformed_combo.join(", ")),
+            payload: serde_json::to_string(&transformed_combo).ok(),
         });
     }
 

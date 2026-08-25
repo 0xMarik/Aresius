@@ -22,7 +22,8 @@ pub struct FuzzTarget {
 pub struct FuzzerRequestRow {
     pub id: usize,
     pub fuzz_request_id: String,
-    pub raw_request: String,
+    #[serde(default)]
+    pub raw_request: Option<String>,
     pub payload: Option<String>,
     pub response: Option<ReqRes>,
     pub request_date: String,
@@ -36,6 +37,7 @@ pub struct FuzzerRequestRow {
 pub struct FuzzerRunData {
     pub rows: Vec<FuzzerRequestRow>,
     pub id_map: HashMap<String, usize>,
+    pub config_snapshot: Option<crate::types::SessionPayload>,
 }
 
 static FUZZ_STORE: OnceLock<Mutex<HashMap<String, FuzzerRunData>>> = OnceLock::new();
@@ -44,7 +46,12 @@ fn fuzz_store() -> &'static Mutex<HashMap<String, FuzzerRunData>> {
     FUZZ_STORE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-pub async fn init_fuzz_store(session: u32, history: u32, targets: &[FuzzTarget]) {
+pub async fn init_fuzz_store(
+    session: u32,
+    history: u32,
+    targets: &[FuzzTarget],
+    config_snapshot: Option<crate::types::SessionPayload>,
+) {
     let key = run_key(session, history);
     let mut id_map = HashMap::with_capacity(targets.len());
     let mut rows = Vec::with_capacity(targets.len());
@@ -55,7 +62,7 @@ pub async fn init_fuzz_store(session: u32, history: u32, targets: &[FuzzTarget])
         rows.push(FuzzerRequestRow {
             id: idx,
             fuzz_request_id: target.id.clone(),
-            raw_request: target.request.clone(),
+            raw_request: None,
             payload: target.payload.clone(),
             response: None,
             request_date: now.clone(),
@@ -66,7 +73,14 @@ pub async fn init_fuzz_store(session: u32, history: u32, targets: &[FuzzTarget])
         });
     }
 
-    fuzz_store().lock().await.insert(key, FuzzerRunData { rows, id_map });
+    fuzz_store().lock().await.insert(
+        key,
+        FuzzerRunData {
+            rows,
+            id_map,
+            config_snapshot,
+        },
+    );
 }
 
 pub async fn update_store_completed(
@@ -82,7 +96,7 @@ pub async fn update_store_completed(
         if let Some(&idx) = run_data.id_map.get(id) {
             if let Some(row) = run_data.rows.get_mut(idx) {
                 row.status = "completed".to_string();
-                row.raw_request = req_res.request.clone();
+                row.raw_request = None;
                 row.response = Some(req_res);
                 row.error_message = None;
                 row.connection_dropped = false;
@@ -98,7 +112,6 @@ pub async fn update_store_error(
     id: &str,
     message: String,
     connection_dropped: bool,
-    request: String,
     worker_id: Option<u32>,
 ) {
     let key = run_key(session, history);
@@ -109,9 +122,7 @@ pub async fn update_store_error(
                 row.status = "error".to_string();
                 row.error_message = Some(message);
                 row.connection_dropped = connection_dropped;
-                if !request.is_empty() {
-                    row.raw_request = request;
-                }
+                row.raw_request = None;
                 row.worker_id = worker_id;
             }
         }
@@ -289,7 +300,7 @@ pub async fn get_fuzzer_history_window(
                     let items: Vec<FuzzerRequestRow> = db_rows.into_iter().map(|r| {
                         let response = if let Some(raw_resp) = r.raw_response {
                             Some(crate::types::ReqRes {
-                                request: r.raw_request.clone(),
+                                request: String::new(),
                                 response: raw_resp,
                                 response_time: r.response_time_ms.unwrap_or(0) as u128,
                             })
@@ -299,7 +310,7 @@ pub async fn get_fuzzer_history_window(
                         FuzzerRequestRow {
                             id: r.sort_order as usize,
                             fuzz_request_id: r.id,
-                            raw_request: r.raw_request,
+                            raw_request: None,
                             payload: r.payload,
                             response,
                             request_date: chrono::DateTime::from_timestamp_millis(r.request_date)
@@ -329,12 +340,30 @@ pub async fn get_fuzzer_request_by_id(
     let key = run_key(selected_session, fuzz_history);
     let store = fuzz_store().lock().await;
     if let Some(run_data) = store.get(&key) {
-        if let Some(&idx) = run_data.id_map.get(&request_id) {
-            return Ok(run_data.rows.get(idx).cloned());
+        let row_opt = if let Some(&idx) = run_data.id_map.get(&request_id) {
+            run_data.rows.get(idx).cloned()
         } else if let Ok(idx) = request_id.parse::<usize>() {
-            return Ok(run_data.rows.get(idx).cloned());
+            run_data.rows.get(idx).cloned()
+        } else {
+            None
+        };
+
+        if let Some(mut row) = row_opt {
+            if let Some(ref config) = run_data.config_snapshot {
+                let reconstructed = crate::fuzzer::utils::reconstruct_fuzzer_request(
+                    config,
+                    row.payload.as_deref(),
+                    &row.fuzz_request_id,
+                );
+                row.raw_request = Some(reconstructed.clone());
+                if let Some(ref mut resp) = row.response {
+                    resp.request = reconstructed;
+                }
+            }
+            return Ok(Some(row));
         }
     }
+
     // Fallback to SQLite DB
     if let Some(db_state) = app.try_state::<crate::ares_utils::database::DbState>() {
         if let Ok(pool) = db_state.pool().await {
@@ -344,6 +373,18 @@ pub async fn get_fuzzer_request_by_id(
                 fuzz_history as usize,
             )
             .await;
+
+            let config_snapshot_str: Option<String> = sqlx::query_scalar(
+                "SELECT config_snapshot FROM fuzzer_runs WHERE id = ?"
+            )
+            .bind(&run_id)
+            .fetch_optional(&pool)
+            .await
+            .unwrap_or(None);
+
+            let config_snapshot: Option<crate::types::SessionPayload> = config_snapshot_str
+                .and_then(|s| serde_json::from_str(&s).ok());
+
             let row = if let Ok(idx) = request_id.parse::<i64>() {
                 sqlx::query_as::<_, crate::ares_utils::database::fuzzer::FuzzerRequestDb>(
                     "SELECT * FROM fuzzer_requests WHERE (run_id = ? AND (id = ? OR sort_order = ?)) OR id = ?"
@@ -368,19 +409,28 @@ pub async fn get_fuzzer_request_by_id(
             };
 
             if let Some(r) = row {
+                let reconstructed = config_snapshot.as_ref().map(|cfg| {
+                    crate::fuzzer::utils::reconstruct_fuzzer_request(
+                        cfg,
+                        r.payload.as_deref(),
+                        &r.id,
+                    )
+                });
+
                 let response = if let Some(raw_resp) = r.raw_response {
                     Some(crate::types::ReqRes {
-                        request: r.raw_request.clone(),
+                        request: reconstructed.clone().unwrap_or_default(),
                         response: raw_resp,
                         response_time: r.response_time_ms.unwrap_or(0) as u128,
                     })
                 } else {
                     None
                 };
+
                 return Ok(Some(FuzzerRequestRow {
                     id: r.sort_order as usize,
                     fuzz_request_id: r.id,
-                    raw_request: r.raw_request,
+                    raw_request: reconstructed,
                     payload: r.payload,
                     response,
                     request_date: chrono::DateTime::from_timestamp_millis(r.request_date)
@@ -759,7 +809,7 @@ async fn run_dynamic_fuzzer(
                             continue;
                         } else {
                             // Non-connection error (HTTP / parsing error)
-                            update_store_error(selected_session, fuzz_history, &target.id, msg.clone(), false, target.request.clone(), Some(worker_idx as u32)).await;
+                            update_store_error(selected_session, fuzz_history, &target.id, msg.clone(), false, Some(worker_idx as u32)).await;
 
                             if let Some(ref p) = db_pool_w {
                                 let p_c = p.clone();
@@ -767,7 +817,7 @@ async fn run_dynamic_fuzzer(
                                 let id_c = target.id.clone();
                                 let msg_c = msg.clone();
                                 tokio::spawn(async move {
-                                    let _ = crate::ares_utils::database::fuzzer::update_fuzzer_request_error(&p_c, &run_id_c, &id_c, &msg_c, false, None).await;
+                                    let _ = crate::ares_utils::database::fuzzer::update_fuzzer_request_error(&p_c, &run_id_c, &id_c, &msg_c, false).await;
                                 });
                             }
                             failed_clone.fetch_add(1, Ordering::Relaxed);
@@ -846,7 +896,11 @@ pub async fn run_fuzz_targets(app: AppHandle, config: FuzzRunConfig, targets: Ve
     let selected_session = config.selected_session;
     let fuzz_history = config.fuzz_history;
 
-    init_fuzz_store(selected_session, fuzz_history, &targets).await;
+    let parsed_snapshot: Option<crate::types::SessionPayload> = config.config_snapshot
+        .as_ref()
+        .and_then(|s| serde_json::from_str(s).ok());
+
+    init_fuzz_store(selected_session, fuzz_history, &targets, parsed_snapshot).await;
 
     let db_pool = if let Some(db_state) = app.try_state::<crate::ares_utils::database::DbState>() {
         db_state.pool().await.ok()
@@ -931,10 +985,10 @@ pub async fn run_fuzz_targets(app: AppHandle, config: FuzzRunConfig, targets: Ve
             .await;
         }
 
-        let target_tuples: Vec<(String, String, Option<u32>, Option<String>)> = targets
+        let target_tuples: Vec<(String, Option<u32>, Option<String>)> = targets
             .iter()
             .map(|t| {
-                (t.id.clone(), t.request.clone(), None, t.payload.clone())
+                (t.id.clone(), None, t.payload.clone())
             })
             .collect();
         let _ = crate::ares_utils::database::fuzzer::batch_insert_fuzzer_requests(pool, &run_id, &target_tuples).await;
@@ -1068,6 +1122,7 @@ async fn get_remaining_or_failed_targets(app: &AppHandle, session: u32, history:
 
     if let Some(run_data) = store.get(&key) {
         total_count = run_data.rows.len() as u32;
+        let config = run_data.config_snapshot.clone();
         for row in run_data.rows.iter() {
             if row.status == "completed" {
                 completed_count += 1;
@@ -1075,9 +1130,14 @@ async fn get_remaining_or_failed_targets(app: &AppHandle, session: u32, history:
                 if row.status == "error" {
                     failed_count += 1;
                 }
+                let raw_req = if let Some(ref cfg) = config {
+                    crate::fuzzer::utils::reconstruct_fuzzer_request(cfg, row.payload.as_deref(), &row.fuzz_request_id)
+                } else {
+                    row.raw_request.clone().unwrap_or_default()
+                };
                 targets.push(FuzzTarget {
                     id: row.fuzz_request_id.clone(),
-                    request: row.raw_request.clone(),
+                    request: raw_req,
                     payload: row.payload.clone(),
                 });
             }
@@ -1085,11 +1145,28 @@ async fn get_remaining_or_failed_targets(app: &AppHandle, session: u32, history:
     } else if let Some(db_state) = app.try_state::<crate::ares_utils::database::DbState>() {
         if let Ok(pool) = db_state.pool().await {
             let run_id = crate::ares_utils::database::fuzzer::resolve_fuzzer_run_id(&pool, session as usize, history as usize).await;
+            let config_snapshot_str: Option<String> = sqlx::query_scalar(
+                "SELECT config_snapshot FROM fuzzer_runs WHERE id = ?"
+            )
+            .bind(&run_id)
+            .fetch_optional(&pool)
+            .await
+            .unwrap_or(None);
+
+            let config_snapshot: Option<crate::types::SessionPayload> = config_snapshot_str
+                .and_then(|s| serde_json::from_str(&s).ok());
+
             if let Ok(rows) = crate::ares_utils::database::fuzzer::load_all_fuzzer_requests(&pool, &run_id).await {
                 total_count = rows.len() as u32;
                 let mut id_map = HashMap::with_capacity(rows.len());
                 let mut store_rows = Vec::with_capacity(rows.len());
                 for r in &rows {
+                    let req_str = if let Some(ref cfg) = config_snapshot {
+                        crate::fuzzer::utils::reconstruct_fuzzer_request(cfg, r.payload.as_deref(), &r.id)
+                    } else {
+                        String::new()
+                    };
+
                     if r.status == "completed" {
                         completed_count += 1;
                     } else {
@@ -1098,14 +1175,14 @@ async fn get_remaining_or_failed_targets(app: &AppHandle, session: u32, history:
                         }
                         targets.push(FuzzTarget {
                             id: r.id.clone(),
-                            request: r.raw_request.clone(),
+                            request: req_str.clone(),
                             payload: r.payload.clone(),
                         });
                     }
 
                     let response = if let Some(raw_resp) = &r.raw_response {
                         Some(crate::types::ReqRes {
-                            request: r.raw_request.clone(),
+                            request: req_str,
                             response: raw_resp.clone(),
                             response_time: r.response_time_ms.unwrap_or(0) as u128,
                         })
@@ -1118,7 +1195,7 @@ async fn get_remaining_or_failed_targets(app: &AppHandle, session: u32, history:
                     store_rows.push(FuzzerRequestRow {
                         id: r.sort_order as usize,
                         fuzz_request_id: r.id.clone(),
-                        raw_request: r.raw_request.clone(),
+                        raw_request: None,
                         payload: r.payload.clone(),
                         response,
                         request_date: chrono::DateTime::from_timestamp_millis(r.request_date)
@@ -1131,7 +1208,7 @@ async fn get_remaining_or_failed_targets(app: &AppHandle, session: u32, history:
                     });
                 }
                 if !store_rows.is_empty() {
-                    store.insert(key, FuzzerRunData { rows: store_rows, id_map });
+                    store.insert(key, FuzzerRunData { rows: store_rows, id_map, config_snapshot });
                 }
             }
         }

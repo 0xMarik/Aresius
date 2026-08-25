@@ -78,7 +78,7 @@ pub struct FuzzerRequestDb {
     pub id: String,
     pub run_id: String,
     pub worker_id: Option<i64>,
-    pub raw_request: String,
+    pub payload: Option<String>,
     pub raw_response: Option<String>,
     pub status_code: Option<i64>,
     pub response_length: Option<i64>,
@@ -88,7 +88,6 @@ pub struct FuzzerRequestDb {
     pub error_message: Option<String>,
     pub connection_dropped: bool,
     pub sort_order: i64,
-    pub payload: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -767,7 +766,7 @@ pub async fn query_fuzzer_requests_window(
 pub async fn batch_insert_fuzzer_requests(
     pool: &SqlitePool,
     run_id: &str,
-    targets: &[(String, String, Option<u32>, Option<String>)], // (id, raw_request, worker_id, payload)
+    targets: &[(String, Option<u32>, Option<String>)], // (id, worker_id, payload)
 ) -> Result<(), String> {
     if targets.is_empty() {
         return Ok(());
@@ -776,13 +775,12 @@ pub async fn batch_insert_fuzzer_requests(
     let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
     let now = chrono::Utc::now().timestamp_millis();
 
-    for (idx, (id, req, worker_id, payload)) in targets.iter().enumerate() {
+    for (idx, (id, worker_id, payload)) in targets.iter().enumerate() {
         sqlx::query(
             "INSERT INTO fuzzer_requests
-                (id, run_id, worker_id, raw_request, payload, request_date, status, connection_dropped, sort_order)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (id, run_id, worker_id, payload, request_date, status, connection_dropped, sort_order)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(run_id, id) DO UPDATE SET
-                raw_request = excluded.raw_request,
                 payload = excluded.payload,
                 request_date = excluded.request_date,
                 status = 'pending',
@@ -792,7 +790,6 @@ pub async fn batch_insert_fuzzer_requests(
         .bind(id)
         .bind(run_id)
         .bind(worker_id.map(|w| w as i64))
-        .bind(req)
         .bind(payload)
         .bind(now)
         .bind("pending")
@@ -820,8 +817,7 @@ pub async fn update_fuzzer_request_completed(
 
     sqlx::query(
         "UPDATE fuzzer_requests
-         SET raw_request = ?,
-             raw_response = ?,
+         SET raw_response = ?,
              status_code = ?,
              response_length = ?,
              response_time_ms = ?,
@@ -830,7 +826,6 @@ pub async fn update_fuzzer_request_completed(
              connection_dropped = 0
          WHERE run_id = ? AND id = ?",
     )
-    .bind(&req_res.request)
     .bind(&req_res.response)
     .bind(status_code)
     .bind(response_len)
@@ -851,41 +846,21 @@ pub async fn update_fuzzer_request_error(
     request_id: &str,
     message: &str,
     connection_dropped: bool,
-    request: Option<&str>,
 ) -> Result<(), String> {
-    if let Some(req) = request {
-        sqlx::query(
-            "UPDATE fuzzer_requests
-             SET raw_request = ?,
-                 status = 'error',
-                 error_message = ?,
-                 connection_dropped = ?
-             WHERE run_id = ? AND id = ?",
-        )
-        .bind(req)
-        .bind(message)
-        .bind(connection_dropped)
-        .bind(run_id)
-        .bind(request_id)
-        .execute(pool)
-        .await
-        .map_err(|e| e.to_string())?;
-    } else {
-        sqlx::query(
-            "UPDATE fuzzer_requests
-             SET status = 'error',
-                 error_message = ?,
-                 connection_dropped = ?
-             WHERE run_id = ? AND id = ?",
-        )
-        .bind(message)
-        .bind(connection_dropped)
-        .bind(run_id)
-        .bind(request_id)
-        .execute(pool)
-        .await
-        .map_err(|e| e.to_string())?;
-    }
+    sqlx::query(
+        "UPDATE fuzzer_requests
+         SET status = 'error',
+             error_message = ?,
+             connection_dropped = ?
+         WHERE run_id = ? AND id = ?",
+    )
+    .bind(message)
+    .bind(connection_dropped)
+    .bind(run_id)
+    .bind(request_id)
+    .execute(pool)
+    .await
+    .map_err(|e| e.to_string())?;
 
     Ok(())
 }

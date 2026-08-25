@@ -111,6 +111,19 @@ function extractPayloadValues(
     return values;
 }
 
+export function formatPayloadDisplay(payload: string | null | undefined): string {
+    if (!payload) return '';
+    try {
+        const parsed = JSON.parse(payload);
+        if (Array.isArray(parsed)) {
+            return parsed.join(',  ');
+        }
+    } catch {
+        // Not a JSON array
+    }
+    return payload;
+}
+
 export function enrichFuzzerRow(
     row: FuzzerRow,
     fuzzConfigSnapshot: FuzzConfig,
@@ -124,17 +137,19 @@ export function enrichFuzzerRow(
         responseTime: Number(respTime),
     } : null;
 
-    const parsedRequest = parseRequest(rawReqStr);
+    const parsedRequest = parseRequest(rawReqStr || fuzzConfigSnapshot?.rawRequest || '');
     const parsedResponse = normalizedResponse && rawRespStr ? parseResponse(rawRespStr) : null;
 
-    const payloadValues = extractPayloadValues(
-        fuzzConfigSnapshot?.rawRequest ?? '',
-        rawReqStr,
-        fuzzConfigSnapshot?.parameters ?? [],
-    );
+    const payloadValues = rawReqStr
+        ? extractPayloadValues(
+            fuzzConfigSnapshot?.rawRequest ?? '',
+            rawReqStr,
+            fuzzConfigSnapshot?.parameters ?? [],
+        )
+        : [];
 
     const payloadPreview =
-        row.payload ??
+        formatPayloadDisplay(row.payload) ||
         (payloadValues.length <= 1
             ? (payloadValues[0]?.value ?? '')
             : payloadValues.map((p) => p.value).join(',  '));
@@ -445,12 +460,12 @@ function FuzzerHistoryBody({
         }
 
         const foundInWindow = enrichedRows.find((r) => r.id === focusedId);
-        if (foundInWindow) {
+        if (foundInWindow && foundInWindow.rawRequest) {
             setFetchedFocusedResult(foundInWindow);
             return;
         }
 
-        if (fetchedFocusedResult && fetchedFocusedResult.id === focusedId) {
+        if (fetchedFocusedResult && fetchedFocusedResult.id === focusedId && fetchedFocusedResult.rawRequest) {
             return;
         }
 
@@ -541,7 +556,7 @@ function FuzzerHistoryBody({
                                             </div>
                                         </div>
                                         <div className="flex-1 min-h-0">
-                                            <CodeMirrorEditor value={focusedResult.rawRequest} />
+                                            <CodeMirrorEditor value={focusedResult.rawRequest ?? ''} />
                                         </div>
                                     </div>
                                 </ResizablePanel>
@@ -564,7 +579,7 @@ function FuzzerHistoryBody({
                                                             sessionIndex,
                                                             historyIndex,
                                                             focusedResult!.fuzzRequestId,
-                                                            focusedResult!.rawRequest,
+                                                            focusedResult!.rawRequest ?? '',
                                                             fuzzConfigSnapshot?.metadata?.targetUrl ?? '',
                                                             projectId,
                                                         )}
@@ -607,7 +622,7 @@ function FuzzerHistoryBody({
                                                                 sessionIndex,
                                                                 historyIndex,
                                                                 focusedResult.fuzzRequestId,
-                                                                focusedResult.rawRequest,
+                                                                focusedResult.rawRequest ?? '',
                                                                 fuzzConfigSnapshot?.metadata?.targetUrl ?? '',
                                                                 projectId,
                                                             )}
@@ -638,7 +653,7 @@ function FuzzerHistoryBody({
                                                                 sessionIndex,
                                                                 historyIndex,
                                                                 focusedResult.fuzzRequestId,
-                                                                focusedResult.rawRequest,
+                                                                focusedResult.rawRequest ?? '',
                                                                 fuzzConfigSnapshot?.metadata?.targetUrl ?? '',
                                                                 projectId,
                                                             )}

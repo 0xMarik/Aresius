@@ -40,7 +40,7 @@ export function renderFuzzerHistoryTableContextMenu(
             </ContextMenuLabel>
             <ContextMenuSeparator />
 
-            <SendToReplayer rawRequest={row.rawRequest} isMultiple={isMultiple} />
+            <SendToReplayer rawRequest={row.rawRequest ?? ''} isMultiple={isMultiple} />
 
             <ContextMenuSub>
                 <ContextMenuSubTrigger>
