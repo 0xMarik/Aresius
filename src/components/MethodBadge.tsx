@@ -37,7 +37,7 @@ export const MethodBadge: React.FC<MethodBadgeProps> = ({
         <Badge
             variant="outline"
             className={cn(
-                'font-mono text-[10px] px-1.5 py-0 font-medium inline-flex items-center justify-center select-none',
+                'font-mono text-[11px] px-1.5 py-0 font-medium inline-flex items-center justify-center select-none',
                 getMethodColor(displayMethod, selected),
                 className
             )}

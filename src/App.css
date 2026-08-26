@@ -7,6 +7,8 @@
     --font-scale: 1;
     --base-font-size: 14px;
     --root-font-size: calc(var(--base-font-size) * var(--font-scale, 1));
+    --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Cascadia Code", "Ubuntu Mono", "Liberation Mono", "DejaVu Sans Mono", monospace;
+    --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Ubuntu", "Cantarell", "Liberation Sans", "DejaVu Sans", sans-serif;
 
     --background: 36 33% 96%;          /* #FAF7F2 */
     --foreground: 150 8% 12%;          /* #1B211E */
@@ -106,6 +108,9 @@
   }
   html {
     font-size: var(--root-font-size);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
   }
   html,
   body,
@@ -118,11 +123,27 @@
   }
   body {
     @apply bg-background text-foreground;
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
   }
 
-  /* CodeMirror editor dynamic font scaling */
+  /* CodeMirror editor dynamic font scaling & unified monospace typography */
   .cm-editor {
+    font-family: var(--font-mono) !important;
     font-size: calc(12px * var(--font-scale, 1)) !important;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  .cm-editor .cm-scroller,
+  .cm-editor .cm-content,
+  .cm-editor .cm-line,
+  .cm-editor .cm-gutters {
+    font-family: inherit !important;
   }
 
   /* Code-editor style custom scrollbar */

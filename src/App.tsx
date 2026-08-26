@@ -297,7 +297,6 @@ function AppInner() {
                     <AppSidebar />
                     <SidebarInset
                         className="min-h-0 overflow-auto flex flex-col"
-                        style={{ zoom: "var(--font-scale, 1)" } as React.CSSProperties}
                     >
                         <Suspense fallback={null}>
                             <Routes>

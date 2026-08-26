@@ -12,6 +12,7 @@ fn build_fuzz_requests(session: &FuzzerSession) -> Vec<FuzzTarget> {
     let update_cl = session.fuzz_config.update_content_length.unwrap_or(true);
 
     if let Some(first_param) = session.fuzz_config.parameters.first() {
+        let mut sort_order = 0;
         for (param_idx, param) in session.fuzz_config.parameters.iter().enumerate() {
             let rules = get_active_rules(session, param);
             for (value_idx, value) in first_param.values.iter().enumerate() {
@@ -24,9 +25,11 @@ fn build_fuzz_requests(session: &FuzzerSession) -> Vec<FuzzTarget> {
                 let formatted_request = format_fuzz_request(&modified_request, keep_alive, update_cl);
                 requests.push(FuzzTarget {
                     id: format!("{}-{}", param_idx, value_idx),
+                    sort_order,
                     request: formatted_request,
                     payload: Some(transformed_value),
                 });
+                sort_order += 1;
             }
         }
     }

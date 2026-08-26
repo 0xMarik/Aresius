@@ -1,14 +1,21 @@
 use base64::Engine;
 use regex::Regex;
-use crate::types::{FuzzerParameter, FuzzerSession, PreprocessingRule};
+use crate::types::{FuzzerParameter, FuzzerSession, PreprocessingRule, SessionPayload};
 
 /// Determines which preprocessing rules apply to a given parameter based on pipeline scope.
 pub fn get_active_rules<'a>(
     session: &'a FuzzerSession,
     param: &'a FuzzerParameter,
 ) -> &'a [PreprocessingRule] {
-    let scope = session
-        .fuzz_config
+    get_active_rules_for_config(&session.fuzz_config, param)
+}
+
+/// Determines which preprocessing rules apply to a given parameter from a SessionPayload.
+pub fn get_active_rules_for_config<'a>(
+    config: &'a SessionPayload,
+    param: &'a FuzzerParameter,
+) -> &'a [PreprocessingRule] {
+    let scope = config
         .pipeline_scope
         .as_deref()
         .unwrap_or("all");
@@ -16,7 +23,7 @@ pub fn get_active_rules<'a>(
     if scope == "per_parameter" {
         param.pipeline_rules.as_deref().unwrap_or(&[])
     } else {
-        session.fuzz_config.pipeline_rules.as_deref().unwrap_or(&[])
+        config.pipeline_rules.as_deref().unwrap_or(&[])
     }
 }
 

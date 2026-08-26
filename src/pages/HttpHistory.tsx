@@ -118,7 +118,7 @@ export const httpColumns: ColumnDef<HttpTransaction, any>[] = [
         minSize: 70,
         cell: (info) => {
             const selected = isRowSelected(info);
-            return <span className={`text-[12px] tabular-nums whitespace-nowrap ${selected ? 'text-primary-foreground/80' : 'text-muted-foreground'}`}>{info.getValue()} B</span>;
+            return <span className={`font-mono text-[11px] tabular-nums whitespace-nowrap ${selected ? 'text-primary-foreground/80' : 'text-muted-foreground'}`}>{info.getValue()} B</span>;
         },
     }),
     columnHelper.accessor('responseTimeMs', {
@@ -128,7 +128,7 @@ export const httpColumns: ColumnDef<HttpTransaction, any>[] = [
         minSize: 120,
         cell: (info) => {
             const selected = isRowSelected(info);
-            return <span className={`text-[12px] tabular-nums whitespace-nowrap ${selected ? 'text-primary-foreground/80' : 'text-muted-foreground'}`}>{info.getValue()}</span>;
+            return <span className={`font-mono text-[11px] tabular-nums whitespace-nowrap ${selected ? 'text-primary-foreground/80' : 'text-muted-foreground'}`}>{info.getValue()}</span>;
         },
     }),
     columnHelper.accessor('sentAtMs', {
@@ -139,7 +139,7 @@ export const httpColumns: ColumnDef<HttpTransaction, any>[] = [
         cell: (info) => {
             const selected = isRowSelected(info);
             return (
-                <span className={`text-[12px] tabular-nums whitespace-nowrap ${selected ? 'text-primary-foreground/80' : 'text-muted-foreground'}`}>
+                <span className={`font-mono text-[11px] tabular-nums whitespace-nowrap ${selected ? 'text-primary-foreground/80' : 'text-muted-foreground'}`}>
                     {(() => {
                         const date = new Date(info.getValue());
                         const pad = (value: number) => String(value).padStart(2, '0');

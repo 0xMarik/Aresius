@@ -263,7 +263,7 @@ export const fuzzerColumns: ColumnDef<EnrichedFuzzerRow, any>[] = [
         cell: (info) => {
             const selected = isRowSelected(info);
             const value = info.getValue();
-            return <span className={`text-[12px] tabular-nums ${selected ? 'text-primary-foreground/80' : 'text-muted-foreground'}`}>{value !== undefined && value !== null ? `${value}ms` : '—'}</span>;
+            return <span className={`font-mono text-[11px] tabular-nums ${selected ? 'text-primary-foreground/80' : 'text-muted-foreground'}`}>{value !== undefined && value !== null ? `${value}ms` : '—'}</span>;
         },
     }),
     columnHelper.accessor((row) => row.responseLength ?? row.contentLength, {
@@ -273,7 +273,7 @@ export const fuzzerColumns: ColumnDef<EnrichedFuzzerRow, any>[] = [
         cell: (info) => {
             const selected = isRowSelected(info);
             const value = info.getValue();
-            return <span className={`text-[12px] tabular-nums ${selected ? 'text-primary-foreground/80' : 'text-muted-foreground'}`}>{value !== undefined && value > 0 ? `${value}B` : '—'}</span>;
+            return <span className={`font-mono text-[11px] tabular-nums ${selected ? 'text-primary-foreground/80' : 'text-muted-foreground'}`}>{value !== undefined && value > 0 ? `${value}B` : '—'}</span>;
         },
     }),
     columnHelper.accessor('requestDate', {
@@ -293,7 +293,7 @@ export const fuzzerColumns: ColumnDef<EnrichedFuzzerRow, any>[] = [
             }
             const timeStr = !isNaN(dateObj.getTime()) ? dateObj.toLocaleTimeString() : '—';
             return (
-                <span className={`text-[12px] tabular-nums ${selected ? 'text-primary-foreground/80' : 'text-muted-foreground'}`}>
+                <span className={`font-mono text-[11px] tabular-nums ${selected ? 'text-primary-foreground/80' : 'text-muted-foreground'}`}>
                     {timeStr}
                 </span>
             );

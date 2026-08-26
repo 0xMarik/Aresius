@@ -1,5 +1,4 @@
 use crate::ares_utils::database::DbState;
-use crate::types::ReqRes;
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, SqlitePool};
 
@@ -83,7 +82,6 @@ pub struct FuzzerRequestDb {
     pub response_length: Option<i64>,
     pub response_time_ms: Option<i64>,
     pub request_date: i64,
-    pub status: String,
     pub error_message: Option<String>,
     pub connection_dropped: bool,
     pub sort_order: i64,
@@ -745,7 +743,7 @@ pub async fn query_fuzzer_requests_window(
         }
         Some("duration") => format!("response_time_ms {} NULLS LAST, sort_order ASC", dir),
         Some("length") => format!("response_length {} NULLS LAST, sort_order ASC", dir),
-        Some("status") => format!("status {} , sort_order ASC", dir),
+        Some("status") => format!("(error_message IS NOT NULL OR connection_dropped = 1) {}, sort_order ASC", dir),
         Some("payload") | Some("payloadPreview") => {
             format!("payload {} NULLS LAST, sort_order ASC", dir)
         }
@@ -773,58 +771,21 @@ pub async fn query_fuzzer_requests_window(
     Ok((total as usize, rows))
 }
 
-/// Batch insert target requests into SQLite in a single transaction
-pub async fn batch_insert_fuzzer_requests(
-    pool: &SqlitePool,
-    run_id: &str,
-    targets: &[(String, Option<u32>, Option<String>)], // (id, worker_id, payload)
-) -> Result<(), String> {
-    if targets.is_empty() {
-        return Ok(());
-    }
 
-    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
-    let now = chrono::Utc::now().timestamp_millis();
-
-    for (idx, (id, worker_id, payload)) in targets.iter().enumerate() {
-        sqlx::query(
-            "INSERT INTO fuzzer_requests
-                (id, run_id, worker_id, payload, request_date, status, connection_dropped, sort_order)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(run_id, id) DO UPDATE SET
-                payload = excluded.payload,
-                request_date = excluded.request_date,
-                status = 'pending',
-                connection_dropped = 0,
-                error_message = NULL",
-        )
-        .bind(id)
-        .bind(run_id)
-        .bind(worker_id.map(|w| w as i64))
-        .bind(payload)
-        .bind(now)
-        .bind("pending")
-        .bind(false)
-        .bind(idx as i64)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| e.to_string())?;
-    }
-
-    tx.commit().await.map_err(|e| e.to_string())?;
-    Ok(())
-}
 
 #[derive(Debug, Clone)]
 pub struct FuzzerCompletedItemMeta {
     pub id: String,
+    pub sort_order: i64,
+    pub payload: Option<String>,
+    pub request_date: i64,
     pub status_code: Option<i64>,
     pub response_length: i64,
     pub response_time_ms: i64,
     pub worker_id: Option<u32>,
 }
 
-/// Insert a compressed response chunk into `fuzzer_chunks` and update the requests in a single transaction
+/// Insert a compressed response chunk into `fuzzer_chunks` and insert the completed requests in a single transaction
 pub async fn insert_fuzzer_chunk_and_update_requests(
     pool: &SqlitePool,
     run_id: &str,
@@ -853,26 +814,33 @@ pub async fn insert_fuzzer_chunk_and_update_requests(
 
     for (idx, item) in items.iter().enumerate() {
         sqlx::query(
-            "UPDATE fuzzer_requests
-             SET status_code = ?,
-                 response_length = ?,
-                 response_time_ms = ?,
-                 status = 'completed',
-                 error_message = NULL,
-                 connection_dropped = 0,
-                 chunk_id = ?,
-                 chunk_index = ?,
-                 worker_id = COALESCE(?, worker_id)
-             WHERE run_id = ? AND id = ?"
+            "INSERT INTO fuzzer_requests
+                (id, run_id, worker_id, payload, status_code, response_length, response_time_ms, request_date, error_message, connection_dropped, sort_order, chunk_id, chunk_index)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, ?, ?, ?)
+             ON CONFLICT(run_id, id) DO UPDATE SET
+                worker_id = excluded.worker_id,
+                payload = excluded.payload,
+                status_code = excluded.status_code,
+                response_length = excluded.response_length,
+                response_time_ms = excluded.response_time_ms,
+                request_date = excluded.request_date,
+                error_message = NULL,
+                connection_dropped = 0,
+                sort_order = excluded.sort_order,
+                chunk_id = excluded.chunk_id,
+                chunk_index = excluded.chunk_index"
         )
+        .bind(&item.id)
+        .bind(run_id)
+        .bind(item.worker_id.map(|w| w as i64))
+        .bind(&item.payload)
         .bind(item.status_code)
         .bind(item.response_length)
         .bind(item.response_time_ms)
+        .bind(item.request_date)
+        .bind(item.sort_order)
         .bind(chunk_id)
         .bind(idx as i64)
-        .bind(item.worker_id.map(|w| w as i64))
-        .bind(run_id)
-        .bind(&item.id)
         .execute(&mut *tx)
         .await
         .map_err(|e| e.to_string())?;
@@ -898,56 +866,74 @@ pub async fn fetch_fuzzer_chunk_blob(
     Ok(blob)
 }
 
-/// Update a single completed fuzzer request in SQLite
-pub async fn update_fuzzer_request_completed_single(
+/// Insert a single failed/errored fuzzer request in SQLite
+pub async fn insert_fuzzer_request_error(
     pool: &SqlitePool,
     run_id: &str,
     request_id: &str,
-    raw_response: &str,
+    sort_order: i64,
+    payload: Option<&str>,
+    request_date: i64,
     worker_id: Option<u32>,
-    response_time_ms: u128,
-) -> Result<(), String> {
-    let status_code = parse_status_code(raw_response);
-    let response_len = raw_response.len() as i64;
-    let resp_time = response_time_ms as i64;
-
-    let compressed = crate::fuzzer::chunk_manager::compress_chunk(&[raw_response.to_string()])?;
-    let items = [FuzzerCompletedItemMeta {
-        id: request_id.to_string(),
-        status_code,
-        response_length: response_len,
-        response_time_ms: resp_time,
-        worker_id,
-    }];
-    insert_fuzzer_chunk_and_update_requests(pool, run_id, &compressed, raw_response.len() as i64, &items).await?;
-
-    Ok(())
-}
-
-/// Update a single failed/errored fuzzer request in SQLite
-pub async fn update_fuzzer_request_error(
-    pool: &SqlitePool,
-    run_id: &str,
-    request_id: &str,
     message: &str,
     connection_dropped: bool,
 ) -> Result<(), String> {
     sqlx::query(
-        "UPDATE fuzzer_requests
-         SET status = 'error',
-             error_message = ?,
-             connection_dropped = ?
-         WHERE run_id = ? AND id = ?",
+        "INSERT INTO fuzzer_requests
+            (id, run_id, worker_id, payload, status_code, response_length, response_time_ms, request_date, error_message, connection_dropped, sort_order, chunk_id, chunk_index)
+         VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, NULL, NULL)
+         ON CONFLICT(run_id, id) DO UPDATE SET
+            error_message = excluded.error_message,
+            connection_dropped = excluded.connection_dropped,
+            request_date = excluded.request_date"
     )
+    .bind(request_id)
+    .bind(run_id)
+    .bind(worker_id.map(|w| w as i64))
+    .bind(payload)
+    .bind(request_date)
     .bind(message)
     .bind(connection_dropped)
-    .bind(run_id)
-    .bind(request_id)
+    .bind(sort_order)
     .execute(pool)
     .await
     .map_err(|e| e.to_string())?;
 
     Ok(())
+}
+
+/// Fetch completed requests for a run within a sort_order range
+pub async fn fetch_fuzzer_requests_in_range(
+    pool: &SqlitePool,
+    run_id: &str,
+    min_sort: i64,
+    max_sort: i64,
+) -> Result<Vec<FuzzerRequestDb>, String> {
+    sqlx::query_as::<_, FuzzerRequestDb>(
+        "SELECT * FROM fuzzer_requests WHERE run_id = ? AND sort_order >= ? AND sort_order < ? ORDER BY sort_order ASC"
+    )
+    .bind(run_id)
+    .bind(min_sort)
+    .bind(max_sort)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// Fetch all existing sort_order indices for a run
+pub async fn fetch_completed_sort_orders(
+    pool: &SqlitePool,
+    run_id: &str,
+) -> Result<std::collections::HashSet<i64>, String> {
+    let rows: Vec<(i64,)> = sqlx::query_as(
+        "SELECT sort_order FROM fuzzer_requests WHERE run_id = ?"
+    )
+    .bind(run_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    Ok(rows.into_iter().map(|(s,)| s).collect())
 }
 
 /// Resolve the actual run_id from session_index and history_index offset in DB
@@ -981,24 +967,6 @@ pub async fn resolve_fuzzer_run_id(
 
     format!("{}-{}", session_index, history_index)
 }
-
-/// Update pending fuzzer requests to 'cancelled' in SQLite
-pub async fn cancel_pending_fuzzer_requests(
-    pool: &SqlitePool,
-    run_id: &str,
-) -> Result<(), String> {
-    sqlx::query(
-        "UPDATE fuzzer_requests SET status = 'cancelled' WHERE run_id = ? AND status = 'pending'"
-    )
-    .bind(run_id)
-    .execute(pool)
-    .await
-    .map_err(|e| e.to_string())?;
-
-    Ok(())
-}
-
-
 
 /// Load all fuzzer requests for a run from SQLite
 pub async fn load_all_fuzzer_requests(

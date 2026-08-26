@@ -98,7 +98,6 @@ export const InterceptStack: React.FC<InterceptStackProps> = ({
                     EditorView.theme({
                         '&': { height: '100%', fontSize: '12px', backgroundColor: '#0d1117' },
                         '.cm-scroller': { overflow: 'auto' },
-                        '.cm-content': { fontFamily: 'JetBrains Mono, Menlo, monospace' },
                     }),
                     EditorView.updateListener.of((update) => {
                         if (update.docChanged) {

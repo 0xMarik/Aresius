@@ -1014,10 +1014,10 @@ export const httpTheme = EditorView.theme({
         borderRight: '1px solid hsl(var(--border))',
     },
     '.cm-activeLine': {
-        backgroundColor: 'hsl(var(--accent) / 0.4)',
+        backgroundColor: 'hsl(var(--accent) / 0.25)',
     },
     '.cm-activeLineGutter': {
-        backgroundColor: 'hsl(var(--accent))',
+        backgroundColor: 'hsl(var(--accent) / 0.5)',
     },
 
     // Fold gutter & placeholder styling
@@ -1039,8 +1039,8 @@ export const httpTheme = EditorView.theme({
         padding: '0 5px',
         margin: '0 3px',
         fontSize: '10px',
-        fontFamily: 'monospace',
-        fontWeight: 'bold',
+        fontFamily: 'var(--font-mono, monospace)',
+        fontWeight: '500',
         cursor: 'pointer',
         '&:hover': {
             backgroundColor: 'hsl(var(--muted))',
@@ -1049,30 +1049,30 @@ export const httpTheme = EditorView.theme({
     },
 
     // Dark theme token styling
-    '.dark & .cm-keyword, & .cm-keyword': { color: '#ff6b6b', fontWeight: 'bold' },
+    '.dark & .cm-keyword, & .cm-keyword': { color: '#ff6b6b', fontWeight: '600' },
     '.dark & .cm-string, & .cm-string': { color: '#4ecdc4' },
     '.dark & .cm-number, & .cm-number': { color: '#45b7d1' },
-    '.dark & .cm-property, & .cm-property': { color: '#96ceb4', fontWeight: 'bold' },
+    '.dark & .cm-property, & .cm-property': { color: '#96ceb4' },
     '.dark & .cm-operator, & .cm-operator': { color: '#74b9ff' },
     '.dark & .cm-bracket, & .cm-bracket': { color: '#fd79a8' },
     '.dark & .cm-atom, & .cm-atom': { color: '#fdcb6e' },
     '.dark & .cm-tag, & .cm-tag': { color: '#ff7675' },
     '.dark & .cm-attribute, & .cm-attribute': { color: '#a29bfe' },
     '.dark & .cm-comment, & .cm-comment': { color: '#9a9a90', fontStyle: 'italic' },
-    '.dark & .cm-variable, & .cm-variable': { color: '#e17055', fontWeight: 'bold', backgroundColor: '#3a2e1b' },
+    '.dark & .cm-variable, & .cm-variable': { color: '#e17055', fontWeight: '600', backgroundColor: '#3a2e1b' },
 
     // Light theme token styling
-    '.light & .cm-keyword': { color: '#b23a2e', fontWeight: 'bold' },
+    '.light & .cm-keyword': { color: '#b23a2e', fontWeight: '600' },
     '.light & .cm-string': { color: '#0277bd' },
     '.light & .cm-number': { color: '#00838f' },
-    '.light & .cm-property': { color: '#2e7d32', fontWeight: 'bold' },
+    '.light & .cm-property': { color: '#2e7d32' },
     '.light & .cm-operator': { color: '#3f51b5' },
     '.light & .cm-bracket': { color: '#ad1457' },
     '.light & .cm-atom': { color: '#e65100' },
     '.light & .cm-tag': { color: '#c62828' },
     '.light & .cm-attribute': { color: '#6a1b9a' },
     '.light & .cm-comment': { color: '#5c6360', fontStyle: 'italic' },
-    '.light & .cm-variable': { color: '#d84315', fontWeight: 'bold', backgroundColor: '#fff8e1' },
+    '.light & .cm-variable': { color: '#d84315', fontWeight: '600', backgroundColor: '#fff8e1' },
 });
 
 // Complete language support with optional folding

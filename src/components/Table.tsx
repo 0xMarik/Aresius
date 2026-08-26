@@ -320,7 +320,7 @@ function TableHeaderRowInner<TData extends BaseRow>({
                                     onClick={header.column.getToggleSortingHandler()}
                                     className="flex flex-1 cursor-pointer select-none items-center justify-between gap-1"
                                 >
-                                    <span className="text-[10.5px] font-semibold uppercase tracking-wide text-muted-foreground whitespace-nowrap">
+                                    <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap">
                                         {flexRender(header.column.columnDef.header, header.getContext())}
                                     </span>
                                     <span className="text-muted-foreground/60">

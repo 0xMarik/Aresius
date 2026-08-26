@@ -34,6 +34,7 @@ fn build_echo_fuzz_requests(session: &FuzzerSession) -> Vec<FuzzTarget> {
 
         targets.push(FuzzTarget {
             id: format!("{}", value_idx),
+            sort_order: value_idx,
             request: formatted_request,
             payload: Some(display_payload),
         });

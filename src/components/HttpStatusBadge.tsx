@@ -45,7 +45,7 @@ export const HttpStatusBadge: React.FC<HttpStatusBadgeProps> = ({
         <Badge
             variant="outline"
             className={cn(
-                'font-mono text-[10px] px-1.5 py-0 font-bold inline-flex items-center justify-center select-none border',
+                'font-mono text-[11px] px-1.5 py-0 font-semibold inline-flex items-center justify-center select-none border',
                 getStatusBadgeStyle(status),
                 className
             )}

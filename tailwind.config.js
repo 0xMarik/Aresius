@@ -8,6 +8,32 @@ module.exports = {
   ],
   theme: {
   	extend: {
+  		fontFamily: {
+  			sans: [
+  				'system-ui',
+  				'-apple-system',
+  				'BlinkMacSystemFont',
+  				'"Segoe UI"',
+  				'Roboto',
+  				'"Ubuntu"',
+  				'"Cantarell"',
+  				'"Liberation Sans"',
+  				'"DejaVu Sans"',
+  				'sans-serif',
+  			],
+  			mono: [
+  				'ui-monospace',
+  				'SFMono-Regular',
+  				'Menlo',
+  				'Monaco',
+  				'Consolas',
+  				'"Cascadia Code"',
+  				'"Ubuntu Mono"',
+  				'"Liberation Mono"',
+  				'"DejaVu Sans Mono"',
+  				'monospace',
+  			],
+  		},
   		borderRadius: {
   			lg: 'var(--radius)',
   			md: 'calc(var(--radius) - 2px)',

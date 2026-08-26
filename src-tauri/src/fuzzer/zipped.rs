@@ -43,6 +43,7 @@ fn build_zipped_fuzz_requests(session: &FuzzerSession) -> Vec<FuzzTarget> {
 
         targets.push(FuzzTarget {
             id: format!("{}", i),
+            sort_order: i,
             request: formatted_request,
             payload: serde_json::to_string(&payload_parts).ok(),
         });

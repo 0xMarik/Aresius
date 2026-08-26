@@ -126,7 +126,6 @@ const RawMessageEditor: React.FC<RawMessageEditorProps> = ({
                     backgroundColor: '#0d1117',
                 },
                 '.cm-scroller': { overflow: 'auto' },
-                '.cm-content': { fontFamily: 'JetBrains Mono, Menlo, monospace' },
             }),
             EditorView.lineWrapping,
         ];

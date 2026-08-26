@@ -68,7 +68,7 @@ CREATE TABLE fuzzer_chunks (
 );
 CREATE INDEX idx_fuzzer_chunks_run_id ON fuzzer_chunks (run_id);
 
--- 6. Fuzzer Requests (Individual fuzzed transactions)
+-- 6. Fuzzer Requests (Individual completed fuzzed transactions)
 CREATE TABLE fuzzer_requests (
     id                  TEXT    NOT NULL, -- fuzzRequestId
     run_id              TEXT    NOT NULL REFERENCES fuzzer_runs(id) ON DELETE CASCADE,
@@ -78,7 +78,6 @@ CREATE TABLE fuzzer_requests (
     response_length     INTEGER,
     response_time_ms    INTEGER,
     request_date        INTEGER NOT NULL,
-    status              TEXT    NOT NULL DEFAULT 'pending',
     error_message       TEXT,
     connection_dropped  INTEGER NOT NULL DEFAULT 0,
     sort_order          INTEGER NOT NULL DEFAULT 0,
@@ -87,7 +86,7 @@ CREATE TABLE fuzzer_requests (
     PRIMARY KEY (run_id, id)
 );
 CREATE INDEX idx_fuzzer_requests_run_id ON fuzzer_requests (run_id);
-CREATE INDEX idx_fuzzer_requests_status ON fuzzer_requests (run_id, status);
+CREATE INDEX idx_fuzzer_requests_sort_order ON fuzzer_requests (run_id, sort_order);
 CREATE INDEX idx_fuzzer_requests_sort_code ON fuzzer_requests (run_id, status_code);
 CREATE INDEX idx_fuzzer_requests_sort_duration ON fuzzer_requests (run_id, response_time_ms);
 CREATE INDEX idx_fuzzer_requests_sort_length ON fuzzer_requests (run_id, response_length);
