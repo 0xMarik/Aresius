@@ -49,8 +49,11 @@ const AddProjectDialog = () => {
         }
 
         const sanitizedName = projectName.trim()
-        const baseDir = customPath.trim() || defaultDir
-        const targetPath = `${baseDir}${baseDir.endsWith('\\') || baseDir.endsWith('/') ? '' : '\\'}${sanitizedName}.ares`
+        const rawDir = (customPath.trim() || defaultDir).trim()
+        const isWindows = rawDir.includes('\\') && !rawDir.includes('/')
+        const sep = isWindows ? '\\' : '/'
+        const cleanBase = rawDir.replace(/[/\\]+$/, '')
+        const targetPath = `${cleanBase}${sep}${sanitizedName}.ares`
 
         setLoading(true)
         try {
@@ -117,7 +120,7 @@ const AddProjectDialog = () => {
                                 placeholder="Default project directory"
                             />
                             <p className="text-[11px] text-muted-foreground">
-                                Will save to: <code className="text-foreground">{`${customPath.trim() || defaultDir || '...'}\\${projectName.trim() || 'project'}.ares`}</code>
+                                Will save to: <code className="text-foreground">{`${(customPath.trim() || defaultDir || '...').replace(/[/\\]+$/, '')}${(customPath || defaultDir).includes('\\') && !(customPath || defaultDir).includes('/') ? '\\' : '/'}${projectName.trim() || 'project'}.ares`}</code>
                             </p>
                         </div>
 

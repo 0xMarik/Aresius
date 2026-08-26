@@ -42,6 +42,9 @@ pub async fn create_project(
     temporary: Option<bool>,
     catalog: tauri::State<'_, CatalogState>,
 ) -> Result<Project, String> {
+    #[cfg(unix)]
+    let path = path.replace('\\', "/");
+
     let mut path_buf = PathBuf::from(&path);
     if path_buf.extension().and_then(|e| e.to_str()) != Some("ares") {
         path_buf.set_extension("ares");
