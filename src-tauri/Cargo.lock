@@ -36,7 +36,6 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "uuid",
- "winreg",
  "x509-parser 0.17.0",
  "zstd",
 ]

@@ -1,6 +1,5 @@
 pub mod body_decoder;
 pub mod certs;
-pub mod windows_association;
 use url::Url;
 pub mod database;
 pub mod http_connection;
