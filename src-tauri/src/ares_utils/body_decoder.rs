@@ -105,7 +105,7 @@ fn decode_one(encoding: &str, input: &[u8], limits: &DecodeLimits) -> Result<Vec
 /// body can't be used to exhaust memory (zip-bomb style).
 fn bounded_read<R: Read>(mut reader: R, max_output_bytes: usize) -> Result<Vec<u8>> {
     let mut out = Vec::new();
-    let mut buf = [0u8; 65536];
+    let mut buf = vec![0u8; 65536];
     loop {
         let n = reader.read(&mut buf)?;
         if n == 0 {

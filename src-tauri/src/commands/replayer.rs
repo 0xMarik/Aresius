@@ -94,7 +94,7 @@ pub async fn replay_request(
     let task_url = target_url.clone();
     let force_close = force_close_connection.unwrap_or(false);
 
-    let task = async move {
+    let mut task = Box::pin(async move {
         let req = if force_close {
             apply_force_close_connection(&request_tmp)
         } else {
@@ -121,10 +121,10 @@ pub async fn replay_request(
             request_raw: req,
             base_url: task_url,
         })
-    };
+    });
 
     let result = tokio::select! {
-        res = task => res,
+        res = &mut task => res,
         _ = rx => Err("Request cancelled".to_string()),
     };
 
@@ -134,4 +134,16 @@ pub async fn replay_request(
     }
 
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_replay_request_future_size() {
+        let fut = replay_request("example.com".into(), "GET / HTTP/1.1\r\n\r\n".into(), None, None);
+        println!("replay_request future size: {} bytes", std::mem::size_of_val(&fut));
+        assert!(std::mem::size_of_val(&fut) < 16384, "Future size is too large: {} bytes", std::mem::size_of_val(&fut));
+    }
 }

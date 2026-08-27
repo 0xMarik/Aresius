@@ -466,7 +466,7 @@ async fn handle_client(
     mut client_stream: TcpStream,
     connection_options: ConnectionOptions,
 ) -> std::io::Result<()> {
-    let mut buffer = [0u8; 65536];
+    let mut buffer = vec![0u8; 65536];
     let bytes_read = client_stream.read(&mut buffer).await?;
 
     if bytes_read == 0 {
