@@ -894,30 +894,62 @@ async fn run_dynamic_fuzzer(
     let flusher_run_id = run_id.clone();
 
     let flusher_handle = tokio::spawn(async move {
-        let mut batch_responses: Vec<String> = Vec::with_capacity(150);
-        let mut batch_meta: Vec<crate::ares_utils::database::fuzzer::FuzzerCompletedItemMeta> = Vec::with_capacity(150);
-        let mut batch_bytes: usize = 0;
-        let mut ticker = interval(Duration::from_millis(500));
+        struct StatusChunkBuffer {
+            responses: Vec<String>,
+            meta: Vec<crate::ares_utils::database::fuzzer::FuzzerCompletedItemMeta>,
+            total_bytes: usize,
+            created_at: std::time::Instant,
+        }
 
-        async fn do_flush(
+        impl StatusChunkBuffer {
+            fn new(capacity: usize) -> Self {
+                Self {
+                    responses: Vec::with_capacity(capacity),
+                    meta: Vec::with_capacity(capacity),
+                    total_bytes: 0,
+                    created_at: std::time::Instant::now(),
+                }
+            }
+
+            fn push(
+                &mut self,
+                raw_response: String,
+                item: crate::ares_utils::database::fuzzer::FuzzerCompletedItemMeta,
+            ) {
+                self.total_bytes += raw_response.len();
+                self.meta.push(item);
+                self.responses.push(raw_response);
+            }
+
+            fn is_empty(&self) -> bool {
+                self.responses.is_empty()
+            }
+        }
+
+        use crate::fuzzer::chunk_manager::{
+            target_byte_capacity_for_status, target_chunk_capacity_for_status,
+        };
+
+        async fn do_flush_status(
             pool: &sqlx::SqlitePool,
             run_id: &str,
-            responses: &mut Vec<String>,
-            meta: &mut Vec<crate::ares_utils::database::fuzzer::FuzzerCompletedItemMeta>,
-            bytes: &mut usize,
+            status_code: i64,
+            buf: &mut StatusChunkBuffer,
         ) {
-            if responses.is_empty() {
+            if buf.is_empty() {
                 return;
             }
-            let resps = std::mem::take(responses);
-            let metas = std::mem::take(meta);
-            *bytes = 0;
+            let resps = std::mem::take(&mut buf.responses);
+            let metas = std::mem::take(&mut buf.meta);
+            buf.total_bytes = 0;
+            buf.created_at = std::time::Instant::now();
 
             if let Ok(compressed) = crate::fuzzer::chunk_manager::compress_chunk(&resps) {
                 let total_bytes: i64 = resps.iter().map(|s| s.len() as i64).sum();
                 if let Ok(chunk_id) = crate::ares_utils::database::fuzzer::insert_fuzzer_chunk_and_update_requests(
                     pool,
                     run_id,
+                    status_code,
                     &compressed,
                     total_bytes,
                     &metas,
@@ -927,21 +959,26 @@ async fn run_dynamic_fuzzer(
             }
         }
 
+        let mut status_buffers: std::collections::HashMap<i64, StatusChunkBuffer> = std::collections::HashMap::new();
+        let mut ticker = interval(Duration::from_millis(500));
+        const TIMEOUT_FLUSH_DURATION: Duration = Duration::from_millis(2000);
+
         loop {
             tokio::select! {
                 _ = ticker.tick() => {
-                    if !batch_responses.is_empty() {
-                        if let Some(ref pool) = flusher_pool {
-                            do_flush(pool, &flusher_run_id, &mut batch_responses, &mut batch_meta, &mut batch_bytes).await;
+                    if let Some(ref pool) = flusher_pool {
+                        for (&code, buf) in status_buffers.iter_mut() {
+                            if !buf.is_empty() && buf.created_at.elapsed() >= TIMEOUT_FLUSH_DURATION {
+                                do_flush_status(pool, &flusher_run_id, code, buf).await;
+                            }
                         }
                     }
                 }
                 msg = chunk_rx.recv() => {
                     match msg {
                         Some(ChunkWorkerMessage::Completed { id, sort_order, payload, request_date, raw_response, status_code, response_length, response_time_ms, worker_id }) => {
-                            let resp_len = raw_response.len();
-                            batch_bytes += resp_len;
-                            batch_meta.push(crate::ares_utils::database::fuzzer::FuzzerCompletedItemMeta {
+                            let code = status_code.unwrap_or(0);
+                            let item = crate::ares_utils::database::fuzzer::FuzzerCompletedItemMeta {
                                 id,
                                 sort_order,
                                 payload,
@@ -950,12 +987,19 @@ async fn run_dynamic_fuzzer(
                                 response_length,
                                 response_time_ms,
                                 worker_id,
-                            });
-                            batch_responses.push(raw_response);
+                            };
 
-                            if batch_responses.len() >= 150 || batch_bytes >= 1_500_000 {
+                            let cap = target_chunk_capacity_for_status(code);
+                            let byte_cap = target_byte_capacity_for_status(code);
+
+                            let buf = status_buffers
+                                .entry(code)
+                                .or_insert_with(|| StatusChunkBuffer::new(cap));
+                            buf.push(raw_response, item);
+
+                            if buf.responses.len() >= cap || buf.total_bytes >= byte_cap {
                                 if let Some(ref pool) = flusher_pool {
-                                    do_flush(pool, &flusher_run_id, &mut batch_responses, &mut batch_meta, &mut batch_bytes).await;
+                                    do_flush_status(pool, &flusher_run_id, code, buf).await;
                                 }
                             }
                         }
@@ -971,7 +1015,7 @@ async fn run_dynamic_fuzzer(
                                     worker_id,
                                     &message,
                                     connection_dropped,
-                                ).await;
+                                    ).await;
                             }
                         }
                         None => {
@@ -982,9 +1026,11 @@ async fn run_dynamic_fuzzer(
             }
         }
 
-        if !batch_responses.is_empty() {
-            if let Some(ref pool) = flusher_pool {
-                do_flush(pool, &flusher_run_id, &mut batch_responses, &mut batch_meta, &mut batch_bytes).await;
+        if let Some(ref pool) = flusher_pool {
+            for (&code, buf) in status_buffers.iter_mut() {
+                if !buf.is_empty() {
+                    do_flush_status(pool, &flusher_run_id, code, buf).await;
+                }
             }
         }
     });

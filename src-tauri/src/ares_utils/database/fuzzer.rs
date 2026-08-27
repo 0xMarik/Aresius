@@ -94,6 +94,7 @@ pub struct FuzzerRequestDb {
 pub struct FuzzerChunkDb {
     pub id: i64,
     pub run_id: String,
+    pub status_code: i64,
     pub compressed_data: Vec<u8>,
     pub uncompressed_bytes: i64,
     pub item_count: i64,
@@ -789,6 +790,7 @@ pub struct FuzzerCompletedItemMeta {
 pub async fn insert_fuzzer_chunk_and_update_requests(
     pool: &SqlitePool,
     run_id: &str,
+    status_code: i64,
     compressed_data: &[u8],
     uncompressed_bytes: i64,
     items: &[FuzzerCompletedItemMeta],
@@ -800,10 +802,11 @@ pub async fn insert_fuzzer_chunk_and_update_requests(
     let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
 
     let chunk_id = sqlx::query(
-        "INSERT INTO fuzzer_chunks (run_id, compressed_data, uncompressed_bytes, item_count)
-         VALUES (?, ?, ?, ?)"
+        "INSERT INTO fuzzer_chunks (run_id, status_code, compressed_data, uncompressed_bytes, item_count)
+         VALUES (?, ?, ?, ?, ?)"
     )
     .bind(run_id)
+    .bind(status_code)
     .bind(compressed_data)
     .bind(uncompressed_bytes)
     .bind(items.len() as i64)

@@ -13,6 +13,28 @@ pub fn decompress_chunk(compressed_data: &[u8]) -> Result<Vec<String>, String> {
     serde_json::from_slice(&decompressed).map_err(|e| e.to_string())
 }
 
+/// Returns the target number of responses per chunk for a given HTTP status code.
+/// 4xx client errors (400..=499) use 500 requests per chunk to maximize compression.
+/// All other status codes use 250 requests per chunk.
+#[inline]
+pub fn target_chunk_capacity_for_status(status_code: i64) -> usize {
+    if (400..=499).contains(&status_code) {
+        500
+    } else {
+        250
+    }
+}
+
+/// Returns the byte safety ceiling for a chunk based on its status code.
+#[inline]
+pub fn target_byte_capacity_for_status(status_code: i64) -> usize {
+    if (400..=499).contains(&status_code) {
+        5_000_000
+    } else {
+        2_500_000
+    }
+}
+
 /// In-memory LRU cache for decompressed response chunks.
 pub struct ChunkCache {
     capacity: usize,
@@ -136,5 +158,46 @@ mod tests {
         assert!(cache.get(1).is_some());
         assert!(cache.get(2).is_none());
         assert!(cache.get(3).is_some());
+    }
+
+    #[test]
+    fn test_target_chunk_capacity_for_status() {
+        // 4xx client errors should have 500 capacity
+        assert_eq!(target_chunk_capacity_for_status(400), 500);
+        assert_eq!(target_chunk_capacity_for_status(404), 500);
+        assert_eq!(target_chunk_capacity_for_status(403), 500);
+        assert_eq!(target_chunk_capacity_for_status(499), 500);
+
+        // Non-4xx should have 250 capacity
+        assert_eq!(target_chunk_capacity_for_status(200), 250);
+        assert_eq!(target_chunk_capacity_for_status(201), 250);
+        assert_eq!(target_chunk_capacity_for_status(301), 250);
+        assert_eq!(target_chunk_capacity_for_status(302), 250);
+        assert_eq!(target_chunk_capacity_for_status(500), 250);
+        assert_eq!(target_chunk_capacity_for_status(502), 250);
+        assert_eq!(target_chunk_capacity_for_status(0), 250);
+    }
+
+    #[test]
+    fn test_homogeneous_404_chunk_500_compression() {
+        // Create 500 homogeneous 404 responses
+        let mut responses = Vec::with_capacity(500);
+        for i in 0..500 {
+            responses.push(format!(
+                "HTTP/1.1 404 Not Found\r\nServer: nginx/1.18.0\r\nContent-Type: text/html\r\nContent-Length: 153\r\nConnection: keep-alive\r\n\r\n<html><head><title>404 Not Found</title></head><body><h1>404 Not Found (path_{})</h1></body></html>",
+                i
+            ));
+        }
+
+        let uncompressed_size: usize = responses.iter().map(|s| s.len()).sum();
+        let compressed = compress_chunk(&responses).expect("compression failed");
+
+        // 500 homogeneous responses should achieve > 90% compression (ratio < 0.10)
+        let ratio = compressed.len() as f64 / uncompressed_size as f64;
+        assert!(ratio < 0.10, "Expected compression ratio < 0.10 for 500 404s, got {}", ratio);
+
+        let decompressed = decompress_chunk(&compressed).expect("decompression failed");
+        assert_eq!(decompressed.len(), 500);
+        assert_eq!(decompressed[499], responses[499]);
     }
 }

@@ -58,15 +58,17 @@ CREATE TABLE fuzzer_runs (
 CREATE INDEX idx_fuzzer_runs_session_id ON fuzzer_runs (session_id);
 CREATE INDEX idx_fuzzer_runs_session_started ON fuzzer_runs (session_id, started_at);
 
--- 5. Fuzzer Chunks (Compressed response chunks)
+-- 5. Fuzzer Chunks (Compressed response chunks grouped by status code)
 CREATE TABLE fuzzer_chunks (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
     run_id              TEXT    NOT NULL REFERENCES fuzzer_runs(id) ON DELETE CASCADE,
+    status_code         INTEGER NOT NULL,
     compressed_data     BLOB    NOT NULL,
     uncompressed_bytes  INTEGER NOT NULL,
     item_count          INTEGER NOT NULL
 );
 CREATE INDEX idx_fuzzer_chunks_run_id ON fuzzer_chunks (run_id);
+CREATE INDEX idx_fuzzer_chunks_status_code ON fuzzer_chunks (run_id, status_code);
 
 -- 6. Fuzzer Requests (Individual completed fuzzed transactions)
 CREATE TABLE fuzzer_requests (
