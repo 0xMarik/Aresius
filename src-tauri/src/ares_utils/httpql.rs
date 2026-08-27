@@ -989,7 +989,8 @@ pub fn compile_fuzzer_httpql_to_sql(
             compile_fuzzer_condition_to_sql(builder, cond, raw_template_req, target_url);
         }
         HttpqlExpr::Bare(term) => {
-            let pattern = format!("%{}%", term.trim());
+            let trimmed = term.trim();
+            let pattern = format!("%{}%", trimmed);
             builder.push("(");
             builder.push("COALESCE(payload, '') LIKE ");
             builder.push_bind(pattern.clone());
@@ -1002,7 +1003,13 @@ pub fn compile_fuzzer_httpql_to_sql(
             builder.push(" OR id LIKE ");
             builder.push_bind(pattern.clone());
             builder.push(" OR CAST(sort_order AS TEXT) LIKE ");
-            builder.push_bind(pattern);
+            builder.push_bind(pattern.clone());
+            if trimmed.len() >= 3 {
+                let escaped = format!("\"{}\"", trimmed.replace('"', "\"\""));
+                builder.push(" OR chunk_id IN (SELECT rowid FROM fuzzer_chunks_fts WHERE fuzzer_chunks_fts MATCH ");
+                builder.push_bind(escaped);
+                builder.push(")");
+            }
             builder.push(")");
         }
         HttpqlExpr::Not(inner) => {
@@ -1041,6 +1048,20 @@ pub fn compile_fuzzer_httpql_to_sql(
     }
 }
 
+pub fn has_response_content_checks(expr: &HttpqlExpr) -> bool {
+    match expr {
+        HttpqlExpr::Condition(cond) => match &cond.field {
+            HttpqlField::RespRaw | HttpqlField::RespBody | HttpqlField::RespHeader(_) => true,
+            _ => false,
+        },
+        HttpqlExpr::Bare(_) => true,
+        HttpqlExpr::Not(inner) => has_response_content_checks(inner),
+        HttpqlExpr::And(list) | HttpqlExpr::Or(list) => {
+            list.iter().any(has_response_content_checks)
+        }
+    }
+}
+
 fn compile_fuzzer_condition_to_sql(
     builder: &mut sqlx::QueryBuilder<sqlx::Sqlite>,
     cond: &HttpqlCondition,
@@ -1063,9 +1084,18 @@ fn compile_fuzzer_condition_to_sql(
         HttpqlField::Payload => {
             compile_str_field(builder, "COALESCE(payload, '')", cond.op, &cond.value, false);
         }
-        // Dummy functionality for headers and raw responses (stubs until test)
+        // FTS-accelerated header and raw response checks
         HttpqlField::RespHeader(_) | HttpqlField::RespRaw | HttpqlField::RespBody => {
-            builder.push("1=1");
+            let term = val_as_string(&cond.value);
+            let trimmed = term.trim();
+            if trimmed.len() >= 3 && matches!(cond.op, HttpqlOperator::Cont | HttpqlOperator::Eq | HttpqlOperator::Like) {
+                let escaped = format!("\"{}\"", trimmed.replace('"', "\"\""));
+                builder.push("chunk_id IN (SELECT rowid FROM fuzzer_chunks_fts WHERE fuzzer_chunks_fts MATCH ");
+                builder.push_bind(escaped);
+                builder.push(")");
+            } else {
+                builder.push("1=1");
+            }
         }
         HttpqlField::RespState | HttpqlField::RespExt | HttpqlField::Preset => {
             builder.push("1=1");
@@ -2061,6 +2091,45 @@ pub trait HttpTransactionEvaluable {
     fn eval_is_https(&self) -> bool;
     fn eval_raw_request(&self) -> Option<&str>;
     fn eval_raw_response(&self) -> Option<&str>;
+    fn eval_payload(&self) -> Option<&str> {
+        None
+    }
+}
+
+pub struct FuzzerEvaluableItem<'a> {
+    pub id: u32,
+    pub method: &'a str,
+    pub host: &'a str,
+    pub path: &'a str,
+    pub query: Option<&'a str>,
+    pub ext: Option<&'a str>,
+    pub status_code: i64,
+    pub response_length: i64,
+    pub response_time_ms: i64,
+    pub sent_at_ms: i64,
+    pub state: &'a str,
+    pub is_https: bool,
+    pub raw_request: Option<&'a str>,
+    pub raw_response: Option<&'a str>,
+    pub payload: Option<&'a str>,
+}
+
+impl<'a> HttpTransactionEvaluable for FuzzerEvaluableItem<'a> {
+    fn eval_id(&self) -> u32 { self.id }
+    fn eval_method(&self) -> &str { self.method }
+    fn eval_host(&self) -> &str { self.host }
+    fn eval_path(&self) -> &str { self.path }
+    fn eval_query(&self) -> Option<&str> { self.query }
+    fn eval_ext(&self) -> Option<&str> { self.ext }
+    fn eval_status_code(&self) -> i64 { self.status_code }
+    fn eval_response_length(&self) -> i64 { self.response_length }
+    fn eval_response_time_ms(&self) -> i64 { self.response_time_ms }
+    fn eval_sent_at_ms(&self) -> i64 { self.sent_at_ms }
+    fn eval_state(&self) -> &str { self.state }
+    fn eval_is_https(&self) -> bool { self.is_https }
+    fn eval_raw_request(&self) -> Option<&str> { self.raw_request }
+    fn eval_raw_response(&self) -> Option<&str> { self.raw_response }
+    fn eval_payload(&self) -> Option<&str> { self.payload }
 }
 
 impl HttpqlExpr {
@@ -2069,6 +2138,11 @@ impl HttpqlExpr {
             HttpqlExpr::Condition(cond) => eval_condition(cond, item),
             HttpqlExpr::Bare(term) => {
                 let term_lower = term.to_lowercase();
+                if let Some(p) = item.eval_payload() {
+                    if p.to_lowercase().contains(&term_lower) {
+                        return true;
+                    }
+                }
                 if item.eval_host().to_lowercase().contains(&term_lower) {
                     return true;
                 }
@@ -2172,9 +2246,14 @@ fn eval_condition<T: HttpTransactionEvaluable>(cond: &HttpqlCondition, item: &T)
         HttpqlField::RespCode => eval_num_cmp(item.eval_status_code(), cond.op, &cond.value),
         HttpqlField::RespTime => eval_num_cmp(item.eval_response_time_ms(), cond.op, &cond.value),
         HttpqlField::RespLen => eval_num_cmp(item.eval_response_length(), cond.op, &cond.value),
-        HttpqlField::RespRaw | HttpqlField::RespBody => {
+        HttpqlField::RespRaw => {
             let raw = item.eval_raw_response().unwrap_or("");
             eval_str_cmp(raw, cond.op, &cond.value, false)
+        }
+        HttpqlField::RespBody => {
+            let raw = item.eval_raw_response().unwrap_or("");
+            let (_, body) = crate::ares_utils::parse::split_message(raw);
+            eval_str_cmp(body, cond.op, &cond.value, false)
         }
         HttpqlField::RespHeader(hname) => {
             let raw = item.eval_raw_response().unwrap_or("");
@@ -2216,7 +2295,6 @@ fn eval_condition<T: HttpTransactionEvaluable>(cond: &HttpqlCondition, item: &T)
                     (req_lower.contains("content-type") && req_lower.contains("json"))
                         || (res_lower.contains("content-type") && res_lower.contains("json"))
                         || req_lower.contains("application/json")
-                        || res_lower.contains("application/json")
                 }
                 "slow" | "slow-requests" => item.eval_response_time_ms() > 1000,
                 "has-params" | "params" => item.eval_query().map(|q| !q.is_empty()).unwrap_or(false),
@@ -2225,7 +2303,8 @@ fn eval_condition<T: HttpTransactionEvaluable>(cond: &HttpqlCondition, item: &T)
         }
         HttpqlField::Bare => {
             let s = val_as_string(&cond.value).to_lowercase();
-            item.eval_host().to_lowercase().contains(&s)
+            item.eval_payload().map(|p| p.to_lowercase().contains(&s)).unwrap_or(false)
+                || item.eval_host().to_lowercase().contains(&s)
                 || item.eval_path().to_lowercase().contains(&s)
                 || item.eval_method().to_lowercase().contains(&s)
                 || item.eval_query().map(|q| q.to_lowercase().contains(&s)).unwrap_or(false)
@@ -2233,7 +2312,10 @@ fn eval_condition<T: HttpTransactionEvaluable>(cond: &HttpqlCondition, item: &T)
                 || item.eval_raw_request().map(|r| r.to_lowercase().contains(&s)).unwrap_or(false)
                 || item.eval_raw_response().map(|r| r.to_lowercase().contains(&s)).unwrap_or(false)
         }
-        HttpqlField::Payload => false,
+        HttpqlField::Payload => {
+            let p = item.eval_payload().unwrap_or("");
+            eval_str_cmp(p, cond.op, &cond.value, false)
+        }
     }
 }
 
@@ -2807,12 +2889,12 @@ mod tests {
         assert!(sql.as_str().contains("response_length > ?"));
         assert!(sql.as_str().contains("response_time_ms < ?"));
 
-        // Test dummy functionality for header and raw
-        let q_dummy = parse_httpql("resp.header[\"server\"].cont:\"nginx\" and resp.raw.cont:\"error\"").unwrap().unwrap();
+        // Test FTS-accelerated functionality for header and raw
+        let q_fts = parse_httpql("resp.header[\"server\"].cont:\"nginx\" and resp.raw.cont:\"error\"").unwrap().unwrap();
         let mut b2 = sqlx::QueryBuilder::<sqlx::Sqlite>::new("SELECT * FROM fuzzer_requests WHERE ");
-        compile_fuzzer_httpql_to_sql(&mut b2, &q_dummy, None, None);
+        compile_fuzzer_httpql_to_sql(&mut b2, &q_fts, None, None);
         let sql2 = b2.sql();
-        assert!(sql2.as_str().contains("1=1 AND 1=1"));
+        assert!(sql2.as_str().contains("chunk_id IN (SELECT rowid FROM fuzzer_chunks_fts WHERE fuzzer_chunks_fts MATCH ?"));
 
         // Test payload and bare search
         let q_payload = parse_httpql("payload.cont:\"admin\"").unwrap().unwrap();
@@ -2824,5 +2906,28 @@ mod tests {
         let mut b4 = sqlx::QueryBuilder::<sqlx::Sqlite>::new("SELECT * FROM fuzzer_requests WHERE ");
         compile_fuzzer_httpql_to_sql(&mut b4, &q_bare, None, None);
         assert!(b4.sql().as_str().contains("COALESCE(payload, '') LIKE ?"));
+        assert!(b4.sql().as_str().contains("chunk_id IN (SELECT rowid FROM fuzzer_chunks_fts"));
+
+        // Test FuzzerEvaluableItem with in-memory evaluation
+        let item = FuzzerEvaluableItem {
+            id: 1,
+            method: "GET",
+            host: "example.com",
+            path: "/test",
+            query: None,
+            ext: None,
+            status_code: 200,
+            response_length: 50,
+            response_time_ms: 25,
+            sent_at_ms: 1000,
+            state: "completed",
+            is_https: false,
+            raw_request: None,
+            raw_response: Some("HTTP/1.1 200 OK\r\nServer: nginx\r\n\r\n{\"flag\":\"secret_123\"}"),
+            payload: Some("fuzz_target"),
+        };
+
+        let q_eval = parse_httpql("resp.code:200 and resp.header[\"server\"].cont:\"nginx\" and resp.body.cont:\"secret_123\" and payload:\"fuzz_target\"").unwrap().unwrap();
+        assert!(q_eval.evaluate(&item));
     }
 }

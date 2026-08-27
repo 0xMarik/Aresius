@@ -719,6 +719,29 @@ pub async fn save_fuzzer_parameters_db(
 }
 
 /// Query window of fuzzer requests directly from SQLite with server-side sorting
+pub async fn fetch_fuzzer_chunk_responses(
+    pool: &SqlitePool,
+    chunk_id: i64,
+) -> Result<std::sync::Arc<Vec<String>>, String> {
+    {
+        let mut cache = crate::fuzzer::chunk_manager::get_chunk_cache().lock().unwrap();
+        if let Some(cached) = cache.get(chunk_id) {
+            return Ok(cached);
+        }
+    }
+
+    let blob = fetch_fuzzer_chunk_blob(pool, chunk_id).await?
+        .ok_or_else(|| format!("Chunk blob not found for chunk_id: {}", chunk_id))?;
+
+    let responses = crate::fuzzer::chunk_manager::decompress_chunk(&blob)?;
+
+    let mut cache = crate::fuzzer::chunk_manager::get_chunk_cache().lock().unwrap();
+    let arc = cache.insert(chunk_id, responses);
+
+    Ok(arc)
+}
+
+/// Query window of fuzzer requests directly from SQLite with server-side sorting and two-stage HTTPQL filtering
 pub async fn query_fuzzer_requests_window(
     pool: &SqlitePool,
     run_id: &str,
@@ -730,18 +753,7 @@ pub async fn query_fuzzer_requests_window(
     raw_template_req: Option<&str>,
     target_url: Option<&str>,
 ) -> Result<(usize, Vec<FuzzerRequestDb>), String> {
-    let mut count_builder =
-        sqlx::QueryBuilder::<sqlx::Sqlite>::new("SELECT COUNT(*) FROM fuzzer_requests WHERE run_id = ");
-    count_builder.push_bind(run_id);
-    if let Some(expr) = httpql_expr {
-        count_builder.push(" AND ");
-        crate::ares_utils::httpql::compile_fuzzer_httpql_to_sql(&mut count_builder, expr, raw_template_req, target_url);
-    }
-    let total: i64 = count_builder
-        .build_query_scalar()
-        .fetch_one(pool)
-        .await
-        .map_err(|e| e.to_string())?;
+    let needs_memory_filter = httpql_expr.map_or(false, crate::ares_utils::httpql::has_response_content_checks);
 
     let is_desc = sort_order
         .map(|s| s.eq_ignore_ascii_case("desc"))
@@ -762,6 +774,129 @@ pub async fn query_fuzzer_requests_window(
         Some("id") => format!("sort_order {}", dir),
         _ => "sort_order ASC".to_string(),
     };
+
+    if needs_memory_filter {
+        let mut builder =
+            sqlx::QueryBuilder::<sqlx::Sqlite>::new("SELECT * FROM fuzzer_requests WHERE run_id = ");
+        builder.push_bind(run_id);
+        if let Some(expr) = httpql_expr {
+            builder.push(" AND ");
+            crate::ares_utils::httpql::compile_fuzzer_httpql_to_sql(&mut builder, expr, raw_template_req, target_url);
+        }
+        builder.push(" ORDER BY ");
+        builder.push(order_clause);
+
+        let candidates = builder
+            .build_query_as::<FuzzerRequestDb>()
+            .fetch_all(pool)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let (tmpl_method, tmpl_path) = raw_template_req
+            .map(|r| {
+                let meta = crate::ares_utils::parse::parse_request_line(r.as_bytes());
+                (meta.method, meta.path)
+            })
+            .unwrap_or((String::new(), String::new()));
+
+        let tmpl_host = target_url
+            .and_then(|u| url::Url::parse(u).ok())
+            .and_then(|url| url.host_str().map(String::from))
+            .unwrap_or_default();
+
+        let is_https = target_url.map_or(false, |u| u.starts_with("https://"));
+
+        let mut local_chunk_map: std::collections::HashMap<i64, std::sync::Arc<Vec<String>>> = std::collections::HashMap::new();
+        let mut filtered = Vec::new();
+
+        for row in candidates {
+            let mut match_found = false;
+            if let (Some(cid), Some(cidx)) = (row.chunk_id, row.chunk_index) {
+                let responses = if let Some(resps) = local_chunk_map.get(&cid) {
+                    Some(resps)
+                } else {
+                    if let Ok(resps) = fetch_fuzzer_chunk_responses(pool, cid).await {
+                        local_chunk_map.insert(cid, resps);
+                        local_chunk_map.get(&cid)
+                    } else {
+                        None
+                    }
+                };
+
+                if let Some(resps) = responses {
+                    if let Some(raw_resp) = resps.get(cidx as usize) {
+                        let item = crate::ares_utils::httpql::FuzzerEvaluableItem {
+                            id: row.sort_order as u32,
+                            method: &tmpl_method,
+                            host: &tmpl_host,
+                            path: &tmpl_path,
+                            query: None,
+                            ext: None,
+                            status_code: row.status_code.unwrap_or(0),
+                            response_length: row.response_length.unwrap_or(0),
+                            response_time_ms: row.response_time_ms.unwrap_or(0),
+                            sent_at_ms: row.request_date,
+                            state: "completed",
+                            is_https,
+                            raw_request: raw_template_req,
+                            raw_response: Some(raw_resp.as_str()),
+                            payload: row.payload.as_deref(),
+                        };
+                        if let Some(expr) = httpql_expr {
+                            if expr.evaluate(&item) {
+                                match_found = true;
+                            }
+                        }
+                    }
+                }
+            } else {
+                let item = crate::ares_utils::httpql::FuzzerEvaluableItem {
+                    id: row.sort_order as u32,
+                    method: &tmpl_method,
+                    host: &tmpl_host,
+                    path: &tmpl_path,
+                    query: None,
+                    ext: None,
+                    status_code: row.status_code.unwrap_or(0),
+                    response_length: row.response_length.unwrap_or(0),
+                    response_time_ms: row.response_time_ms.unwrap_or(0),
+                    sent_at_ms: row.request_date,
+                    state: if row.error_message.is_some() || row.connection_dropped { "error" } else { "pending" },
+                    is_https,
+                    raw_request: raw_template_req,
+                    raw_response: None,
+                    payload: row.payload.as_deref(),
+                };
+                if let Some(expr) = httpql_expr {
+                    if expr.evaluate(&item) {
+                        match_found = true;
+                    }
+                }
+            }
+
+            if match_found {
+                filtered.push(row);
+            }
+        }
+
+        let total = filtered.len();
+        let window_rows = filtered.into_iter().skip(offset).take(limit).collect();
+        return Ok((total, window_rows));
+    }
+
+    // Pure SQL fast path (when no raw or header in-memory evaluation needed)
+    let mut count_builder =
+        sqlx::QueryBuilder::<sqlx::Sqlite>::new("SELECT COUNT(*) FROM fuzzer_requests WHERE run_id = ");
+    count_builder.push_bind(run_id);
+    if let Some(expr) = httpql_expr {
+        count_builder.push(" AND ");
+        crate::ares_utils::httpql::compile_fuzzer_httpql_to_sql(&mut count_builder, expr, raw_template_req, target_url);
+    }
+    let total: i64 = count_builder
+        .build_query_scalar()
+        .fetch_one(pool)
+        .await
+        .map_err(|e| e.to_string())?;
 
     let mut builder =
         sqlx::QueryBuilder::<sqlx::Sqlite>::new("SELECT * FROM fuzzer_requests WHERE run_id = ");
@@ -1201,14 +1336,22 @@ mod tests {
             },
         ];
 
+        let raw_resps = vec![
+            "HTTP/1.1 200 OK\r\nServer: nginx\r\n\r\nHello req 1".to_string(),
+            "HTTP/1.1 404 Not Found\r\nServer: apache\r\n\r\nNot found".to_string(),
+            "HTTP/1.1 200 OK\r\nServer: nginx\r\n\r\n{\"secret\": \"admin_flag_123\"}".to_string(),
+        ];
+        let compressed = crate::fuzzer::chunk_manager::compress_chunk(&raw_resps).unwrap();
+        let fts_text = raw_resps.join("\n");
+
         insert_fuzzer_chunk_and_update_requests(
             &pool,
             "run-1",
             200,
-            b"fake_blob",
+            &compressed,
             2120,
             &items,
-            None,
+            Some(&fts_text),
         )
         .await
         .unwrap();
@@ -1237,11 +1380,20 @@ mod tests {
         assert_eq!(total3, 1);
         assert_eq!(rows3[0].id, "req-1");
 
-        // 4. Query combined with dummy header: resp.code:200 and resp.header["server"].cont:"nginx"
+        // 4. Query combined header: resp.code:200 and resp.header["server"].cont:"nginx"
         let q4 = crate::ares_utils::httpql::parse_httpql("resp.code:200 and resp.header[\"server\"].cont:\"nginx\"").unwrap().unwrap();
-        let (total4, _) = query_fuzzer_requests_window(
+        let (total4, rows4) = query_fuzzer_requests_window(
             &pool, "run-1", 0, 10, None, None, Some(&q4), None, None
         ).await.unwrap();
         assert_eq!(total4, 2);
+        assert_eq!(rows4.len(), 2);
+
+        // 5. Query body search: resp.body.cont:"admin_flag_123"
+        let q5 = crate::ares_utils::httpql::parse_httpql("resp.body.cont:\"admin_flag_123\"").unwrap().unwrap();
+        let (total5, rows5) = query_fuzzer_requests_window(
+            &pool, "run-1", 0, 10, None, None, Some(&q5), None, None
+        ).await.unwrap();
+        assert_eq!(total5, 1);
+        assert_eq!(rows5[0].id, "req-3");
     }
 }
