@@ -50,10 +50,21 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "resources": [
+      "icons/file-icon/*"
+    ],
     "fileAssociations": [
       {
-        "ext": ["ares"]
+        "ext": ["ares"],
+        "name": "Ares File",
+        "description": "Aresius Project File",
+        "role": "Editor"
       }
-    ]
+    ],
+    "windows": {
+      "nsis": {
+        "installerHooks": "windows/hooks.nsh"
+      }
+    }
   }
 }

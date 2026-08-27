@@ -25,6 +25,9 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     });
     handle.manage(CatalogState::new(pool.clone()));
 
+    // Register Windows file associations and file icon (no-op on non-Windows)
+    crate::ares_utils::windows_association::register_windows_file_association(&handle);
+
     // Load persisted proxy settings and spawn the HTTP proxy service in the background.
     let app_handle = app.handle().clone();
     tauri::async_runtime::spawn(async move {
