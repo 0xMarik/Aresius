@@ -205,10 +205,17 @@ pub async fn get_fuzzer_history_window(
     limit: usize,
     sort_by: Option<String>,
     sort_order: Option<String>,
+    search_query: Option<String>,
 ) -> Result<FuzzerWindowResult, String> {
+    let parsed_httpql = search_query
+        .as_deref()
+        .and_then(|q| if q.trim().is_empty() { None } else { Some(q) })
+        .and_then(|q| crate::ares_utils::httpql::parse_httpql(q).ok().flatten());
+
     let key = run_key(selected_session, fuzz_history);
     let store = fuzz_store().lock().await;
-    if let Some(run_data) = store.get(&key) {
+    if parsed_httpql.is_none() && store.contains_key(&key) {
+        let run_data = store.get(&key).unwrap();
         let total = run_data.rows.len();
         let start = offset.min(total);
         let end = (offset + limit).min(total);
@@ -335,7 +342,7 @@ pub async fn get_fuzzer_history_window(
                     let config_snapshot: Option<crate::types::SessionPayload> = config_snapshot_str
                         .and_then(|s| serde_json::from_str(&s).ok());
 
-                    let is_default_sort = sort_by.is_none() || sort_by.as_deref() == Some("id") || sort_by.as_deref() == Some("sortOrder");
+                    let is_default_sort = (sort_by.is_none() || sort_by.as_deref() == Some("id") || sort_by.as_deref() == Some("sortOrder")) && parsed_httpql.is_none();
 
                     if is_default_sort && sort_order.as_deref() != Some("desc") && sort_order.as_deref() != Some("DESC") {
                         let start = offset.min(total);
@@ -414,14 +421,25 @@ pub async fn get_fuzzer_history_window(
 
                         return Ok(FuzzerWindowResult { total, items });
                     } else {
-                        // Metric sort (status_code, duration, length) on completed items
-                        if let Ok((_, db_rows)) = crate::ares_utils::database::fuzzer::query_fuzzer_requests_window(
+                        let (raw_template_req, target_url) = config_snapshot
+                            .as_ref()
+                            .map(|cfg| (
+                                Some(cfg.raw_request.as_str()),
+                                Some(cfg.metadata.target_url.as_str()),
+                            ))
+                            .unwrap_or((None, None));
+
+                        // Metric sort or HTTPQL query on completed items
+                        if let Ok((total, db_rows)) = crate::ares_utils::database::fuzzer::query_fuzzer_requests_window(
                             &pool,
                             &run_id,
                             offset,
                             limit,
                             sort_by.as_deref(),
                             sort_order.as_deref(),
+                            parsed_httpql.as_ref(),
+                            raw_template_req,
+                            target_url,
                         ).await {
                             let items: Vec<FuzzerRequestRow> = db_rows.into_iter().map(|r| {
                                 let status = if r.error_message.is_some() || r.connection_dropped {
@@ -946,6 +964,26 @@ async fn run_dynamic_fuzzer(
 
             if let Ok(compressed) = crate::fuzzer::chunk_manager::compress_chunk(&resps) {
                 let total_bytes: i64 = resps.iter().map(|s| s.len() as i64).sum();
+
+                // Build filtered FTS text: only include text-based responses, capping body at 32 KB
+                let mut fts_text = String::new();
+                for r in &resps {
+                    if crate::ares_utils::content_filter::is_text_based_response(r) {
+                        let (headers, body) = crate::ares_utils::parse::split_message(r);
+                        let body_limit = body.len().min(32_768);
+                        fts_text.push_str(headers);
+                        fts_text.push_str("\r\n\r\n");
+                        fts_text.push_str(&body[..body_limit]);
+                        fts_text.push('\n');
+                    }
+                }
+
+                let fts_opt = if fts_text.is_empty() {
+                    None
+                } else {
+                    Some(fts_text.as_str())
+                };
+
                 if let Ok(chunk_id) = crate::ares_utils::database::fuzzer::insert_fuzzer_chunk_and_update_requests(
                     pool,
                     run_id,
@@ -953,6 +991,7 @@ async fn run_dynamic_fuzzer(
                     &compressed,
                     total_bytes,
                     &metas,
+                    fts_opt,
                 ).await {
                     crate::fuzzer::chunk_manager::get_chunk_cache().lock().unwrap().insert(chunk_id, resps);
                 }

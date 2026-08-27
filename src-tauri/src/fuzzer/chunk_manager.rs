@@ -200,4 +200,37 @@ mod tests {
         assert_eq!(decompressed.len(), 500);
         assert_eq!(decompressed[499], responses[499]);
     }
+
+    #[tokio::test]
+    async fn test_fts5_trigram_support() {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query("CREATE VIRTUAL TABLE test_fts USING fts5(body, content='', contentless_delete=1, tokenize='trigram');")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        sqlx::query("INSERT INTO test_fts(rowid, body) VALUES (1, 'hello world test');")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let rowid: i64 = sqlx::query_scalar("SELECT rowid FROM test_fts WHERE test_fts MATCH 'wor';")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+        assert_eq!(rowid, 1);
+
+        sqlx::query("DELETE FROM test_fts WHERE rowid = 1;")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM test_fts WHERE test_fts MATCH 'wor';")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+        assert_eq!(count, 0);
+    }
 }

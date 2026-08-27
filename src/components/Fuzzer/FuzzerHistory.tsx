@@ -16,6 +16,7 @@ import { EmptyState } from '../ui/empty-state';
 import { AlertTriangle, Clipboard, RotateCcw } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { HttpStatusBadge } from '@/components/HttpStatusBadge';
+import { HttpqlBar } from '@/components/Httpql/HttpqlBar';
 
 /**
  * Each row corresponds to a single FuzzerRequest (one fuzzed HTTP call),
@@ -373,6 +374,12 @@ function FuzzerHistoryBody({
 
     const [sorting, setSorting] = useState<SortingState>([]);
     const [fetchedFocusedResult, setFetchedFocusedResult] = useState<EnrichedFuzzerRow | null>(null);
+    const [httpqlQuery, setHttpqlQuery] = useState('');
+
+    const handleHttpqlChange = useCallback((query: string) => {
+        setHttpqlQuery(query);
+        setWindowState((prev) => ({ ...prev, offset: 0 }));
+    }, []);
 
     const handleSortingChange = useCallback((updater: any) => {
         setSorting(updater);
@@ -417,6 +424,7 @@ function FuzzerHistoryBody({
             limit: windowState.limit,
             sortBy,
             sortOrder,
+            searchQuery: httpqlQuery,
         })
             .then((res) => {
                 if (canceled) return;
@@ -435,7 +443,7 @@ function FuzzerHistoryBody({
         return () => {
             canceled = true;
         };
-    }, [sessionIndex, historyIndex, windowState.offset, windowState.limit, runState.completed, runState.status, sorting]);
+    }, [sessionIndex, historyIndex, windowState.offset, windowState.limit, runState.completed, runState.status, sorting, httpqlQuery]);
 
     const effectiveRequests = useMemo(() => {
         return windowState.items;
@@ -516,21 +524,30 @@ function FuzzerHistoryBody({
             />
             <ResizablePanelGroup direction='vertical' autoSaveId="fuzzing-history-table" >
                 <ResizablePanel defaultSize={30} minSize={15}>
-                    <Table
-                        data={enrichedRows}
-                        columns={fuzzerColumns}
-                        totalCount={effectiveTotal}
-                        windowOffset={windowState.offset}
-                        onScrollWindowChange={handleScrollWindowChange}
-                        sorting={sorting}
-                        onSortingChange={handleSortingChange}
-                        manualSorting={true}
-                        emptyLabel={isLoading ? 'Running fuzzer…' : 'No fuzzing results yet'}
-                        emptyHint={isLoading ? undefined : 'Run the fuzzer to see results here'}
-                        setSelectedRequest={setFocusedId}
-                        renderRowContextMenu={renderFuzzerHistoryTableContextMenu}
-                        fillHeight
-                    />
+                    <div className="flex flex-col h-full overflow-hidden">
+                        <HttpqlBar
+                            value={httpqlQuery}
+                            onChange={handleHttpqlChange}
+                            placeholder="Filter fuzzer requests with HTTPQL (e.g. resp.code:200, resp.len.gt:500, resp.roundtrip.lt:100)..."
+                        />
+                        <div className="flex-1 min-h-0">
+                            <Table
+                                data={enrichedRows}
+                                columns={fuzzerColumns}
+                                totalCount={effectiveTotal}
+                                windowOffset={windowState.offset}
+                                onScrollWindowChange={handleScrollWindowChange}
+                                sorting={sorting}
+                                onSortingChange={handleSortingChange}
+                                manualSorting={true}
+                                emptyLabel={isLoading ? 'Running fuzzer…' : 'No fuzzing results yet'}
+                                emptyHint={isLoading ? undefined : 'Run the fuzzer to see results here'}
+                                setSelectedRequest={setFocusedId}
+                                renderRowContextMenu={renderFuzzerHistoryTableContextMenu}
+                                fillHeight
+                            />
+                        </div>
+                    </div>
                 </ResizablePanel>
                 <ResizableHandle withHandle />
                 <ResizablePanel defaultSize={70} minSize={15}>

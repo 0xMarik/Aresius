@@ -70,6 +70,20 @@ CREATE TABLE fuzzer_chunks (
 CREATE INDEX idx_fuzzer_chunks_run_id ON fuzzer_chunks (run_id);
 CREATE INDEX idx_fuzzer_chunks_status_code ON fuzzer_chunks (run_id, status_code);
 
+-- 5b. Fuzzer Chunks Full-Text Search (Contentless Trigram Index pointing to fuzzer_chunks)
+CREATE VIRTUAL TABLE fuzzer_chunks_fts USING fts5(
+    body,
+    content='',
+    contentless_delete=1,
+    tokenize='trigram'
+);
+
+CREATE TRIGGER trg_fuzzer_chunks_delete 
+AFTER DELETE ON fuzzer_chunks 
+BEGIN
+    DELETE FROM fuzzer_chunks_fts WHERE rowid = old.id;
+END;
+
 -- 6. Fuzzer Requests (Individual completed fuzzed transactions)
 CREATE TABLE fuzzer_requests (
     id                  TEXT    NOT NULL, -- fuzzRequestId

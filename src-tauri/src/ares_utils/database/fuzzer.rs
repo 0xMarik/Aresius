@@ -726,9 +726,19 @@ pub async fn query_fuzzer_requests_window(
     limit: usize,
     sort_by: Option<&str>,
     sort_order: Option<&str>,
+    httpql_expr: Option<&crate::ares_utils::httpql::HttpqlExpr>,
+    raw_template_req: Option<&str>,
+    target_url: Option<&str>,
 ) -> Result<(usize, Vec<FuzzerRequestDb>), String> {
-    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM fuzzer_requests WHERE run_id = ?")
-        .bind(run_id)
+    let mut count_builder =
+        sqlx::QueryBuilder::<sqlx::Sqlite>::new("SELECT COUNT(*) FROM fuzzer_requests WHERE run_id = ");
+    count_builder.push_bind(run_id);
+    if let Some(expr) = httpql_expr {
+        count_builder.push(" AND ");
+        crate::ares_utils::httpql::compile_fuzzer_httpql_to_sql(&mut count_builder, expr, raw_template_req, target_url);
+    }
+    let total: i64 = count_builder
+        .build_query_scalar()
         .fetch_one(pool)
         .await
         .map_err(|e| e.to_string())?;
@@ -756,6 +766,10 @@ pub async fn query_fuzzer_requests_window(
     let mut builder =
         sqlx::QueryBuilder::<sqlx::Sqlite>::new("SELECT * FROM fuzzer_requests WHERE run_id = ");
     builder.push_bind(run_id);
+    if let Some(expr) = httpql_expr {
+        builder.push(" AND ");
+        crate::ares_utils::httpql::compile_fuzzer_httpql_to_sql(&mut builder, expr, raw_template_req, target_url);
+    }
     builder.push(" ORDER BY ");
     builder.push(order_clause);
     builder.push(" LIMIT ");
@@ -794,6 +808,7 @@ pub async fn insert_fuzzer_chunk_and_update_requests(
     compressed_data: &[u8],
     uncompressed_bytes: i64,
     items: &[FuzzerCompletedItemMeta],
+    fts_text: Option<&str>,
 ) -> Result<i64, String> {
     if items.is_empty() {
         return Ok(0);
@@ -814,6 +829,18 @@ pub async fn insert_fuzzer_chunk_and_update_requests(
     .await
     .map_err(|e| e.to_string())?
     .last_insert_rowid();
+
+    if let Some(text) = fts_text {
+        if !text.is_empty() {
+            let _ = sqlx::query(
+                "INSERT INTO fuzzer_chunks_fts (rowid, body) VALUES (?, ?)"
+            )
+            .bind(chunk_id)
+            .bind(text)
+            .execute(&mut *tx)
+            .await;
+        }
+    }
 
     for (idx, item) in items.iter().enumerate() {
         sqlx::query(
@@ -851,6 +878,33 @@ pub async fn insert_fuzzer_chunk_and_update_requests(
 
     tx.commit().await.map_err(|e| e.to_string())?;
     Ok(chunk_id)
+}
+
+/// Query chunk IDs matching a search term using the fuzzer_chunks_fts FTS5 trigram index
+pub async fn query_matching_chunks_fts(
+    pool: &SqlitePool,
+    run_id: &str,
+    search_term: &str,
+) -> Result<Vec<i64>, String> {
+    let trimmed = search_term.trim();
+    if trimmed.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let escaped = format!("\"{}\"", trimmed.replace('"', "\"\""));
+    let chunk_ids: Vec<i64> = sqlx::query_scalar(
+        "SELECT id FROM fuzzer_chunks
+         WHERE run_id = ? AND id IN (
+             SELECT rowid FROM fuzzer_chunks_fts WHERE fuzzer_chunks_fts MATCH ?
+         )"
+    )
+    .bind(run_id)
+    .bind(&escaped)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    Ok(chunk_ids)
 }
 
 /// Fetch the raw compressed blob for a chunk from `fuzzer_chunks`
@@ -983,4 +1037,211 @@ pub async fn load_all_fuzzer_requests(
     .fetch_all(pool)
     .await
     .map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn create_test_pool() -> SqlitePool {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+
+        // Minimal fuzzer schema matching 0008_fuzzer.sql
+        sqlx::query(
+            "CREATE TABLE projects (id TEXT PRIMARY KEY NOT NULL);
+             INSERT INTO projects (id) VALUES ('test-proj');
+
+             CREATE TABLE fuzzer_sessions (
+                 id TEXT PRIMARY KEY NOT NULL,
+                 project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE
+             );
+             INSERT INTO fuzzer_sessions (id, project_id) VALUES ('sess-1', 'test-proj');
+
+             CREATE TABLE fuzzer_runs (
+                 id TEXT PRIMARY KEY NOT NULL,
+                 session_id TEXT NOT NULL REFERENCES fuzzer_sessions(id) ON DELETE CASCADE
+             );
+             INSERT INTO fuzzer_runs (id, session_id) VALUES ('run-1', 'sess-1');
+
+             CREATE TABLE fuzzer_chunks (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                 run_id TEXT NOT NULL REFERENCES fuzzer_runs(id) ON DELETE CASCADE,
+                 status_code INTEGER NOT NULL,
+                 compressed_data BLOB NOT NULL,
+                 uncompressed_bytes INTEGER NOT NULL,
+                 item_count INTEGER NOT NULL
+             );
+
+             CREATE VIRTUAL TABLE fuzzer_chunks_fts USING fts5(
+                 body,
+                 content='',
+                 contentless_delete=1,
+                 tokenize='trigram'
+             );
+
+             CREATE TRIGGER trg_fuzzer_chunks_delete 
+             AFTER DELETE ON fuzzer_chunks 
+             BEGIN
+                 DELETE FROM fuzzer_chunks_fts WHERE rowid = old.id;
+             END;
+
+             CREATE TABLE fuzzer_requests (
+                 id TEXT NOT NULL,
+                 run_id TEXT NOT NULL REFERENCES fuzzer_runs(id) ON DELETE CASCADE,
+                 worker_id INTEGER,
+                 payload TEXT,
+                 status_code INTEGER,
+                 response_length INTEGER,
+                 response_time_ms INTEGER,
+                 request_date INTEGER NOT NULL,
+                 error_message TEXT,
+                 connection_dropped INTEGER NOT NULL DEFAULT 0,
+                 sort_order INTEGER NOT NULL DEFAULT 0,
+                 chunk_id INTEGER REFERENCES fuzzer_chunks(id) ON DELETE SET NULL,
+                 chunk_index INTEGER,
+                 PRIMARY KEY (run_id, id)
+             );"
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        pool
+    }
+
+    #[tokio::test]
+    async fn test_fuzzer_chunk_fts_insert_and_query() {
+        let pool = create_test_pool().await;
+
+        let items = vec![FuzzerCompletedItemMeta {
+            id: "req-1".to_string(),
+            sort_order: 0,
+            payload: Some("admin".to_string()),
+            request_date: 1000,
+            status_code: Some(200),
+            response_length: 120,
+            response_time_ms: 50,
+            worker_id: Some(1),
+        }];
+
+        let fts_text = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"token\": \"secret_admin_token_123\"}";
+
+        let chunk_id = insert_fuzzer_chunk_and_update_requests(
+            &pool,
+            "run-1",
+            200,
+            b"fake_compressed_blob",
+            120,
+            &items,
+            Some(fts_text),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(chunk_id, 1);
+
+        // Search for trigram inside the token
+        let matching_chunks = query_matching_chunks_fts(&pool, "run-1", "secret_admin")
+            .await
+            .unwrap();
+        assert_eq!(matching_chunks, vec![1]);
+
+        // Search for non-existent token
+        let no_match = query_matching_chunks_fts(&pool, "run-1", "nonexistent_xyz")
+            .await
+            .unwrap();
+        assert!(no_match.is_empty());
+
+        // Test delete trigger synchronization
+        sqlx::query("DELETE FROM fuzzer_chunks WHERE id = 1;")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let after_delete = query_matching_chunks_fts(&pool, "run-1", "secret_admin")
+            .await
+            .unwrap();
+        assert!(after_delete.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_query_fuzzer_requests_window_httpql() {
+        let pool = create_test_pool().await;
+
+        let items = vec![
+            FuzzerCompletedItemMeta {
+                id: "req-1".to_string(),
+                sort_order: 0,
+                payload: Some("admin".to_string()),
+                request_date: 1000,
+                status_code: Some(200),
+                response_length: 500,
+                response_time_ms: 30,
+                worker_id: Some(1),
+            },
+            FuzzerCompletedItemMeta {
+                id: "req-2".to_string(),
+                sort_order: 1,
+                payload: Some("guest".to_string()),
+                request_date: 1001,
+                status_code: Some(404),
+                response_length: 120,
+                response_time_ms: 150,
+                worker_id: Some(1),
+            },
+            FuzzerCompletedItemMeta {
+                id: "req-3".to_string(),
+                sort_order: 2,
+                payload: Some("root".to_string()),
+                request_date: 1002,
+                status_code: Some(200),
+                response_length: 1500,
+                response_time_ms: 80,
+                worker_id: Some(1),
+            },
+        ];
+
+        insert_fuzzer_chunk_and_update_requests(
+            &pool,
+            "run-1",
+            200,
+            b"fake_blob",
+            2120,
+            &items,
+            None,
+        )
+        .await
+        .unwrap();
+
+        // 1. Query resp.code:200
+        let q1 = crate::ares_utils::httpql::parse_httpql("resp.code:200").unwrap().unwrap();
+        let (total1, rows1) = query_fuzzer_requests_window(
+            &pool, "run-1", 0, 10, None, None, Some(&q1), None, None
+        ).await.unwrap();
+        assert_eq!(total1, 2);
+        assert_eq!(rows1.len(), 2);
+
+        // 2. Query resp.len.gt:1000
+        let q2 = crate::ares_utils::httpql::parse_httpql("resp.len.gt:1000").unwrap().unwrap();
+        let (total2, rows2) = query_fuzzer_requests_window(
+            &pool, "run-1", 0, 10, None, None, Some(&q2), None, None
+        ).await.unwrap();
+        assert_eq!(total2, 1);
+        assert_eq!(rows2[0].id, "req-3");
+
+        // 3. Query resp.roundtrip.lt:50
+        let q3 = crate::ares_utils::httpql::parse_httpql("resp.roundtrip.lt:50").unwrap().unwrap();
+        let (total3, rows3) = query_fuzzer_requests_window(
+            &pool, "run-1", 0, 10, None, None, Some(&q3), None, None
+        ).await.unwrap();
+        assert_eq!(total3, 1);
+        assert_eq!(rows3[0].id, "req-1");
+
+        // 4. Query combined with dummy header: resp.code:200 and resp.header["server"].cont:"nginx"
+        let q4 = crate::ares_utils::httpql::parse_httpql("resp.code:200 and resp.header[\"server\"].cont:\"nginx\"").unwrap().unwrap();
+        let (total4, _) = query_fuzzer_requests_window(
+            &pool, "run-1", 0, 10, None, None, Some(&q4), None, None
+        ).await.unwrap();
+        assert_eq!(total4, 2);
+    }
 }

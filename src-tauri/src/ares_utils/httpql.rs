@@ -63,6 +63,7 @@ pub enum HttpqlField {
     // Generic / Caido extensions
     Preset,
     Bare,
+    Payload,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -777,6 +778,7 @@ fn parse_field_type(field_str: &str, header_key: Option<String>) -> Result<Httpq
         "resp.ext" => Ok(HttpqlField::RespExt),
         "state" | "resp.state" | "status_text" => Ok(HttpqlField::RespState),
         "preset" => Ok(HttpqlField::Preset),
+        "payload" | "payloadpreview" | "fuzz.payload" => Ok(HttpqlField::Payload),
         _ => {
             if lower.starts_with("req.header") {
                 Ok(HttpqlField::ReqHeader(header_key))
@@ -976,6 +978,192 @@ pub fn compile_httpql_to_sql(
     }
 }
 
+pub fn compile_fuzzer_httpql_to_sql(
+    builder: &mut sqlx::QueryBuilder<sqlx::Sqlite>,
+    expr: &HttpqlExpr,
+    raw_template_req: Option<&str>,
+    target_url: Option<&str>,
+) {
+    match expr {
+        HttpqlExpr::Condition(cond) => {
+            compile_fuzzer_condition_to_sql(builder, cond, raw_template_req, target_url);
+        }
+        HttpqlExpr::Bare(term) => {
+            let pattern = format!("%{}%", term.trim());
+            builder.push("(");
+            builder.push("COALESCE(payload, '') LIKE ");
+            builder.push_bind(pattern.clone());
+            builder.push(" OR CAST(status_code AS TEXT) LIKE ");
+            builder.push_bind(pattern.clone());
+            builder.push(" OR CAST(response_length AS TEXT) LIKE ");
+            builder.push_bind(pattern.clone());
+            builder.push(" OR CAST(response_time_ms AS TEXT) LIKE ");
+            builder.push_bind(pattern.clone());
+            builder.push(" OR id LIKE ");
+            builder.push_bind(pattern.clone());
+            builder.push(" OR CAST(sort_order AS TEXT) LIKE ");
+            builder.push_bind(pattern);
+            builder.push(")");
+        }
+        HttpqlExpr::Not(inner) => {
+            builder.push("NOT (");
+            compile_fuzzer_httpql_to_sql(builder, inner, raw_template_req, target_url);
+            builder.push(")");
+        }
+        HttpqlExpr::And(list) => {
+            if list.is_empty() {
+                builder.push("1=1");
+            } else {
+                builder.push("(");
+                for (i, item) in list.iter().enumerate() {
+                    if i > 0 {
+                        builder.push(" AND ");
+                    }
+                    compile_fuzzer_httpql_to_sql(builder, item, raw_template_req, target_url);
+                }
+                builder.push(")");
+            }
+        }
+        HttpqlExpr::Or(list) => {
+            if list.is_empty() {
+                builder.push("1=0");
+            } else {
+                builder.push("(");
+                for (i, item) in list.iter().enumerate() {
+                    if i > 0 {
+                        builder.push(" OR ");
+                    }
+                    compile_fuzzer_httpql_to_sql(builder, item, raw_template_req, target_url);
+                }
+                builder.push(")");
+            }
+        }
+    }
+}
+
+fn compile_fuzzer_condition_to_sql(
+    builder: &mut sqlx::QueryBuilder<sqlx::Sqlite>,
+    cond: &HttpqlCondition,
+    raw_template_req: Option<&str>,
+    target_url: Option<&str>,
+) {
+    match &cond.field {
+        HttpqlField::RespCode => {
+            compile_num_field(builder, "status_code", cond.op, &cond.value);
+        }
+        HttpqlField::RespLen => {
+            compile_num_field(builder, "response_length", cond.op, &cond.value);
+        }
+        HttpqlField::RespTime => {
+            compile_num_field(builder, "response_time_ms", cond.op, &cond.value);
+        }
+        HttpqlField::ReqId => {
+            compile_num_field(builder, "sort_order", cond.op, &cond.value);
+        }
+        HttpqlField::Payload => {
+            compile_str_field(builder, "COALESCE(payload, '')", cond.op, &cond.value, false);
+        }
+        // Dummy functionality for headers and raw responses (stubs until test)
+        HttpqlField::RespHeader(_) | HttpqlField::RespRaw | HttpqlField::RespBody => {
+            builder.push("1=1");
+        }
+        HttpqlField::RespState | HttpqlField::RespExt | HttpqlField::Preset => {
+            builder.push("1=1");
+        }
+        HttpqlField::ReqCreatedAt => {
+            let s = val_as_string(&cond.value);
+            let ms = parse_datetime_to_ms(&s).unwrap_or(0);
+            let op_sym = match cond.op {
+                HttpqlOperator::Gt => " > ",
+                HttpqlOperator::Ge => " >= ",
+                HttpqlOperator::Lt => " < ",
+                HttpqlOperator::Le => " <= ",
+                HttpqlOperator::Ne => " != ",
+                _ => " = ",
+            };
+            builder.push("request_date");
+            builder.push(op_sym);
+            builder.push_bind(ms);
+        }
+        // Request fields evaluated against template
+        HttpqlField::ReqMethod => {
+            if let Some(raw) = raw_template_req {
+                let meta = crate::ares_utils::parse::parse_request_line(raw.as_bytes());
+                if eval_str_cmp(&meta.method, cond.op, &cond.value, true) {
+                    builder.push("1=1");
+                } else {
+                    builder.push("1=0");
+                }
+            } else {
+                builder.push("1=1");
+            }
+        }
+        HttpqlField::ReqHost => {
+            if let Some(u) = target_url {
+                let host = url::Url::parse(u).ok().and_then(|url| url.host_str().map(String::from)).unwrap_or_default();
+                if eval_str_cmp(&host, cond.op, &cond.value, false) {
+                    builder.push("1=1");
+                } else {
+                    builder.push("1=0");
+                }
+            } else {
+                builder.push("1=1");
+            }
+        }
+        HttpqlField::ReqPath => {
+            if let Some(raw) = raw_template_req {
+                let meta = crate::ares_utils::parse::parse_request_line(raw.as_bytes());
+                if eval_str_cmp(&meta.path, cond.op, &cond.value, false) {
+                    builder.push("1=1");
+                } else {
+                    builder.push("1=0");
+                }
+            } else {
+                builder.push("1=1");
+            }
+        }
+        HttpqlField::ReqQuery => {
+            if let Some(raw) = raw_template_req {
+                let meta = crate::ares_utils::parse::parse_request_line(raw.as_bytes());
+                let query = meta.query.unwrap_or_default();
+                if eval_str_cmp(&query, cond.op, &cond.value, false) {
+                    builder.push("1=1");
+                } else {
+                    builder.push("1=0");
+                }
+            } else {
+                builder.push("1=1");
+            }
+        }
+        HttpqlField::ReqTls => {
+            if let Some(u) = target_url {
+                let is_https = u.starts_with("https://");
+                let target_bool = match &cond.value {
+                    HttpqlValue::Bool(b) => *b,
+                    HttpqlValue::String(s) => s.eq_ignore_ascii_case("https") || s.eq_ignore_ascii_case("true"),
+                    _ => true,
+                };
+                if (is_https == target_bool) == (cond.op == HttpqlOperator::Eq) {
+                    builder.push("1=1");
+                } else {
+                    builder.push("1=0");
+                }
+            } else {
+                builder.push("1=1");
+            }
+        }
+        HttpqlField::ReqPort
+        | HttpqlField::ReqExt
+        | HttpqlField::ReqRaw
+        | HttpqlField::ReqBody
+        | HttpqlField::ReqHeader(_)
+        | HttpqlField::ReqLen
+        | HttpqlField::Bare => {
+            builder.push("1=1");
+        }
+    }
+}
+
 fn compile_condition_to_sql(
     builder: &mut sqlx::QueryBuilder<sqlx::Sqlite>,
     cond: &HttpqlCondition,
@@ -1127,6 +1315,9 @@ fn compile_condition_to_sql(
             builder.push(" OR raw_response LIKE ");
             builder.push_bind(pattern);
             builder.push(")");
+        }
+        HttpqlField::Payload => {
+            compile_str_field(builder, "COALESCE(query, '')", cond.op, &cond.value, false);
         }
     }
 }
@@ -2042,6 +2233,7 @@ fn eval_condition<T: HttpTransactionEvaluable>(cond: &HttpqlCondition, item: &T)
                 || item.eval_raw_request().map(|r| r.to_lowercase().contains(&s)).unwrap_or(false)
                 || item.eval_raw_response().map(|r| r.to_lowercase().contains(&s)).unwrap_or(false)
         }
+        HttpqlField::Payload => false,
     }
 }
 
@@ -2602,5 +2794,35 @@ mod tests {
         let mut builder = sqlx::QueryBuilder::<sqlx::Sqlite>::new("SELECT * FROM http_history WHERE ");
         compile_httpql_to_sql(&mut builder, &q);
         assert!(builder.sql().as_str().contains("INSTR(LOWER(raw_response)"), "SQL should extract single header line");
+    }
+
+    #[test]
+    fn test_fuzzer_httpql_compilation() {
+        // Test code, len, roundtrip
+        let q = parse_httpql("resp.code:200 and resp.len.gt:500 and resp.roundtrip.lt:100").unwrap().unwrap();
+        let mut builder = sqlx::QueryBuilder::<sqlx::Sqlite>::new("SELECT * FROM fuzzer_requests WHERE ");
+        compile_fuzzer_httpql_to_sql(&mut builder, &q, None, None);
+        let sql = builder.sql();
+        assert!(sql.as_str().contains("status_code = ?"));
+        assert!(sql.as_str().contains("response_length > ?"));
+        assert!(sql.as_str().contains("response_time_ms < ?"));
+
+        // Test dummy functionality for header and raw
+        let q_dummy = parse_httpql("resp.header[\"server\"].cont:\"nginx\" and resp.raw.cont:\"error\"").unwrap().unwrap();
+        let mut b2 = sqlx::QueryBuilder::<sqlx::Sqlite>::new("SELECT * FROM fuzzer_requests WHERE ");
+        compile_fuzzer_httpql_to_sql(&mut b2, &q_dummy, None, None);
+        let sql2 = b2.sql();
+        assert!(sql2.as_str().contains("1=1 AND 1=1"));
+
+        // Test payload and bare search
+        let q_payload = parse_httpql("payload.cont:\"admin\"").unwrap().unwrap();
+        let mut b3 = sqlx::QueryBuilder::<sqlx::Sqlite>::new("SELECT * FROM fuzzer_requests WHERE ");
+        compile_fuzzer_httpql_to_sql(&mut b3, &q_payload, None, None);
+        assert!(b3.sql().as_str().contains("COALESCE(payload, '') LIKE ?"));
+
+        let q_bare = parse_httpql("foo").unwrap().unwrap();
+        let mut b4 = sqlx::QueryBuilder::<sqlx::Sqlite>::new("SELECT * FROM fuzzer_requests WHERE ");
+        compile_fuzzer_httpql_to_sql(&mut b4, &q_bare, None, None);
+        assert!(b4.sql().as_str().contains("COALESCE(payload, '') LIKE ?"));
     }
 }
