@@ -5,7 +5,7 @@ import { CodeMirrorEditor } from '../result-table.components';
 import { createColumnHelper, ColumnDef, SortingState } from '@tanstack/react-table';
 import Table, { isRowSelected, BaseRow } from '@/components/Table';
 import { FuzzerRequest, FuzzerParameter, FuzzConfig, initialFuzzRunState } from '@/types/fuzzer.type';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { parseRequest, parseResponse } from '../utils';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '../ui/resizable';
 import { renderFuzzerHistoryTableContextMenu } from './FuzzerHistoryTableContextMenu';
@@ -13,8 +13,8 @@ import { FuzzerRunToolbar, resendSingleFuzzRequest } from './FuzzerRunToolbar';
 import { Button } from '../ui/button';
 import MethodBadge from '@/components/MethodBadge';
 import { EmptyState } from '../ui/empty-state';
-import { AlertTriangle, Clipboard, RotateCcw } from 'lucide-react';
-import { invoke } from '@tauri-apps/api/core';
+import { AlertTriangle, Clipboard, Loader2, RotateCcw } from 'lucide-react';
+import { invoke, Channel } from '@tauri-apps/api/core';
 import { HttpStatusBadge } from '@/components/HttpStatusBadge';
 import { HttpqlBar } from '@/components/Httpql/HttpqlBar';
 
@@ -365,6 +365,7 @@ function FuzzerHistoryBody({
     const BUFFER = 100;
     const THRESHOLD = 30;
 
+    // ─── Window state for the no-query paginated path ───────────────────────
     const [windowState, setWindowState] = useState<{
         offset: number;
         limit: number;
@@ -376,17 +377,34 @@ function FuzzerHistoryBody({
     const [fetchedFocusedResult, setFetchedFocusedResult] = useState<EnrichedFuzzerRow | null>(null);
     const [httpqlQuery, setHttpqlQuery] = useState('');
 
+    // ─── Streaming state for the HTTPQL query path ───────────────────────────
+    const [isStreaming, setIsStreaming] = useState(false);
+    const [streamingItems, setStreamingItems] = useState<FuzzerRequest[]>([]);
+    const [streamingTotal, setStreamingTotal] = useState(0);
+    // Accumulation ref so each Channel event appends without O(n) spread in closure
+    const accumulatedRef = useRef<FuzzerRequest[]>([]);
+
     const handleHttpqlChange = useCallback((query: string) => {
         setHttpqlQuery(query);
+        // Reset both paths when query changes
         setWindowState((prev) => ({ ...prev, offset: 0 }));
+        setStreamingItems([]);
+        setStreamingTotal(0);
+        accumulatedRef.current = [];
     }, []);
 
     const handleSortingChange = useCallback((updater: any) => {
+        // Sorting is disabled while streaming; only allow changes in the no-query path.
+        if (isStreaming) return;
         setSorting(updater);
         setWindowState((prev) => ({ ...prev, offset: 0 }));
-    }, []);
+    }, [isStreaming]);
 
     const handleScrollWindowChange = useCallback((startIdx: number, count: number) => {
+        // Scroll-triggered window changes only apply when there is no active query
+        // (streaming sends all matches into memory; no paging needed).
+        if (httpqlQuery.trim()) return;
+
         setWindowState((prev) => {
             const currentOffset = prev.offset;
             const currentLimit = prev.limit;
@@ -410,9 +428,57 @@ function FuzzerHistoryBody({
 
             return { ...prev, offset: newOffset, limit: newLimit };
         });
-    }, []);
+    }, [httpqlQuery]);
 
+    // ─── Effect 1: streaming search (non-empty HTTPQL query) ─────────────────
     useEffect(() => {
+        if (!httpqlQuery.trim()) return;
+
+        let cancelled = false;
+        setIsStreaming(true);
+        accumulatedRef.current = [];
+        setStreamingItems([]);
+        setStreamingTotal(0);
+
+        type FuzzerSearchEvent =
+            | { type: 'items'; items: FuzzerRequest[]; totalSoFar: number }
+            | { type: 'done'; total: number };
+
+        const channel = new Channel<FuzzerSearchEvent>();
+
+        channel.onmessage = (event) => {
+            if (cancelled) return;
+            if (event.type === 'items') {
+                accumulatedRef.current = accumulatedRef.current.concat(event.items);
+                // Snapshot the array reference so React gets a stable new reference
+                const snapshot = accumulatedRef.current.slice();
+                setStreamingItems(snapshot);
+                setStreamingTotal(event.totalSoFar);
+            } else if (event.type === 'done') {
+                setStreamingTotal(event.total);
+                setIsStreaming(false);
+            }
+        };
+
+        invoke<void>('stream_fuzzer_search', {
+            selectedSession: sessionIndex,
+            fuzzHistory: historyIndex,
+            searchQuery: httpqlQuery,
+            onEvent: channel,
+        }).catch(() => {
+            if (!cancelled) setIsStreaming(false);
+        });
+
+        return () => {
+            cancelled = true;
+            setIsStreaming(false);
+        };
+    }, [httpqlQuery, sessionIndex, historyIndex]);
+
+    // ─── Effect 2: paginated window fetch (empty query) ───────────────────────
+    useEffect(() => {
+        if (httpqlQuery.trim()) return; // streaming handles this case
+
         let canceled = false;
         const sortBy = sorting[0]?.id ?? null;
         const sortOrder = sorting[0]?.desc ? 'desc' : 'asc';
@@ -424,7 +490,7 @@ function FuzzerHistoryBody({
             limit: windowState.limit,
             sortBy,
             sortOrder,
-            searchQuery: httpqlQuery,
+            searchQuery: '',
         })
             .then((res) => {
                 if (canceled) return;
@@ -436,33 +502,42 @@ function FuzzerHistoryBody({
                     }));
                 }
             })
-            .catch(() => {
-                // Fallback gracefully if backend store isn't available
-            });
+            .catch(() => {});
 
         return () => {
             canceled = true;
         };
     }, [sessionIndex, historyIndex, windowState.offset, windowState.limit, runState.completed, runState.status, sorting, httpqlQuery]);
 
+
     const effectiveRequests = useMemo(() => {
-        return windowState.items;
-    }, [windowState.items]);
+        // When a query is active, show streamed results (all in memory).
+        // When no query, show the current page window.
+        return httpqlQuery.trim() ? streamingItems : windowState.items;
+    }, [httpqlQuery, streamingItems, windowState.items]);
 
     const effectiveTotal = useMemo(() => {
+        if (httpqlQuery.trim()) {
+            // During/after streaming: the total is the count of all matched rows.
+            return streamingTotal;
+        }
         if (windowState.totalFromBackend > 0) return windowState.totalFromBackend;
         return runState.total;
-    }, [windowState.totalFromBackend, runState.total]);
+    }, [httpqlQuery, streamingTotal, windowState.totalFromBackend, runState.total]);
+
+    // When streaming, all items are in memory at offset 0.
+    const effectiveOffset = httpqlQuery.trim() ? 0 : windowState.offset;
 
     const rows = useMemo(
-        () => adaptFuzzerRequests(effectiveRequests, windowState.offset),
-        [effectiveRequests, windowState.offset]
+        () => adaptFuzzerRequests(effectiveRequests, effectiveOffset),
+        [effectiveRequests, effectiveOffset]
     );
 
     const enrichedRows = useMemo(
         () => rows.map((r) => enrichFuzzerRow(r, fuzzConfigSnapshot)),
         [rows, fuzzConfigSnapshot]
     );
+
 
     useEffect(() => {
         if (focusedId === null) {
@@ -530,23 +605,33 @@ function FuzzerHistoryBody({
                             onChange={handleHttpqlChange}
                             placeholder="Filter fuzzer requests with HTTPQL (e.g. resp.code:200, resp.len.gt:500, resp.roundtrip.lt:100)..."
                         />
+                        {/* Streaming progress bar — visible only while chunk scan is in progress */}
+                        {isStreaming && (
+                            <div className="flex items-center gap-2 px-3 py-1 shrink-0 bg-primary/5 border-b border-primary/20">
+                                <Loader2 className="w-3 h-3 animate-spin text-primary shrink-0" />
+                                <span className="text-[11px] text-primary/80 font-medium">
+                                    Scanning…
+                                </span>
+                            </div>
+                        )}
                         <div className="flex-1 min-h-0">
                             <Table
                                 data={enrichedRows}
                                 columns={fuzzerColumns}
                                 totalCount={effectiveTotal}
-                                windowOffset={windowState.offset}
+                                windowOffset={effectiveOffset}
                                 onScrollWindowChange={handleScrollWindowChange}
-                                sorting={sorting}
-                                onSortingChange={handleSortingChange}
+                                sorting={isStreaming ? [] : sorting}
+                                onSortingChange={isStreaming ? () => {} : handleSortingChange}
                                 manualSorting={true}
-                                emptyLabel={isLoading ? 'Running fuzzer…' : 'No fuzzing results yet'}
-                                emptyHint={isLoading ? undefined : 'Run the fuzzer to see results here'}
+                                emptyLabel={isStreaming ? 'Scanning chunks…' : (isLoading ? 'Running fuzzer…' : 'No fuzzing results yet')}
+                                emptyHint={isStreaming ? undefined : (isLoading ? undefined : 'Run the fuzzer to see results here')}
                                 setSelectedRequest={setFocusedId}
                                 renderRowContextMenu={renderFuzzerHistoryTableContextMenu}
                                 fillHeight
                             />
                         </div>
+
                     </div>
                 </ResizablePanel>
                 <ResizableHandle withHandle />
