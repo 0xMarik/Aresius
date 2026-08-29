@@ -539,3 +539,170 @@ export async function saveStringToFile(defaultFilename: string, content: string,
     URL.revokeObjectURL(url);
     return true;
 }
+
+export interface RedirectionInfo {
+    isRedirect: boolean;
+    location: string;
+    statusCode: number;
+}
+
+/**
+ * Checks if an HTTP response represents a 3xx redirection and extracts the Location header.
+ */
+export function getRedirectionInfo(
+    rawResponse?: string | null
+): RedirectionInfo | null {
+    if (!rawResponse || typeof rawResponse !== 'string') return null;
+    const parsed = splitHttpMessage(rawResponse);
+    if (parsed.statusCode < 300 || parsed.statusCode >= 400) {
+        return null;
+    }
+    const locationHeader = parsed.headersList.find(
+        (h) => h.name.toLowerCase() === 'location'
+    );
+    if (!locationHeader || !locationHeader.value.trim()) {
+        return null;
+    }
+    return {
+        isRedirect: true,
+        location: locationHeader.value.trim(),
+        statusCode: parsed.statusCode,
+    };
+}
+
+export interface RedirectCraftResult {
+    newUrl: string;
+    newRequest: string;
+    targetLocation: string;
+}
+
+/**
+ * Crafts a redirected HTTP request given an original request, response, and base URL.
+ * Follows standard RFC redirection rules for 301, 302, 303, 307, 308.
+ */
+export function craftRedirectRequest(
+    rawRequest: string,
+    rawResponse: string,
+    currentBaseUrl: string
+): RedirectCraftResult | null {
+    const redirectInfo = getRedirectionInfo(rawResponse);
+    if (!redirectInfo || !redirectInfo.location) return null;
+
+    const { location, statusCode } = redirectInfo;
+
+    // Determine base URL with scheme
+    let base = (currentBaseUrl || '').trim();
+    if (!base) {
+        base = 'https://localhost';
+    } else if (!base.includes('://')) {
+        base = `https://${base}`;
+    }
+
+    // Determine line endings
+    const isCrLf = rawRequest.includes('\r\n');
+    const newline = isCrLf ? '\r\n' : '\n';
+
+    // Parse request line & headers
+    const reqSplit = splitHttpMessage(rawRequest);
+    const requestLine = reqSplit.statusLine || 'GET / HTTP/1.1';
+    const reqParts = requestLine.split(' ');
+    const originalMethod = (reqParts[0] || 'GET').toUpperCase();
+    const originalPath = reqParts[1] || '/';
+    const httpVersion = reqParts[2] || 'HTTP/1.1';
+
+    // Construct original full URL to resolve relative redirection
+    let originalFullUrl: URL;
+    try {
+        originalFullUrl = new URL(originalPath.startsWith('/') ? originalPath : `/${originalPath}`, base);
+    } catch {
+        try {
+            originalFullUrl = new URL(base);
+        } catch {
+            originalFullUrl = new URL('https://localhost');
+        }
+    }
+
+    // Resolve target URL
+    let targetUrl: URL;
+    try {
+        targetUrl = new URL(location, originalFullUrl);
+    } catch {
+        try {
+            targetUrl = new URL(location, base);
+        } catch {
+            return null;
+        }
+    }
+
+    const newBaseUrl = targetUrl.origin;
+    const newPath = `${targetUrl.pathname || '/'}${targetUrl.search}`;
+
+    // Determine new method and body handling based on status code
+    let newMethod = originalMethod;
+    let shouldDropBody = false;
+
+    if (statusCode === 303) {
+        newMethod = originalMethod === 'HEAD' ? 'HEAD' : 'GET';
+        shouldDropBody = true;
+    } else if (statusCode === 301 || statusCode === 302) {
+        if (originalMethod === 'POST' || originalMethod === 'PUT' || originalMethod === 'PATCH' || originalMethod === 'DELETE') {
+            newMethod = 'GET';
+            shouldDropBody = true;
+        }
+    } else if (statusCode === 307 || statusCode === 308) {
+        // Method and body are strictly preserved
+        shouldDropBody = false;
+    } else {
+        // Other 3xx codes (e.g. 300 Multiple Choices)
+        if (originalMethod === 'POST') {
+            newMethod = 'GET';
+            shouldDropBody = true;
+        }
+    }
+
+    // Process headers
+    const newHeadersList: Array<{ name: string; value: string }> = [];
+    let hasHostHeader = false;
+
+    for (const h of reqSplit.headersList) {
+        const lowerName = h.name.toLowerCase();
+        if (lowerName === 'host') {
+            hasHostHeader = true;
+            newHeadersList.push({ name: h.name, value: targetUrl.host });
+        } else if (shouldDropBody && (lowerName === 'content-length' || lowerName === 'content-type' || lowerName === 'transfer-encoding')) {
+            // Drop body headers when converting to GET
+            continue;
+        } else {
+            newHeadersList.push(h);
+        }
+    }
+
+    if (!hasHostHeader) {
+        newHeadersList.unshift({ name: 'Host', value: targetUrl.host });
+    }
+
+    // Build header lines
+    const headerLines = newHeadersList.map(h => `${h.name}: ${h.value}`);
+    const newBody = shouldDropBody ? '' : reqSplit.body;
+
+    const newRequestLines = [
+        `${newMethod} ${newPath} ${httpVersion}`,
+        ...headerLines,
+        '',
+        newBody,
+    ];
+
+    let newRequest = newRequestLines.join(newline);
+    if (shouldDropBody && !newRequest.endsWith(newline + newline)) {
+        if (!newRequest.endsWith(newline)) {
+            newRequest += newline;
+        }
+        newRequest += newline;
+    }
+
+    return {
+        newUrl: newBaseUrl,
+        newRequest,
+        targetLocation: location,
+    };
+}

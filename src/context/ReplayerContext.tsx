@@ -2,7 +2,7 @@ import React, { createContext, useContext, useEffect, useRef, useCallback, useMe
 import { invoke } from '@tauri-apps/api/core';
 import { useProjectId } from '@/hooks/useProjectId';
 import { useAppDispatch, useAppSelector } from '@/hooks/redux';
-import { parseResponse, updateContentLengthInRequest } from '@/components/utils';
+import { parseResponse, updateContentLengthInRequest, craftRedirectRequest } from '@/components/utils';
 import { stripPath, isDnsResolutionError } from '@/components/ValidateUrlInput';
 import { toast } from 'sonner';
 import { ReplayerHistoryItem } from '@/types/replayer.type';
@@ -89,6 +89,7 @@ interface ReplayerEditorContextType {
     updateDraftUrl: (url: string, urlIsValid: boolean) => void;
     selectHistoryIndex: (index: number) => void;
     triggerReplay: () => Promise<void>;
+    followRedirection: () => Promise<void>;
     cancelReplay: () => Promise<void>;
 }
 
@@ -428,8 +429,8 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         }
     }, [activeDraft?.url, dispatch, history, projectId, selectedSessionId]);
 
-    // Trigger Replay (scoped per sessionId)
-    const triggerReplay = useCallback(async () => {
+    // Execute Replay (scoped per sessionId)
+    const executeReplay = useCallback(async (requestOverride?: string, urlOverride?: string) => {
         if (!projectId || !selectedSessionId || !activeDraft) return;
 
         const sessId = selectedSessionId;
@@ -438,17 +439,18 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         activeRequestsRef.current.set(sessId, reqId);
         dispatch(setPendingSession({ projectId, sessionId: sessId, reqId }));
 
-        const stripedUrl = stripPath(activeDraft.url);
+        const rawUrl = urlOverride ?? activeDraft.url;
+        const stripedUrl = stripPath(rawUrl);
         updateDraftUrl(stripedUrl, true);
 
-        let currentRequestTmp = activeDraft.requestTmp;
+        let currentRequestTmp = requestOverride ?? activeDraft.requestTmp;
         if (updateContentLength) {
             const updated = updateContentLengthInRequest(currentRequestTmp);
             if (updated !== currentRequestTmp) {
                 currentRequestTmp = updated;
-                updateDraftContent(updated);
             }
         }
+        updateDraftContent(currentRequestTmp);
 
         try {
             const response = await invoke<ReplayerHistoryItem>('replay_request', {
@@ -544,6 +546,29 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             }
         }
     }, [activeDraft, dispatch, forceCloseConnection, projectId, selectedSessionId, updateContentLength, updateDraftContent, updateDraftUrl]);
+
+    // Trigger Replay (scoped per sessionId)
+    const triggerReplay = useCallback(async () => {
+        await executeReplay();
+    }, [executeReplay]);
+
+    const activeHistoryItemDerived = useMemo(() => {
+        if (selectedHistoryIndex === null || !history[selectedHistoryIndex]) return null;
+        return history[selectedHistoryIndex];
+    }, [history, selectedHistoryIndex]);
+
+    // Follow Redirection (scoped per sessionId)
+    const followRedirection = useCallback(async () => {
+        if (!activeDraft) return;
+        const currentReq = activeHistoryItemDerived?.requestRaw || activeDraft.requestTmp;
+        const currentRes = activeHistoryItemDerived?.responseRaw || '';
+        const currentUrl = activeHistoryItemDerived?.baseUrl || activeDraft.url;
+
+        const redirectResult = craftRedirectRequest(currentReq, currentRes, currentUrl);
+        if (!redirectResult) return;
+
+        await executeReplay(redirectResult.newRequest, redirectResult.newUrl);
+    }, [activeDraft, activeHistoryItemDerived, executeReplay]);
 
     // Cancel Replay (scoped per sessionId)
     const cancelReplay = useCallback(async () => {
@@ -674,6 +699,7 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         updateDraftUrl,
         selectHistoryIndex,
         triggerReplay,
+        followRedirection,
         cancelReplay,
     }), [
         selectedSessionId,
@@ -698,6 +724,7 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         updateDraftUrl,
         selectHistoryIndex,
         triggerReplay,
+        followRedirection,
         cancelReplay,
     ]);
 

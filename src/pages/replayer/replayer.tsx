@@ -10,12 +10,12 @@ import { HttpStatusBadge } from "@/components/HttpStatusBadge";
 import { ViewModeTabs } from "@/components/ViewModeTabs";
 import RequestCodeEditor from "@/components/Replayer/RequestCodeEditor";
 import ResponseCodeEditor from "@/components/Replayer/ResponseCodeEditor";
-import { AlertTriangle, Clock, HardDrive, Loader2, Play, Plus, Repeat, Square } from "lucide-react";
+import { AlertTriangle, Clock, CornerDownRight, HardDrive, Loader2, Play, Plus, Repeat, Square } from "lucide-react";
 import ReplayerSession from "@/components/Replayer/ReplayerSession";
 import ReplayerSettingsPopover from "@/components/Replayer/ReplayerSettingsPopover";
 import HttpRequestFormatWarning from "@/components/HttpRequestFormatWarning";
 import { ReplayerProvider, useReplayerEditor, useReplayerTree } from "@/context/ReplayerContext";
-import { splitHttpMessage } from "@/pages/sitemap/utils";
+import { splitHttpMessage, getRedirectionInfo } from "@/components/utils";
 import { useAppDispatch } from '@/hooks/redux';
 import { useProjectId } from '@/hooks/useProjectId';
 import { resetReplayerReceivedSession } from '@/store/slices/replayerSlice';
@@ -46,6 +46,7 @@ function ReplayerContent() {
         setResViewMode,
         updateDraftUrl,
         triggerReplay,
+        followRedirection,
         cancelReplay,
     } = useReplayerEditor();
 
@@ -57,6 +58,11 @@ function ReplayerContent() {
 
     const parsedRes = useMemo(
         () => splitHttpMessage(activeHistoryItem?.responseRaw ?? ''),
+        [activeHistoryItem?.responseRaw]
+    );
+
+    const redirectInfo = useMemo(
+        () => getRedirectionInfo(activeHistoryItem?.responseRaw),
         [activeHistoryItem?.responseRaw]
     );
 
@@ -183,6 +189,37 @@ function ReplayerContent() {
                                             <span className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">Response</span>
                                             {activeStatus && (
                                                 <HttpStatusBadge status={activeStatus} />
+                                            )}
+                                            {redirectInfo?.isRedirect && (
+                                                <TooltipProvider>
+                                                    <Tooltip delayDuration={150}>
+                                                        <TooltipTrigger asChild>
+                                                            <Button
+                                                                size="sm"
+                                                                variant="outline"
+                                                                onClick={followRedirection}
+                                                                disabled={responseLoading}
+                                                                className="h-5 px-1.5 text-[11px] font-medium gap-1 bg-amber-500/10 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 border-amber-500/30 shadow-none hover:text-amber-600 dark:hover:text-amber-300 shrink-0 cursor-pointer"
+                                                            >
+                                                                <CornerDownRight className="w-3 h-3" />
+                                                                Follow Redirection
+                                                            </Button>
+                                                        </TooltipTrigger>
+                                                        <TooltipContent
+                                                            side="bottom"
+                                                            align="start"
+                                                            className="max-w-md bg-popover text-popover-foreground border border-border shadow-lg p-2.5 text-xs select-text z-50 font-sans"
+                                                        >
+                                                            <div className="flex items-center gap-1.5 font-semibold text-amber-600 dark:text-amber-400 mb-1">
+                                                                <CornerDownRight className="w-3.5 h-3.5 shrink-0" />
+                                                                <span>Redirect Location ({redirectInfo.statusCode})</span>
+                                                            </div>
+                                                            <p className="font-mono text-[11px] text-muted-foreground break-all">
+                                                                {redirectInfo.location}
+                                                            </p>
+                                                        </TooltipContent>
+                                                    </Tooltip>
+                                                </TooltipProvider>
                                             )}
                                             {hasError && (
                                                 <TooltipProvider>
