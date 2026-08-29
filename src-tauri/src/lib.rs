@@ -19,9 +19,9 @@ use crate::ares_utils::database::http_history::{
 };
 use crate::ares_utils::database::projects::create_project;
 use crate::ares_utils::database::projects_catalog::{
-    delete_project, get_app_state, get_default_project_dir, get_proxy_settings_db, list_projects,
-    open_project_file, relocate_project, save_app_state, save_proxy_settings_db, select_project,
-    update_project_details,
+    delete_project, get_app_state, get_default_project_dir, get_fuzzer_settings_db,
+    get_proxy_settings_db, list_projects, open_project_file, relocate_project, save_app_state,
+    save_fuzzer_settings_db, save_proxy_settings_db, select_project, update_project_details,
 };
 use crate::ares_utils::database::DbState;
 use crate::commands::{cancel_replayer_request, replay_request};
@@ -98,6 +98,8 @@ pub fn run() {
             // Proxy & Settings
             get_proxy_settings_db,
             save_proxy_settings_db,
+            get_fuzzer_settings_db,
+            save_fuzzer_settings_db,
             get_proxy_status,
             restart_proxy_listener,
             save_and_apply_proxy_settings,

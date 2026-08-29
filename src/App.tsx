@@ -31,10 +31,12 @@ import {
     persistAppState,
     setLastPage,
     setSidebarCollapsed,
+    setFuzzerSettings,
     increaseFontSize,
     decreaseFontSize,
     resetFontSize,
 } from "./store/slices/appStateSlice";
+import { FuzzerSettings } from "./types/fuzzerSettings.type";
 
 const Projects = lazy(() => import("./pages/projects.page"));
 const SitemapTree = lazy(() => import("./pages/sitemap/Sitemap"));
@@ -119,13 +121,22 @@ function AppInner() {
                 console.error("Failed to load projects:", err);
             }
 
-            // 2. Load persisted app state
+            // 2. Load persisted app state & fuzzer settings
             let saved: AppState | null = null;
             try {
                 saved = await invoke<AppState>("get_app_state");
                 dispatch(hydrateAppState(saved));
             } catch (err) {
                 console.warn("Failed to load app state:", err);
+            }
+
+            try {
+                const fuzzerSettings = await invoke<FuzzerSettings>("get_fuzzer_settings_db");
+                if (fuzzerSettings) {
+                    dispatch(setFuzzerSettings(fuzzerSettings));
+                }
+            } catch (err) {
+                console.warn("Failed to load fuzzer settings:", err);
             }
 
             // 3. Restore active project (if the file still exists on disk)

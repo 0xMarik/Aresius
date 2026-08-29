@@ -18,11 +18,13 @@ import {
     Keyboard,
     Info,
     Radio,
+    Crosshair,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Badge } from "@/components/ui/badge"
 import {
     Card,
@@ -33,15 +35,29 @@ import {
     CardTitle,
 } from "@/components/ui/card"
 import { ProxySettings, ProxyStatus } from "@/types/proxySettings.type"
+import { FuzzerSettings } from "@/types/fuzzerSettings.type"
+import { useAppDispatch, useAppSelector } from "@/hooks/redux"
+import { setFuzzerSettings } from "@/store/slices/appStateSlice"
 import InstallCertificateDialog from "@/components/InstallCert"
 import { cn } from "@/lib/utils"
 
-type SettingsTab = "proxy" | "certificates" | "shortcuts" | "about"
+type SettingsTab = "proxy" | "certificates" | "fuzzer" | "shortcuts" | "about"
 
 const PRESET_PORTS = [8080, 8081, 8443, 8888, 9090]
 
 export default function SettingsPage() {
     const [activeTab, setActiveTab] = useState<SettingsTab>("proxy")
+    const dispatch = useAppDispatch()
+    const fuzzerSettings = useAppSelector((s) => s.appState.fuzzerSettings) || { showUncompletedRequests: false }
+
+    const handleToggleShowUncompleted = (checked: boolean) => {
+        const newSettings: FuzzerSettings = {
+            ...fuzzerSettings,
+            showUncompletedRequests: checked,
+        }
+        dispatch(setFuzzerSettings(newSettings))
+        invoke("save_fuzzer_settings_db", { settings: newSettings }).catch(console.error)
+    }
 
     // Proxy Settings state
     const [hostType, setHostType] = useState<"127.0.0.1" | "0.0.0.0" | "custom">("127.0.0.1")
@@ -284,6 +300,20 @@ export default function SettingsPage() {
                     >
                         <Shield className="w-4 h-4 shrink-0" />
                         <span className="flex-1">CA Certificates</span>
+                    </button>
+
+                    <button
+                        type="button"
+                        onClick={() => setActiveTab("fuzzer")}
+                        className={cn(
+                            "flex items-center gap-2.5 px-3 py-2 rounded-md text-xs font-medium transition-colors text-left",
+                            activeTab === "fuzzer"
+                                ? "bg-primary/10 text-primary border border-primary/20 shadow-xs"
+                                : "text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+                        )}
+                    >
+                        <Crosshair className="w-4 h-4 shrink-0" />
+                        <span className="flex-1">Fuzzer</span>
                     </button>
 
                     <button
@@ -679,6 +709,46 @@ export default function SettingsPage() {
                                             <Shield className="w-3.5 h-3.5" />
                                             Open Certificate Setup Dialog
                                         </Button>
+                                    </div>
+                                </CardContent>
+                            </Card>
+                        </div>
+                    )}
+
+                    {/* ════════════════════════════════════════════════════════════ */}
+                    {/* TAB: FUZZER */}
+                    {/* ════════════════════════════════════════════════════════════ */}
+                    {activeTab === "fuzzer" && (
+                        <div className="max-w-4xl space-y-6">
+                            <Card className="border-border/60 bg-card shadow-xs">
+                                <CardHeader>
+                                    <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                                        <Crosshair className="w-4 h-4 text-primary" />
+                                        Fuzzer Execution & Display Preferences
+                                    </CardTitle>
+                                    <CardDescription className="text-xs">
+                                        Configure how fuzzing operations execute and display results in history.
+                                    </CardDescription>
+                                </CardHeader>
+                                <CardContent className="space-y-4">
+                                    <div className="flex items-start space-x-3 p-3.5 rounded-lg border border-border/50 bg-muted/10 hover:bg-muted/20 transition-colors">
+                                        <Checkbox
+                                            id="showUncompletedRequests"
+                                            checked={fuzzerSettings.showUncompletedRequests}
+                                            onCheckedChange={(checked) => handleToggleShowUncompleted(Boolean(checked))}
+                                            className="mt-0.5"
+                                        />
+                                        <div className="grid gap-1 leading-none">
+                                            <Label
+                                                htmlFor="showUncompletedRequests"
+                                                className="text-xs font-semibold cursor-pointer text-foreground"
+                                            >
+                                                Show uncompleted requests in history table
+                                            </Label>
+                                            <p className="text-[11px] text-muted-foreground leading-relaxed">
+                                                When enabled, the fuzzer generates and displays rows for pending and cancelled requests that have not been sent yet. When disabled, only executed requests are displayed.
+                                            </p>
+                                        </div>
                                     </div>
                                 </CardContent>
                             </Card>

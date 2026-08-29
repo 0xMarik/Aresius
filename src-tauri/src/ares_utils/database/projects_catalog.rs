@@ -60,6 +60,20 @@ impl Default for ProxySettings {
     }
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FuzzerSettings {
+    pub show_uncompleted_requests: bool,
+}
+
+impl Default for FuzzerSettings {
+    fn default() -> Self {
+        Self {
+            show_uncompleted_requests: false,
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // CatalogState managed state wrapper
 // ---------------------------------------------------------------------------
@@ -746,3 +760,51 @@ pub async fn save_proxy_settings_db(
 ) -> Result<(), String> {
     save_proxy_settings_internal(catalog.pool(), &settings).await
 }
+
+/// Helper function to load fuzzer settings directly from catalog DB pool
+pub async fn get_fuzzer_settings_internal(pool: &SqlitePool) -> Result<FuzzerSettings, String> {
+    let row: Option<(Option<String>,)> = sqlx::query_as(
+        "SELECT value FROM app_state WHERE key = 'fuzzer_show_uncompleted_requests'"
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let mut settings = FuzzerSettings::default();
+    if let Some((Some(val),)) = row {
+        settings.show_uncompleted_requests = val == "true";
+    }
+
+    Ok(settings)
+}
+
+/// Helper function to save fuzzer settings directly to catalog DB pool
+pub async fn save_fuzzer_settings_internal(pool: &SqlitePool, settings: &FuzzerSettings) -> Result<(), String> {
+    let val = if settings.show_uncompleted_requests { "true" } else { "false" };
+
+    sqlx::query("INSERT INTO app_state (key, value) VALUES ('fuzzer_show_uncompleted_requests', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+        .bind(val)
+        .execute(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+/// Load persisted Fuzzer settings from the catalog DB.
+#[tauri::command]
+pub async fn get_fuzzer_settings_db(
+    catalog: tauri::State<'_, CatalogState>,
+) -> Result<FuzzerSettings, String> {
+    get_fuzzer_settings_internal(catalog.pool()).await
+}
+
+/// Persist Fuzzer settings to the catalog DB.
+#[tauri::command]
+pub async fn save_fuzzer_settings_db(
+    settings: FuzzerSettings,
+    catalog: tauri::State<'_, CatalogState>,
+) -> Result<(), String> {
+    save_fuzzer_settings_internal(catalog.pool(), &settings).await
+}
+

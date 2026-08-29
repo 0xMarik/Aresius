@@ -206,7 +206,9 @@ pub async fn get_fuzzer_history_window(
     sort_by: Option<String>,
     sort_order: Option<String>,
     search_query: Option<String>,
+    show_uncompleted: Option<bool>,
 ) -> Result<FuzzerWindowResult, String> {
+    let show_uncompleted_val = show_uncompleted.unwrap_or(false);
     let parsed_httpql = search_query
         .as_deref()
         .and_then(|q| if q.trim().is_empty() { None } else { Some(q) })
@@ -216,7 +218,13 @@ pub async fn get_fuzzer_history_window(
     let store = fuzz_store().lock().await;
     if parsed_httpql.is_none() && store.contains_key(&key) {
         let run_data = store.get(&key).unwrap();
-        let total = run_data.rows.len();
+        let target_rows: Vec<&FuzzerRequestRow> = if show_uncompleted_val {
+            run_data.rows.iter().collect()
+        } else {
+            run_data.rows.iter().filter(|r| r.status == "completed" || r.status == "error").collect()
+        };
+
+        let total = target_rows.len();
         let start = offset.min(total);
         let end = (offset + limit).min(total);
 
@@ -229,11 +237,11 @@ pub async fn get_fuzzer_history_window(
             Some("statusCode") | Some("responseCode") => {
                 let mut indices: Vec<usize> = (0..total).collect();
                 indices.sort_by(|&a, &b| {
-                    let code_a = run_data.rows[a]
+                    let code_a = target_rows[a]
                         .response
                         .as_ref()
                         .and_then(|r| crate::ares_utils::database::fuzzer::parse_status_code(&r.response));
-                    let code_b = run_data.rows[b]
+                    let code_b = target_rows[b]
                         .response
                         .as_ref()
                         .and_then(|r| crate::ares_utils::database::fuzzer::parse_status_code(&r.response));
@@ -245,13 +253,13 @@ pub async fn get_fuzzer_history_window(
                     };
                     if is_desc { cmp.reverse() } else { cmp }
                 });
-                indices[start..end].iter().map(|&i| run_data.rows[i].clone()).collect()
+                indices[start..end].iter().map(|&i| (*target_rows[i]).clone()).collect()
             }
             Some("duration") => {
                 let mut indices: Vec<usize> = (0..total).collect();
                 indices.sort_by(|&a, &b| {
-                    let dur_a = run_data.rows[a].response.as_ref().map(|r| r.response_time);
-                    let dur_b = run_data.rows[b].response.as_ref().map(|r| r.response_time);
+                    let dur_a = target_rows[a].response.as_ref().map(|r| r.response_time);
+                    let dur_b = target_rows[b].response.as_ref().map(|r| r.response_time);
                     let cmp = match (dur_a, dur_b) {
                         (Some(x), Some(y)) => x.cmp(&y),
                         (Some(_), None) => std::cmp::Ordering::Less,
@@ -260,13 +268,13 @@ pub async fn get_fuzzer_history_window(
                     };
                     if is_desc { cmp.reverse() } else { cmp }
                 });
-                indices[start..end].iter().map(|&i| run_data.rows[i].clone()).collect()
+                indices[start..end].iter().map(|&i| (*target_rows[i]).clone()).collect()
             }
             Some("length") => {
                 let mut indices: Vec<usize> = (0..total).collect();
                 indices.sort_by(|&a, &b| {
-                    let len_a = run_data.rows[a].response.as_ref().map(|r| r.response.len());
-                    let len_b = run_data.rows[b].response.as_ref().map(|r| r.response.len());
+                    let len_a = target_rows[a].response.as_ref().map(|r| r.response.len());
+                    let len_b = target_rows[b].response.as_ref().map(|r| r.response.len());
                     let cmp = match (len_a, len_b) {
                         (Some(x), Some(y)) => x.cmp(&y),
                         (Some(_), None) => std::cmp::Ordering::Less,
@@ -275,49 +283,49 @@ pub async fn get_fuzzer_history_window(
                     };
                     if is_desc { cmp.reverse() } else { cmp }
                 });
-                indices[start..end].iter().map(|&i| run_data.rows[i].clone()).collect()
+                indices[start..end].iter().map(|&i| (*target_rows[i]).clone()).collect()
             }
             Some("status") => {
                 let mut indices: Vec<usize> = (0..total).collect();
                 indices.sort_by(|&a, &b| {
-                    let st_a = &run_data.rows[a].status;
-                    let st_b = &run_data.rows[b].status;
+                    let st_a = &target_rows[a].status;
+                    let st_b = &target_rows[b].status;
                     let cmp = st_a.cmp(st_b);
                     if is_desc { cmp.reverse() } else { cmp }
                 });
-                indices[start..end].iter().map(|&i| run_data.rows[i].clone()).collect()
+                indices[start..end].iter().map(|&i| (*target_rows[i]).clone()).collect()
             }
             Some("payload") | Some("payloadPreview") => {
                 let mut indices: Vec<usize> = (0..total).collect();
                 indices.sort_by(|&a, &b| {
-                    let p_a = run_data.rows[a].payload.as_deref().unwrap_or("");
-                    let p_b = run_data.rows[b].payload.as_deref().unwrap_or("");
+                    let p_a = target_rows[a].payload.as_deref().unwrap_or("");
+                    let p_b = target_rows[b].payload.as_deref().unwrap_or("");
                     let cmp = p_a.cmp(p_b);
                     if is_desc { cmp.reverse() } else { cmp }
                 });
-                indices[start..end].iter().map(|&i| run_data.rows[i].clone()).collect()
+                indices[start..end].iter().map(|&i| (*target_rows[i]).clone()).collect()
             }
             Some("requestDate") => {
                 let mut indices: Vec<usize> = (0..total).collect();
                 indices.sort_by(|&a, &b| {
-                    let d_a = &run_data.rows[a].request_date;
-                    let d_b = &run_data.rows[b].request_date;
+                    let d_a = &target_rows[a].request_date;
+                    let d_b = &target_rows[b].request_date;
                     let cmp = d_a.cmp(d_b);
                     if is_desc { cmp.reverse() } else { cmp }
                 });
-                indices[start..end].iter().map(|&i| run_data.rows[i].clone()).collect()
+                indices[start..end].iter().map(|&i| (*target_rows[i]).clone()).collect()
             }
             Some("id") => {
                 let mut indices: Vec<usize> = (0..total).collect();
                 if is_desc {
                     indices.reverse();
                 }
-                indices[start..end].iter().map(|&i| run_data.rows[i].clone()).collect()
+                indices[start..end].iter().map(|&i| (*target_rows[i]).clone()).collect()
             }
-            _ => run_data.rows[start..end].to_vec(),
+            _ => target_rows[start..end].iter().map(|&r| r.clone()).collect(),
         };
 
-        Ok(FuzzerWindowResult { total, items })
+        return Ok(FuzzerWindowResult { total, items });
     } else {
         // Fallback to SQLite DB
         if let Some(db_state) = app.try_state::<crate::ares_utils::database::DbState>() {
@@ -344,7 +352,7 @@ pub async fn get_fuzzer_history_window(
 
                     let is_default_sort = (sort_by.is_none() || sort_by.as_deref() == Some("id") || sort_by.as_deref() == Some("sortOrder")) && parsed_httpql.is_none();
 
-                    if is_default_sort && sort_order.as_deref() != Some("desc") && sort_order.as_deref() != Some("DESC") {
+                    if show_uncompleted_val && is_default_sort && sort_order.as_deref() != Some("desc") && sort_order.as_deref() != Some("DESC") {
                         let start = offset.min(total);
                         let end = (offset + limit).min(total);
                         let existing_rows = crate::ares_utils::database::fuzzer::fetch_fuzzer_requests_in_range(

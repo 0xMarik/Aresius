@@ -1,4 +1,5 @@
 import { AppState } from '@/types/project.type';
+import { defaultFuzzerSettings, FuzzerSettings } from '@/types/fuzzerSettings.type';
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 import { invoke } from '@tauri-apps/api/core';
 
@@ -15,6 +16,7 @@ const initialState: AppState = {
   activeProjectId: null,
   lastPage: '/projects',
   fontSizeScale: 1.0,
+  fuzzerSettings: defaultFuzzerSettings,
 };
 
 const appStateSlice = createSlice({
@@ -53,13 +55,18 @@ const appStateSlice = createSlice({
       state.fontSizeScale = 1.0;
       applyFontScaleToDOM(1.0);
     },
+    setFuzzerSettings(state, action: PayloadAction<FuzzerSettings>) {
+      state.fuzzerSettings = action.payload;
+    },
     /** Hydrate all fields at once (used on startup). */
-    hydrateAppState(_state, action: PayloadAction<AppState>) {
+    hydrateAppState(state, action: PayloadAction<AppState>) {
       const scale = action.payload.fontSizeScale ?? 1.0;
       applyFontScaleToDOM(scale);
       return {
+        ...state,
         ...action.payload,
         fontSizeScale: scale,
+        fuzzerSettings: action.payload.fuzzerSettings ?? state.fuzzerSettings ?? defaultFuzzerSettings,
       };
     },
   },
@@ -73,6 +80,7 @@ export const {
   increaseFontSize,
   decreaseFontSize,
   resetFontSize,
+  setFuzzerSettings,
   hydrateAppState,
 } = appStateSlice.actions;
 

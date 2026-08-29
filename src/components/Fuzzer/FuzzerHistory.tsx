@@ -361,6 +361,8 @@ function FuzzerHistoryBody({
 }) {
     const dispatch = useAppDispatch();
     const projectId = useProjectId();
+    const fuzzerSettings = useAppSelector((s) => s.appState.fuzzerSettings) || { showUncompletedRequests: false };
+    const showUncompleted = fuzzerSettings.showUncompletedRequests;
 
     const BUFFER = 100;
     const THRESHOLD = 30;
@@ -491,6 +493,7 @@ function FuzzerHistoryBody({
             sortBy,
             sortOrder,
             searchQuery: '',
+            showUncompleted,
         })
             .then((res) => {
                 if (canceled) return;
@@ -507,7 +510,7 @@ function FuzzerHistoryBody({
         return () => {
             canceled = true;
         };
-    }, [sessionIndex, historyIndex, windowState.offset, windowState.limit, runState.completed, runState.status, sorting, httpqlQuery]);
+    }, [sessionIndex, historyIndex, windowState.offset, windowState.limit, runState.completed, runState.status, sorting, httpqlQuery, showUncompleted]);
 
 
     const effectiveRequests = useMemo(() => {
@@ -522,8 +525,11 @@ function FuzzerHistoryBody({
             return streamingTotal;
         }
         if (windowState.totalFromBackend > 0) return windowState.totalFromBackend;
+        if (!showUncompleted) {
+            return (runState.completed ?? 0) + (runState.failed ?? 0);
+        }
         return runState.total;
-    }, [httpqlQuery, streamingTotal, windowState.totalFromBackend, runState.total]);
+    }, [httpqlQuery, streamingTotal, windowState.totalFromBackend, runState.total, runState.completed, runState.failed, showUncompleted]);
 
     // When streaming, all items are in memory at offset 0.
     const effectiveOffset = httpqlQuery.trim() ? 0 : windowState.offset;
