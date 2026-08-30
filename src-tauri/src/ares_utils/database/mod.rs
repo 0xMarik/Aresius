@@ -6,13 +6,14 @@ use std::str::FromStr;
 use tokio::sync::RwLock;
 pub mod fuzzer;
 pub mod http_history;
+pub mod match_replace;
+pub mod preset_filters;
 pub mod projects;
 pub mod projects_catalog;
 pub mod replayer;
 pub mod scope;
+pub mod settings;
 pub mod sitemap;
-pub mod match_replace;
-pub mod preset_filters;
 
 /// 4-byte fingerprint written into every Aresius project file.
 /// Spells "ARES" in ASCII when you look at the bytes: 0x41 'A' 0x52 'R' 0x45 'E' 0x53 'S'.
@@ -90,6 +91,7 @@ impl DbState {
 
 pub enum DatabaseType {
     Catalog,
+    Settings,
     Project,
 }
 
@@ -111,6 +113,10 @@ pub async fn open_project_db(
     match database_type {
         DatabaseType::Catalog => {
             sqlx::migrate!("./migrations/catalog").run(&pool).await?;
+        }
+
+        DatabaseType::Settings => {
+            sqlx::migrate!("./migrations/settings").run(&pool).await?;
         }
 
         DatabaseType::Project => {

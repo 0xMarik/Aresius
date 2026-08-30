@@ -1,6 +1,7 @@
 use tauri::Manager;
 
 use crate::ares_utils::database::projects_catalog::{catalog_db_path, CatalogState};
+use crate::ares_utils::database::settings::{settings_db_path, SettingsState, get_proxy_settings_internal};
 use crate::ares_utils::database::{open_project_db, DatabaseType};
 use crate::ares_utils::shutdown_gracefully;
 
@@ -17,18 +18,24 @@ pub async fn close_splashscreen(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
-    // Open the catalog DB synchronously so it is available before any command or background service runs.
+    // Open the catalog DB and settings DB synchronously so they are available before any command or background service runs.
     let handle = app.handle().clone();
-    let pool = tauri::async_runtime::block_on(async {
-        let path = catalog_db_path(&handle).unwrap();
-        open_project_db(&path, DatabaseType::Catalog).await.unwrap()
-    });
-    handle.manage(CatalogState::new(pool.clone()));
+    let (catalog_pool, settings_pool) = tauri::async_runtime::block_on(async {
+        let cat_path = catalog_db_path(&handle).unwrap();
+        let cat_pool = open_project_db(&cat_path, DatabaseType::Catalog).await.unwrap();
 
-    // Load persisted proxy settings and spawn the HTTP proxy service in the background.
+        let set_path = settings_db_path(&handle).unwrap();
+        let set_pool = open_project_db(&set_path, DatabaseType::Settings).await.unwrap();
+
+        (cat_pool, set_pool)
+    });
+    handle.manage(CatalogState::new(catalog_pool));
+    handle.manage(SettingsState::new(settings_pool.clone()));
+
+    // Load persisted proxy settings from settings DB and spawn the HTTP proxy service in the background.
     let app_handle = app.handle().clone();
     tauri::async_runtime::spawn(async move {
-        let settings = crate::ares_utils::database::projects_catalog::get_proxy_settings_internal(&pool)
+        let settings = get_proxy_settings_internal(&settings_pool)
             .await
             .unwrap_or_default();
         if let Err(e) = crate::proxy::start_proxy_service(app_handle, settings).await {

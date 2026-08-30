@@ -23,8 +23,8 @@ pub mod interceptor;
 pub mod match_replace;
 pub mod utils;
 
-use crate::ares_utils::database::projects_catalog::{
-    get_proxy_settings_internal, save_proxy_settings_internal, ProxySettings,
+use crate::ares_utils::database::settings::{
+    get_proxy_settings_internal, save_proxy_settings_internal, ProxySettings, SettingsState,
 };
 
 pub use interceptor::*;
@@ -378,9 +378,9 @@ pub async fn get_proxy_status(
 #[tauri::command]
 pub async fn restart_proxy_listener(
     app: tauri::AppHandle,
-    catalog: tauri::State<'_, crate::ares_utils::database::projects_catalog::CatalogState>,
+    settings_state: tauri::State<'_, SettingsState>,
 ) -> Result<ProxyStatus, String> {
-    let settings = get_proxy_settings_internal(catalog.pool()).await?;
+    let settings = get_proxy_settings_internal(settings_state.pool()).await?;
     start_proxy_service(app, settings).await
 }
 
@@ -388,9 +388,9 @@ pub async fn restart_proxy_listener(
 pub async fn save_and_apply_proxy_settings(
     app: tauri::AppHandle,
     settings: ProxySettings,
-    catalog: tauri::State<'_, crate::ares_utils::database::projects_catalog::CatalogState>,
+    settings_state: tauri::State<'_, SettingsState>,
 ) -> Result<ProxyStatus, String> {
-    save_proxy_settings_internal(catalog.pool(), &settings).await?;
+    save_proxy_settings_internal(settings_state.pool(), &settings).await?;
     start_proxy_service(app, settings).await
 }
 
