@@ -286,10 +286,10 @@ pub async fn get_app_state(
 
 #[tauri::command]
 pub async fn save_app_state(
-    app_state: AppState,
-    state: tauri::State<'_, SettingsState>,
+    state: AppState,
+    settings_state: tauri::State<'_, SettingsState>,
 ) -> Result<(), String> {
-    save_app_state_internal(state.pool(), &app_state).await
+    save_app_state_internal(settings_state.pool(), &state).await
 }
 
 #[tauri::command]

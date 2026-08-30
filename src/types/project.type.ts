@@ -17,12 +17,4 @@ export interface WorkspaceState {
   projects: Project[]
 }
 
-import { FuzzerSettings } from "./fuzzerSettings.type"
-
-export interface AppState {
-  sidebarCollapsed: boolean
-  activeProjectId: string | null
-  lastPage: string
-  fontSizeScale?: number
-  fuzzerSettings?: FuzzerSettings
-}
+export type { AppState } from './settings.type'

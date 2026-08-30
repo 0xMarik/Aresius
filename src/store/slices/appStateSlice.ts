@@ -1,5 +1,9 @@
-import { AppState } from '@/types/project.type';
-import { defaultFuzzerSettings, FuzzerSettings } from '@/types/fuzzerSettings.type';
+import {
+  AppState,
+  defaultAppState,
+  defaultFuzzerSettings,
+  FuzzerSettings,
+} from '@/types/settings.type';
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 import { invoke } from '@tauri-apps/api/core';
 
@@ -11,11 +15,12 @@ export function applyFontScaleToDOM(scale: number) {
   }
 }
 
-const initialState: AppState = {
-  sidebarCollapsed: false,
-  activeProjectId: null,
-  lastPage: '/projects',
-  fontSizeScale: 1.0,
+interface AppStateSliceState extends AppState {
+  fuzzerSettings: FuzzerSettings;
+}
+
+const initialState: AppStateSliceState = {
+  ...defaultAppState,
   fuzzerSettings: defaultFuzzerSettings,
 };
 
@@ -66,7 +71,6 @@ const appStateSlice = createSlice({
         ...state,
         ...action.payload,
         fontSizeScale: scale,
-        fuzzerSettings: action.payload.fuzzerSettings ?? state.fuzzerSettings ?? defaultFuzzerSettings,
       };
     },
   },
@@ -84,7 +88,7 @@ export const {
   hydrateAppState,
 } = appStateSlice.actions;
 
-/** Persist the full app-state to the catalog DB. */
+/** Persist the app-state (UI state) to the settings DB. */
 export function persistAppState(state: AppState) {
   invoke('save_app_state', { state }).catch((err) =>
     console.warn('[appState] Failed to persist app state:', err),
