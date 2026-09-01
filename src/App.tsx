@@ -8,7 +8,7 @@ import {
 } from "@/components/ui/sidebar"
 
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
-import { lazy, Suspense, useEffect, useRef } from "react";
+import { useEffect, useRef } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
@@ -38,16 +38,16 @@ import {
 } from "./store/slices/appStateSlice";
 import { FuzzerSettings } from "./types/fuzzerSettings.type";
 
-const Projects = lazy(() => import("./pages/projects.page"));
-const SitemapTree = lazy(() => import("./pages/sitemap/Sitemap"));
-const ScopeManager = lazy(() => import("./pages/scope/ScopeManager"));
-const Interceptor = lazy(() => import("./pages/interceptor/Interceptor.page"));
-const Replayer = lazy(() => import("./pages/replayer/replayer"));
-const HTTPHisotry = lazy(() => import("./pages/HttpHistory"));
-const Fuzzer = lazy(() => import("./pages/fuzzer/fuzzer"));
-const MatchAndReplace = lazy(() => import("./pages/match-replace/MatchAndReplace.page"));
-const FiltersPage = lazy(() => import("./pages/filters/Filters.page"));
-const SettingsPage = lazy(() => import("./pages/settings/Settings.page"));
+import Projects from "./pages/projects.page";
+import SitemapTree from "./pages/sitemap/Sitemap";
+import ScopeManager from "./pages/scope/ScopeManager";
+import Interceptor from "./pages/interceptor/Interceptor.page";
+import Replayer from "./pages/replayer/replayer";
+import HTTPHisotry from "./pages/HttpHistory";
+import Fuzzer from "./pages/fuzzer/fuzzer";
+import MatchAndReplace from "./pages/match-replace/MatchAndReplace.page";
+import FiltersPage from "./pages/filters/Filters.page";
+import SettingsPage from "./pages/settings/Settings.page";
 
 interface ReqRes {
     request: string;
@@ -309,21 +309,19 @@ function AppInner() {
                     <SidebarInset
                         className="min-h-0 overflow-auto flex flex-col"
                     >
-                        <Suspense fallback={null}>
-                            <Routes>
-                                <Route path="/" element={<Navigate to="/projects" replace />} />
-                                <Route path="/projects" element={<Projects />} />
-                                <Route path="/site-map" element={<SitemapTree />} />
-                                <Route path="/scope" element={<ScopeManager />} />
-                                <Route path="/interceptor" element={<Interceptor />} />
-                                <Route path="/replayer" element={<Replayer />} />
-                                <Route path="/http-history" element={<HTTPHisotry />} />
-                                <Route path="/fuzzer" element={<Fuzzer />} />
-                                <Route path="/match-replace" element={<MatchAndReplace />} />
-                                <Route path="/filters" element={<FiltersPage />} />
-                                <Route path="/settings" element={<SettingsPage />} />
-                            </Routes>
-                        </Suspense>
+                        <Routes>
+                            <Route path="/" element={<Navigate to="/projects" replace />} />
+                            <Route path="/projects" element={<Projects />} />
+                            <Route path="/site-map" element={<SitemapTree />} />
+                            <Route path="/scope" element={<ScopeManager />} />
+                            <Route path="/interceptor" element={<Interceptor />} />
+                            <Route path="/replayer" element={<Replayer />} />
+                            <Route path="/http-history" element={<HTTPHisotry />} />
+                            <Route path="/fuzzer" element={<Fuzzer />} />
+                            <Route path="/match-replace" element={<MatchAndReplace />} />
+                            <Route path="/filters" element={<FiltersPage />} />
+                            <Route path="/settings" element={<SettingsPage />} />
+                        </Routes>
                     </SidebarInset>
                 </SidebarProvider>
             </div>

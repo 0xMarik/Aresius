@@ -221,9 +221,7 @@ export const fuzzerSlice = createSlice({
       if (history) {
         history.runState = {
           ...history.runState,
-          status: 'running',
           connectionDropped: false,
-          completedBase: history.runState.completed,
         };
       }
     },

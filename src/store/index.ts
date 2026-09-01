@@ -41,7 +41,7 @@ const store = configureStore({
     getDefaultMiddleware({
       serializableCheck: false,
       immutableCheck: false,
-    }).concat(loggerMiddleware, projectDataMiddleware),
+    }).concat(projectDataMiddleware),
 })
 
 export type RootState = ReturnType<typeof store.getState>

@@ -15,7 +15,7 @@ export default defineConfig(async () => ({
     }
   },
   build: {
-    chunkSizeWarningLimit: 1000,
+    chunkSizeWarningLimit: 10000,
     rollupOptions: {
       input: {
         main: path.resolve(__dirname, "index.html"),

@@ -1252,7 +1252,6 @@ async fn run_dynamic_fuzzer(
     let agg_completed = Arc::clone(&completed);
     let agg_failed = Arc::clone(&failed);
     let agg_cancel = Arc::clone(&cancel);
-    let agg_conn_dropped = Arc::clone(&any_worker_dropped);
 
     let aggregator_handle = tokio::spawn(async move {
         let mut ticker = interval(TIME_TO_UPDATE);
@@ -1261,7 +1260,6 @@ async fn run_dynamic_fuzzer(
             let done = agg_completed.load(Ordering::Relaxed);
             let fail_count = agg_failed.load(Ordering::Relaxed);
             let is_cancelled = agg_cancel.load(Ordering::Relaxed);
-            let dropped = agg_conn_dropped.load(Ordering::Relaxed);
 
             if is_cancelled {
                 update_store_cancelled(selected_session, fuzz_history).await;
@@ -1281,7 +1279,7 @@ async fn run_dynamic_fuzzer(
                 total,
                 fail_count,
                 status,
-                dropped,
+                false,
             );
 
             if is_cancelled || done >= total {
@@ -1531,7 +1529,6 @@ async fn run_dynamic_fuzzer(
                         Err(e) => {
                             consecutive_conn_failures += 1;
                             tracing::warn!("Worker {} connect failed (attempt {}): {}", worker_idx, consecutive_conn_failures, e);
-                            dropped_clone.store(true, Ordering::Relaxed);
 
                             // Push target back to front of the queue so another worker or retry can process it
                             {
@@ -1543,6 +1540,7 @@ async fn run_dynamic_fuzzer(
                             }
 
                             if consecutive_conn_failures >= 5 {
+                                dropped_clone.store(true, Ordering::Relaxed);
                                 break;
                             }
                             sleep(Duration::from_millis(100 * consecutive_conn_failures as u64)).await;
@@ -1594,6 +1592,7 @@ async fn run_dynamic_fuzzer(
 
                         if is_conn_err {
                             // Attempt reconnect & retry
+                            let mut reconnected_and_sent = false;
                             if c.reconnect().await.is_ok() {
                                 let retry_dispatch_time = chrono::Utc::now().timestamp_millis();
                                 match c.send_request(target.request.as_bytes()).await {
@@ -1629,10 +1628,7 @@ async fn run_dynamic_fuzzer(
                                         }).await;
 
                                         completed_clone.fetch_add(1, Ordering::Relaxed);
-                                        if delay_ms > 0 {
-                                            sleep(Duration::from_millis(delay_ms)).await;
-                                        }
-                                        continue;
+                                        reconnected_and_sent = true;
                                     }
                                     Err(retry_err) => {
                                         tracing::warn!("Worker {} request retry failed: {}", worker_idx, retry_err);
@@ -1640,9 +1636,15 @@ async fn run_dynamic_fuzzer(
                                 }
                             }
 
+                            if reconnected_and_sent {
+                                if delay_ms > 0 {
+                                    sleep(Duration::from_millis(delay_ms)).await;
+                                }
+                                continue;
+                            }
+
                             // Connection dropped: invalidate socket and push target back to front of queue
                             conn = None;
-                            dropped_clone.store(true, Ordering::Relaxed);
                             consecutive_conn_failures += 1;
 
                             {
@@ -1654,6 +1656,7 @@ async fn run_dynamic_fuzzer(
                             }
 
                             if consecutive_conn_failures >= 5 {
+                                dropped_clone.store(true, Ordering::Relaxed);
                                 break;
                             }
                             sleep(Duration::from_millis(100 * consecutive_conn_failures as u64)).await;
@@ -1697,22 +1700,30 @@ async fn run_dynamic_fuzzer(
 
     let final_completed = completed.load(Ordering::Relaxed);
     let final_failed = failed.load(Ordering::Relaxed);
-    let conn_dropped = any_worker_dropped.load(Ordering::Relaxed);
+    let worker_failed_conn = any_worker_dropped.load(Ordering::Relaxed);
     let cancelled = cancel.load(Ordering::Relaxed);
+    let queue_has_remaining = {
+        let q = match queue.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        !q.is_empty()
+    };
 
     if cancelled {
         update_store_cancelled(selected_session, fuzz_history).await;
     }
 
+    let is_conn_dropped = !cancelled && (worker_failed_conn || queue_has_remaining || final_completed < total);
     let status = if cancelled && final_completed < total {
         "cancelled"
-    } else if conn_dropped && final_completed < total {
+    } else if is_conn_dropped {
         "connection_dropped"
-    } else if final_completed < total {
-        "cancelled"
     } else {
         "completed"
     };
+
+    let conn_dropped = status == "connection_dropped";
 
     if let Some(ref pool) = db_pool {
         let now = chrono::Utc::now().timestamp_millis();
@@ -1917,7 +1928,7 @@ pub async fn resend_fuzz_request(
     fuzz_history: u32,
 ) -> Result<(), String> {
     let id = target.id.clone();
-    update_store_pending(selected_session, fuzz_history, &[id]).await;
+    update_store_pending(selected_session, fuzz_history, &[id.clone()]).await;
 
     let db_pool = if let Some(db_state) = app.try_state::<crate::ares_utils::database::DbState>() {
         db_state.pool().await.ok()
@@ -1925,29 +1936,170 @@ pub async fn resend_fuzz_request(
         None
     };
 
-    let (completed, total) = {
+    let run_id = format!("{}-{}", selected_session, fuzz_history);
+
+    tokio::spawn(async move {
+        let dispatch_time = chrono::Utc::now().timestamp_millis();
+        let conn_result = HttpConnection::new(&url).await;
+
+        match conn_result {
+            Ok(mut conn) => {
+                match conn.send_request(target.request.as_bytes()).await {
+                    Ok(response) => {
+                        let raw_resp = response.as_text_lossy();
+                        let status_code = crate::ares_utils::database::fuzzer::parse_status_code(&raw_resp);
+                        let resp_len = raw_resp.len() as usize;
+                        let resp_time = response.elapsed.as_millis();
+
+                        update_store_completed(
+                            selected_session,
+                            fuzz_history,
+                            &target.id,
+                            dispatch_time,
+                            status_code.map(|c| c as u16),
+                            Some(resp_len),
+                            Some(resp_time),
+                            Some(raw_resp.clone()),
+                            Some(0),
+                        ).await;
+
+                        if let Some(ref pool) = db_pool {
+                            let item = crate::ares_utils::database::fuzzer::FuzzerCompletedItemMeta {
+                                id: target.id.clone(),
+                                sort_order: target.sort_order as i64,
+                                payload: target.payload.clone(),
+                                request_date: dispatch_time,
+                                status_code: status_code.map(|c| c as i64),
+                                response_length: resp_len as i64,
+                                response_time_ms: resp_time as i64,
+                                worker_id: Some(0),
+                            };
+                            let code = status_code.unwrap_or(0);
+                            if let Ok(compressed) = crate::fuzzer::chunk_manager::compress_chunk(&[raw_resp.clone()]) {
+                                let fts_opt = if crate::ares_utils::content_filter::is_text_based_response(&raw_resp) {
+                                    let (headers, body) = crate::ares_utils::parse::split_message(&raw_resp);
+                                    let body_limit = body.len().min(32_768);
+                                    let mut fts_text = String::new();
+                                    fts_text.push_str(headers);
+                                    fts_text.push_str("\r\n\r\n");
+                                    fts_text.push_str(&body[..body_limit]);
+                                    Some(fts_text)
+                                } else {
+                                    None
+                                };
+                                if let Ok(chunk_id) = crate::ares_utils::database::fuzzer::insert_fuzzer_chunk_and_update_requests(
+                                    pool,
+                                    &run_id,
+                                    code,
+                                    &compressed,
+                                    raw_resp.len() as i64,
+                                    &[item],
+                                    fts_opt.as_deref(),
+                                ).await {
+                                    crate::fuzzer::chunk_manager::get_chunk_cache().lock().unwrap().insert(chunk_id, vec![raw_resp]);
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        let msg = e.to_string();
+                        let is_conn_err = is_connection_error(&msg);
+                        update_store_error(
+                            selected_session,
+                            fuzz_history,
+                            &target.id,
+                            dispatch_time,
+                            msg.clone(),
+                            is_conn_err,
+                            Some(0),
+                        ).await;
+
+                        if let Some(ref pool) = db_pool {
+                            let _ = crate::ares_utils::database::fuzzer::insert_fuzzer_request_error(
+                                pool,
+                                &run_id,
+                                &target.id,
+                                target.sort_order as i64,
+                                target.payload.as_deref(),
+                                dispatch_time,
+                                Some(0),
+                                &msg,
+                                is_conn_err,
+                            ).await;
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                let msg = e.to_string();
+                update_store_error(
+                    selected_session,
+                    fuzz_history,
+                    &target.id,
+                    dispatch_time,
+                    msg.clone(),
+                    true,
+                    Some(0),
+                ).await;
+
+                if let Some(ref pool) = db_pool {
+                    let _ = crate::ares_utils::database::fuzzer::insert_fuzzer_request_error(
+                        pool,
+                        &run_id,
+                        &target.id,
+                        target.sort_order as i64,
+                        target.payload.as_deref(),
+                        dispatch_time,
+                        Some(0),
+                        &msg,
+                        true,
+                    ).await;
+                }
+            }
+        }
+
+        // Recalculate true stats for the whole run from the in-memory store (or DB)
         let key = run_key(selected_session, fuzz_history);
         let store = fuzz_store().lock().await;
         if let Some(run_data) = store.get(&key) {
-            let comp = run_data.rows.iter().filter(|r| r.status == "completed").count() as u32;
-            (comp, run_data.rows.len() as u32)
-        } else {
-            (0, 1)
+            let completed = run_data.rows.iter().filter(|r| r.status == "completed").count() as u32;
+            let failed = run_data.rows.iter().filter(|r| r.status == "error").count() as u32;
+            let total = run_data.rows.len() as u32;
+            let has_pending = run_data.rows.iter().any(|r| r.status == "pending");
+
+            let status = if completed == total {
+                "completed"
+            } else if !has_pending && (failed + completed == total) {
+                "completed"
+            } else {
+                "cancelled"
+            };
+
+            if let Some(ref pool) = db_pool {
+                let now = chrono::Utc::now().timestamp_millis();
+                let _ = sqlx::query(
+                    "UPDATE fuzzer_runs SET status = ?, completed = ?, failed = ?, finished_at = ? WHERE id = ?"
+                )
+                .bind(status)
+                .bind(completed as i64)
+                .bind(failed as i64)
+                .bind(now)
+                .bind(&run_id)
+                .execute(pool)
+                .await;
+            }
+
+            emit_progress(
+                &app,
+                selected_session,
+                fuzz_history,
+                completed,
+                total,
+                failed,
+                status,
+                false,
+            );
         }
-    };
-
-    let config = FuzzRunConfig {
-        url,
-        delay_ms: 0,
-        num_tasks: 1,
-        selected_session,
-        fuzz_history,
-        register_cancel: false,
-        config_snapshot: None,
-    };
-
-    tokio::spawn(async move {
-        run_dynamic_fuzzer(app, config, vec![target], completed, total, db_pool).await;
     });
 
     Ok(())
