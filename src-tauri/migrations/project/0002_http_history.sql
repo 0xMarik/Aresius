@@ -1,6 +1,6 @@
 CREATE TABLE http_history (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
-    project_id       TEXT    NOT NULL REFERENCES projects(id),
+    project_id       TEXT    NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     host             TEXT    NOT NULL,
     method           TEXT    NOT NULL,
     path             TEXT    NOT NULL,

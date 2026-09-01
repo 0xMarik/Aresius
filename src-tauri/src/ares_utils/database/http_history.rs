@@ -457,7 +457,7 @@ pub async fn get_http_history_item(
     Ok(row)
 }
 
-/// Deletes specific HTTP history items by IDs
+/// Deletes specific HTTP history items by IDs and vacuums the database to reclaim disk space
 #[tauri::command]
 pub async fn delete_http_history_items(
     db: tauri::State<'_, DbState>,
@@ -480,6 +480,10 @@ pub async fn delete_http_history_items(
         .execute(&pool)
         .await
         .map_err(|e| e.to_string())?;
+
+    // VACUUM to defragment and compact SQLite database file
+    let _ = sqlx::query("VACUUM").execute(&pool).await;
+    let _ = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)").execute(&pool).await;
 
     Ok(())
 }
@@ -681,5 +685,96 @@ pub async fn save_http_history_state_db(
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    async fn create_test_pool() -> SqlitePool {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
 
+        sqlx::query(
+            "CREATE TABLE projects (id TEXT PRIMARY KEY NOT NULL);
+             INSERT INTO projects (id) VALUES ('test-proj');
+
+             CREATE TABLE http_history (
+                 id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                 project_id       TEXT    NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                 host             TEXT    NOT NULL,
+                 method           TEXT    NOT NULL,
+                 path             TEXT    NOT NULL,
+                 query            TEXT,
+                 extension        TEXT,
+                 status_code      INTEGER NOT NULL DEFAULT 0,
+                 response_length  INTEGER NOT NULL DEFAULT 0,
+                 response_time_ms INTEGER NOT NULL DEFAULT 0,
+                 sent_at_ms       INTEGER NOT NULL,
+                 state            TEXT    NOT NULL,
+                 is_https         INTEGER NOT NULL DEFAULT 0,
+                 raw_request      TEXT    NOT NULL,
+                 raw_response     TEXT    NOT NULL DEFAULT '',
+                 request_auto_patch TEXT DEFAULT NULL,
+                 request_manual_patch TEXT DEFAULT NULL,
+                 response_auto_patch TEXT DEFAULT NULL,
+                 response_manual_patch TEXT DEFAULT NULL,
+                 request_edit_type TEXT DEFAULT NULL,
+                 response_edit_type TEXT DEFAULT NULL
+             );"
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        pool
+    }
+
+    #[tokio::test]
+    async fn test_save_delete_http_history_and_vacuum() {
+        let pool = create_test_pool().await;
+
+        save_http_history(
+            pool.clone(),
+            "test-proj".to_string(),
+            "example.com".to_string(),
+            "GET".to_string(),
+            "/api/test".to_string(),
+            None,
+            None,
+            200,
+            1024,
+            45,
+            1000,
+            true,
+            "GET /api/test HTTP/1.1\r\nHost: example.com\r\n\r\n".to_string(),
+            "HTTP/1.1 200 OK\r\n\r\n{\"success\":true}".to_string(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM http_history")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 1);
+
+        // Delete item and run VACUUM
+        sqlx::query("DELETE FROM http_history WHERE id = 1")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        sqlx::query("VACUUM").execute(&pool).await.unwrap();
+        sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)").execute(&pool).await.unwrap();
+
+        let after_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM http_history")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(after_count, 0);
+    }
+}

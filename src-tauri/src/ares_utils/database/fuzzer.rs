@@ -394,11 +394,35 @@ pub async fn delete_fuzzer_session_db(
     .map_err(|e| e.to_string())?;
 
     if let Some(s_id) = session_id {
+        let run_ids: Vec<String> = sqlx::query_scalar("SELECT id FROM fuzzer_runs WHERE session_id = ?")
+            .bind(&s_id)
+            .fetch_all(&pool)
+            .await
+            .unwrap_or_default();
+
+        for r_id in &run_ids {
+            let _ = sqlx::query("DELETE FROM fuzzer_requests WHERE run_id = ?")
+                .bind(r_id)
+                .execute(&pool)
+                .await;
+            let _ = sqlx::query("DELETE FROM fuzzer_chunks WHERE run_id = ?")
+                .bind(r_id)
+                .execute(&pool)
+                .await;
+        }
+
         sqlx::query("DELETE FROM fuzzer_sessions WHERE id = ?")
             .bind(&s_id)
             .execute(&pool)
             .await
             .map_err(|e| e.to_string())?;
+
+        // Clear in-memory decompressed chunk cache
+        crate::fuzzer::chunk_manager::get_chunk_cache().lock().unwrap().clear();
+
+        // VACUUM to defragment and compact SQLite database file
+        let _ = sqlx::query("VACUUM").execute(&pool).await;
+        let _ = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)").execute(&pool).await;
     }
     Ok(())
 }
@@ -441,11 +465,27 @@ pub async fn delete_fuzzer_history_db(
         .map_err(|e| e.to_string())?;
 
         if let Some(r_id) = run_id {
+            // Explicitly delete requests and chunks to guarantee immediate cascaded FTS trigger cleanup
+            let _ = sqlx::query("DELETE FROM fuzzer_requests WHERE run_id = ?")
+                .bind(&r_id)
+                .execute(&pool)
+                .await;
+            let _ = sqlx::query("DELETE FROM fuzzer_chunks WHERE run_id = ?")
+                .bind(&r_id)
+                .execute(&pool)
+                .await;
             sqlx::query("DELETE FROM fuzzer_runs WHERE id = ?")
                 .bind(&r_id)
                 .execute(&pool)
                 .await
                 .map_err(|e| e.to_string())?;
+
+            // Clear in-memory decompressed chunk cache
+            crate::fuzzer::chunk_manager::get_chunk_cache().lock().unwrap().clear();
+
+            // VACUUM to defragment and compact SQLite database file
+            let _ = sqlx::query("VACUUM").execute(&pool).await;
+            let _ = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)").execute(&pool).await;
         }
     }
     Ok(())
@@ -1396,4 +1436,78 @@ mod tests {
         assert_eq!(total5, 1);
         assert_eq!(rows5[0].id, "req-3");
     }
+
+    #[tokio::test]
+    async fn test_delete_fuzzer_run_and_vacuum() {
+        let pool = create_test_pool().await;
+
+        let items = vec![FuzzerCompletedItemMeta {
+            id: "req-1".to_string(),
+            sort_order: 0,
+            payload: Some("test_payload".to_string()),
+            request_date: 1000,
+            status_code: Some(200),
+            response_length: 500,
+            response_time_ms: 30,
+            worker_id: Some(1),
+        }];
+        let raw_resps = vec!["HTTP/1.1 200 OK\r\n\r\nHello".to_string()];
+        let compressed = crate::fuzzer::chunk_manager::compress_chunk(&raw_resps).unwrap();
+
+        let chunk_id = insert_fuzzer_chunk_and_update_requests(
+            &pool,
+            "run-1",
+            200,
+            &compressed,
+            500,
+            &items,
+            Some("HTTP/1.1 200 OK\r\n\r\nHello"),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(chunk_id, 1);
+
+        // Verify inserted
+        let chunk_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM fuzzer_chunks WHERE run_id = 'run-1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(chunk_count, 1);
+
+        let req_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM fuzzer_requests WHERE run_id = 'run-1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(req_count, 1);
+
+        // Delete run with explicit cascades and vacuum
+        let _ = sqlx::query("DELETE FROM fuzzer_requests WHERE run_id = 'run-1'").execute(&pool).await;
+        let _ = sqlx::query("DELETE FROM fuzzer_chunks WHERE run_id = 'run-1'").execute(&pool).await;
+        let _ = sqlx::query("DELETE FROM fuzzer_runs WHERE id = 'run-1'").execute(&pool).await;
+
+        // Execute VACUUM and WAL checkpoint
+        let _ = sqlx::query("VACUUM").execute(&pool).await.unwrap();
+        let _ = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)").execute(&pool).await.unwrap();
+
+        // Verify all tables are empty
+        let chunk_count_after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM fuzzer_chunks")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(chunk_count_after, 0);
+
+        let req_count_after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM fuzzer_requests")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(req_count_after, 0);
+
+        let fts_count_after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM fuzzer_chunks_fts")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(fts_count_after, 0);
+    }
 }
+

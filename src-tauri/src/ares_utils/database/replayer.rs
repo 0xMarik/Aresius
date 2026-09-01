@@ -347,6 +347,11 @@ pub async fn delete_replayer_collection(
         .execute(&pool)
         .await
         .map_err(|e| e.to_string())?;
+
+    // VACUUM to defragment and compact SQLite database file
+    let _ = sqlx::query("VACUUM").execute(&pool).await;
+    let _ = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)").execute(&pool).await;
+
     Ok(())
 }
 
@@ -539,6 +544,11 @@ pub async fn delete_replayer_session(
         .execute(&pool)
         .await
         .map_err(|e| e.to_string())?;
+
+    // VACUUM to defragment and compact SQLite database file
+    let _ = sqlx::query("VACUUM").execute(&pool).await;
+    let _ = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)").execute(&pool).await;
+
     Ok(())
 }
 

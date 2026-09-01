@@ -103,6 +103,8 @@ pub async fn open_project_db(
         .create_if_missing(true)
         .journal_mode(SqliteJournalMode::Wal)
         .synchronous(SqliteSynchronous::Normal)
+        .foreign_keys(true)
+        .pragma("auto_vacuum", "FULL")
         .busy_timeout(std::time::Duration::from_secs(5));
 
     let pool = SqlitePoolOptions::new()
