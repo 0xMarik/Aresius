@@ -1,11 +1,21 @@
 import { HTTPQL_FIELDS, HttpqlFieldDef, OPERATOR_LABELS } from './httpql';
 
+export type HttpqlSection =
+    | 'Recent Searches'
+    | 'Presets'
+    | 'Namespaces'
+    | 'Fields'
+    | 'Operators'
+    | 'Values'
+    | 'Keywords';
+
 export interface AutocompleteSuggestion {
     id: string;
     text: string;
     displayText?: string;
     replacement: string;
-    category: 'Root' | 'Field' | 'Operator' | 'Value' | 'Keyword' | 'Header';
+    category: 'Root' | 'Field' | 'Operator' | 'Value' | 'Keyword' | 'Header' | 'Recent';
+    section: HttpqlSection;
     description: string;
     /** If true, after applying this suggestion, the autocomplete should immediately open the next layer */
     hasMoreLayers?: boolean;
@@ -14,7 +24,8 @@ export interface AutocompleteSuggestion {
 export function getHttpqlSuggestions(
     input: string,
     cursorPos: number,
-    dynamicPresets?: { alias: string; name: string; description?: string }[]
+    dynamicPresets?: { alias: string; name: string; description?: string }[],
+    recentSearches?: string[]
 ): { suggestions: AutocompleteSuggestion[]; startPos: number; endPos: number } {
     const textBefore = input.slice(0, cursorPos);
 
@@ -47,10 +58,11 @@ export function getHttpqlSuggestions(
                 id: `header-${h}`,
                 text: `${fieldPrefix}["${h}"]`,
                 displayText: h,
-                replacement: `${fieldPrefix}["${h}"].cont:`,
+                replacement: `${fieldPrefix}["${h}"].`,
                 category: 'Header' as const,
+                section: 'Fields' as const,
                 description: `Header: ${h}`,
-                hasMoreLayers: false,
+                hasMoreLayers: true,
             }));
 
         return { suggestions: filtered, startPos: tokenStart, endPos: tokenEnd };
@@ -90,6 +102,7 @@ export function getHttpqlSuggestions(
                     displayText: `${p.alias} (${p.label})`,
                     replacement: `${fieldWithMod}${op}"${p.alias}" `,
                     category: 'Value' as const,
+                    section: 'Presets' as const,
                     description: p.desc,
                     hasMoreLayers: false,
                 }));
@@ -123,6 +136,7 @@ export function getHttpqlSuggestions(
                         displayText: display,
                         replacement: repl,
                         category: 'Value' as const,
+                        section: 'Values' as const,
                         description: `Value for ${fieldDef.name}`,
                         hasMoreLayers: false,
                     };
@@ -160,6 +174,7 @@ export function getHttpqlSuggestions(
                         displayText: op,
                         replacement: `${fieldStr}${op}`,
                         category: 'Operator' as const,
+                        section: 'Operators' as const,
                         description: info.desc,
                         hasMoreLayers: Boolean(hasValues),
                     };
@@ -188,22 +203,7 @@ export function getHttpqlSuggestions(
             })
             .map((f) => {
                 const subName = f.name.slice(4);
-                let repl: string;
-                if (f.name === 'req.header') {
-                    repl = 'req.header["';
-                } else if (f.name === 'req.ext') {
-                    repl = 'req.ext.eq:';
-                } else if (f.name === 'req.method') {
-                    repl = 'req.method.eq:';
-                } else if (f.type === 'string') {
-                    repl = `${f.name}.cont:`;
-                } else if (f.type === 'integer') {
-                    repl = `${f.name}.gt:`;
-                } else if (f.type === 'datetime') {
-                    repl = `${f.name}.gt:`;
-                } else {
-                    repl = `${f.name}.eq:`;
-                }
+                const repl = f.name === 'req.header' ? 'req.header["' : `${f.name}.`;
 
                 return {
                     id: `req-field-${subName}`,
@@ -211,6 +211,7 @@ export function getHttpqlSuggestions(
                     displayText: subName,
                     replacement: repl,
                     category: 'Field' as const,
+                    section: 'Fields' as const,
                     description: f.description,
                     hasMoreLayers: true,
                 };
@@ -235,18 +236,7 @@ export function getHttpqlSuggestions(
             })
             .map((f) => {
                 const subName = f.name.slice(5);
-                let repl: string;
-                if (f.name === 'resp.header') {
-                    repl = 'resp.header["';
-                } else if (f.name === 'resp.code') {
-                    repl = 'resp.code.gte:';
-                } else if (f.name === 'resp.roundtrip') {
-                    repl = 'resp.roundtrip.gt:';
-                } else if (f.type === 'integer') {
-                    repl = `${f.name}.gt:`;
-                } else {
-                    repl = `${f.name}.cont:`;
-                }
+                const repl = f.name === 'resp.header' ? 'resp.header["' : `${f.name}.`;
 
                 return {
                     id: `resp-field-${subName}`,
@@ -254,6 +244,7 @@ export function getHttpqlSuggestions(
                     displayText: subName,
                     replacement: repl,
                     category: 'Field' as const,
+                    section: 'Fields' as const,
                     description: f.description,
                     hasMoreLayers: true,
                 };
@@ -266,15 +257,15 @@ export function getHttpqlSuggestions(
         };
     }
 
-    // 2C. If user typed "row." or "row"
-    if (lowerToken.startsWith('row.') || lowerToken === 'row') {
-        const subPart = lowerToken.startsWith('row.') ? lowerToken.slice(4) : '';
+    // 2C. If user typed "row." or "row" + dot
+    if (lowerToken.startsWith('row.') || (lowerToken.startsWith('row') && lowerToken.length > 3)) {
+        const subPart = lowerToken.startsWith('row.') ? lowerToken.slice(4) : lowerToken.slice(3);
         const rowFields = [
             {
                 name: 'row.id',
                 subName: 'id',
                 desc: 'Numerical identifier of a traffic table row',
-                repl: 'row.id.eq:',
+                repl: 'row.id.',
                 hasMoreLayers: true,
             },
         ];
@@ -287,6 +278,7 @@ export function getHttpqlSuggestions(
                 displayText: f.subName,
                 replacement: f.repl,
                 category: 'Field' as const,
+                section: 'Fields' as const,
                 description: f.desc,
                 hasMoreLayers: f.hasMoreLayers,
             }));
@@ -299,52 +291,98 @@ export function getHttpqlSuggestions(
     }
 
     // -------------------------------------------------------------------------
-    // LAYER 1: Namespaces (req, resp, row, preset, source, and keywords)
+    // LAYER 1: Root Suggestions (Recent Searches, Presets, Namespaces, Keywords)
     // -------------------------------------------------------------------------
     const rootSuggestions: AutocompleteSuggestion[] = [];
 
-    const roots = [
+    // 1. Recent Searches (if available)
+    if (recentSearches && recentSearches.length > 0) {
+        const matchingRecent = recentSearches
+            .filter((q) => !lowerToken || q.toLowerCase().includes(lowerToken))
+            .slice(0, 5);
+
+        for (const q of matchingRecent) {
+            rootSuggestions.push({
+                id: `recent-${q}`,
+                text: q,
+                displayText: q,
+                replacement: `${q} `,
+                category: 'Recent',
+                section: 'Recent Searches',
+                description: 'Recent query',
+                hasMoreLayers: false,
+            });
+        }
+    }
+
+    // 2. Presets (predefined presets)
+    const presetsList = dynamicPresets && dynamicPresets.length > 0
+        ? dynamicPresets.map((p) => ({ alias: p.alias, label: p.name, desc: p.description || `Preset: ${p.name}` }))
+        : [
+            { alias: 'hide-static', label: 'Hide Static', desc: 'Hide static assets (images, CSS, JS, fonts, maps)' },
+            { alias: 'errors-only', label: '4xx / 5xx Errors', desc: 'Filter for client and server error responses' },
+            { alias: 'success-only', label: '2xx Success', desc: 'Filter for successful responses (200-299)' },
+            { alias: 'mutating-methods', label: 'POST / PUT / DELETE', desc: 'Filter for mutating HTTP request methods' },
+            { alias: 'json-only', label: 'JSON Traffic', desc: 'Filter for JSON requests or responses' },
+            { alias: 'slow-requests', label: 'Slow (>1s)', desc: 'Requests taking longer than 1,000ms' },
+            { alias: 'has-params', label: 'With Query Params', desc: 'Requests containing URL query parameters' },
+        ];
+
+    const matchingPresets = presetsList
+        .filter((p) => !lowerToken || p.alias.toLowerCase().includes(lowerToken) || p.label.toLowerCase().includes(lowerToken) || 'preset'.startsWith(lowerToken))
+        .slice(0, 7);
+
+    for (const p of matchingPresets) {
+        rootSuggestions.push({
+            id: `preset-item-${p.alias}`,
+            text: `preset:"${p.alias}"`,
+            displayText: `preset:"${p.alias}"`,
+            replacement: `preset:"${p.alias}" `,
+            category: 'Value',
+            section: 'Presets',
+            description: `${p.label} - ${p.desc}`,
+            hasMoreLayers: false,
+        });
+    }
+
+    // 3. Namespaces (req, resp, row)
+    const namespaces = [
         {
             name: 'req',
             display: 'req',
             replacement: 'req.',
-            desc: 'All proxied HTTP requests (created_at, ext, host, len, method, path, port, query, raw, tls)',
+            desc: 'Request namespace (method, path, host, headers, len, etc.)',
         },
         {
             name: 'resp',
             display: 'resp',
             replacement: 'resp.',
-            desc: 'All proxied HTTP responses (code, len, raw, roundtrip, header)',
+            desc: 'Response namespace (code, roundtrip, headers, len, etc.)',
         },
         {
             name: 'row',
             display: 'row',
             replacement: 'row.',
-            desc: 'Traffic table row numerical identifier (id)',
-        },
-        {
-            name: 'preset',
-            display: 'preset',
-            replacement: 'preset:',
-            desc: 'Filter presets (hide-static, errors-only, 2xx-success, etc.)',
+            desc: 'Row identifier namespace (id)',
         },
     ];
 
-    for (const r of roots) {
-        if (r.name.toLowerCase().startsWith(lowerToken) || lowerToken === '') {
+    for (const ns of namespaces) {
+        if (!lowerToken || ns.name.toLowerCase().startsWith(lowerToken)) {
             rootSuggestions.push({
-                id: `root-${r.name}`,
-                text: r.name,
-                displayText: r.display,
-                replacement: r.replacement,
+                id: `ns-${ns.name}`,
+                text: ns.name,
+                displayText: ns.display,
+                replacement: ns.replacement,
                 category: 'Root',
-                description: r.desc,
+                section: 'Namespaces',
+                description: ns.desc,
                 hasMoreLayers: true,
             });
         }
     }
 
-    // LAYER 5: Logical keywords (AND, OR, NOT)
+    // 4. Logical keywords (AND, OR, NOT)
     if (textBefore.trim().length > 0 && (lowerToken === '' || 'and'.startsWith(lowerToken) || 'or'.startsWith(lowerToken) || 'not'.startsWith(lowerToken))) {
         const keywords = [
             { text: 'and', desc: 'Both clauses must be true (higher precedence)' },
@@ -360,6 +398,7 @@ export function getHttpqlSuggestions(
                     displayText: kw.text.toUpperCase(),
                     replacement: `${kw.text.toUpperCase()} `,
                     category: 'Keyword',
+                    section: 'Keywords',
                     description: kw.desc,
                     hasMoreLayers: true,
                 });

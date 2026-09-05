@@ -30,8 +30,7 @@ import {
 } from 'lucide-react';
 import { HTTPQL_PRESETS } from '@/lib/httpql/httpql';
 import HttpqlCheatsheetModal from './HttpqlCheatsheetModal';
-import { useHttpqlAutocomplete } from './useHttpqlAutocomplete';
-import { HttpqlAutocompleteDropdown } from './HttpqlAutocompleteDropdown';
+import HttpqlCodeEditor, { HttpqlCodeEditorRef } from './HttpqlCodeEditor';
 import { useAppSelector } from '@/hooks/redux';
 import { useProjectId } from '@/hooks/useProjectId';
 import { selectAllFilters } from '@/store/slices/filtersSlice';
@@ -97,29 +96,10 @@ export const HttpqlBar: React.FC<HttpqlBarProps> = ({
         }));
     }, [effectivePresets]);
 
-    const inputRef = useRef<HTMLInputElement>(null);
+    const inputRef = useRef<HttpqlCodeEditorRef>(null);
     const [inputValue, setInputValue] = useState(value);
     const [isValid, setIsValid] = useState<boolean>(true);
     const [validationError, setValidationError] = useState<string | null>(null);
-
-    // Shared Autocomplete Hook
-    const {
-        suggestions,
-        selectedIndex,
-        showSuggestions,
-        setShowSuggestions,
-        updateSuggestions,
-        handleKeyDown: handleAutocompleteKeyDown,
-        applySuggestion,
-    } = useHttpqlAutocomplete({
-        value: inputValue,
-        onChange: (newVal) => {
-            setInputValue(newVal);
-            onChange(newVal);
-        },
-        inputRef,
-        dynamicPresets,
-    });
 
     // History and saved queries
     const [savedQueries, setSavedQueries] = useState<SavedQuery[]>(() => {
@@ -170,32 +150,17 @@ export const HttpqlBar: React.FC<HttpqlBarProps> = ({
         return () => clearTimeout(timer);
     }, [inputValue]);
 
-    const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const newVal = e.target.value;
-        setInputValue(newVal);
-        onChange(newVal);
-        const cursor = e.target.selectionStart ?? newVal.length;
-        updateSuggestions(newVal, cursor);
-    };
-
-    const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-        const handled = handleAutocompleteKeyDown(e);
-        if (handled) return;
-
-        if (e.key === 'Enter') {
-            // Save to recent history
-            if (inputValue.trim()) {
-                setHistoryQueries((prev) => {
-                    const filtered = prev.filter((q) => q !== inputValue.trim());
-                    const updated = [inputValue.trim(), ...filtered].slice(0, 15);
-                    try {
-                        localStorage.setItem(STORAGE_HISTORY_KEY, JSON.stringify(updated));
-                    } catch {}
-                    return updated;
-                });
-            }
-            setShowSuggestions(false);
-        }
+    const handleSaveToHistory = (queryToSave: string) => {
+        const trimmed = queryToSave.trim();
+        if (!trimmed) return;
+        setHistoryQueries((prev) => {
+            const filtered = prev.filter((q) => q !== trimmed);
+            const updated = [trimmed, ...filtered].slice(0, 15);
+            try {
+                localStorage.setItem(STORAGE_HISTORY_KEY, JSON.stringify(updated));
+            } catch {}
+            return updated;
+        });
     };
 
     const handleSaveCurrentQuery = () => {
@@ -226,7 +191,6 @@ export const HttpqlBar: React.FC<HttpqlBarProps> = ({
     const clearInput = () => {
         setInputValue('');
         onChange('');
-        setShowSuggestions(false);
         inputRef.current?.focus();
     };
 
@@ -264,25 +228,19 @@ export const HttpqlBar: React.FC<HttpqlBarProps> = ({
                         </span>
                     </div>
 
-                    <Input
+                    <HttpqlCodeEditor
                         ref={inputRef}
                         value={inputValue}
-                        onChange={handleInputChange}
-                        onKeyDown={handleKeyDown}
-                        onFocus={() => {
-                            if (inputValue) {
-                                const cursor = inputRef.current?.selectionStart ?? inputValue.length;
-                                updateSuggestions(inputValue, cursor);
-                            }
+                        onChange={(val) => {
+                            setInputValue(val);
+                            onChange(val);
                         }}
-                        onBlur={() => {
-                            // Delay hiding suggestions so click events on dropdown register
-                            setTimeout(() => setShowSuggestions(false), 200);
+                        onSubmit={(val) => {
+                            handleSaveToHistory(val);
                         }}
                         placeholder={placeholder}
-                        className="pl-24 pr-16 h-8 text-xs font-mono bg-background border-border/80 focus-visible:ring-1 focus-visible:ring-primary placeholder:font-sans placeholder:text-muted-foreground/60"
-                        spellCheck={false}
-                        autoComplete="off"
+                        dynamicPresets={dynamicPresets}
+                        recentSearches={historyQueries}
                     />
 
                     {/* Right side controls inside input */}
@@ -321,15 +279,6 @@ export const HttpqlBar: React.FC<HttpqlBarProps> = ({
                             </button>
                         )}
                     </div>
-
-                    {/* Autocomplete Suggestions Popup anchored right under input */}
-                    {showSuggestions && suggestions.length > 0 && (
-                        <HttpqlAutocompleteDropdown
-                            suggestions={suggestions}
-                            selectedIndex={selectedIndex}
-                            onSelect={applySuggestion}
-                        />
-                    )}
                 </div>
 
                 {/* History & Saved Queries Dropdown */}
