@@ -32,7 +32,6 @@ export type EnrichedFuzzerRow = FuzzerRow & {
     parsedResponse: ReturnType<typeof parseResponse> | null;
     contentLength: number;
     statusCode: number | undefined;
-    targetUrl: string;
     // One entry per fuzzed parameter, in the order they appear in the request.
     payloadValues: { id: string; value: string }[];
     payloadPreview: string;
@@ -165,7 +164,6 @@ export function enrichFuzzerRow(
         parsedResponse,
         contentLength,
         statusCode,
-        targetUrl: fuzzConfigSnapshot?.metadata?.targetUrl ?? '',
         payloadValues,
         payloadPreview,
     };
@@ -211,19 +209,10 @@ export const fuzzerColumns: ColumnDef<EnrichedFuzzerRow, any>[] = [
             return <span className={`font-mono text-[11px] ${selected ? 'text-primary-foreground/80' : 'text-muted-foreground'}`}>{info.getValue()}</span>;
         },
     }),
-    columnHelper.accessor('targetUrl', {
-        id: 'targetUrl',
-        header: 'Target URL',
-        size: 220,
-        cell: (info) => {
-            const selected = isRowSelected(info);
-            return <span className={`truncate font-mono text-[12px] ${selected ? 'text-primary-foreground' : 'text-foreground'}`}>{info.getValue()}</span>;
-        },
-    }),
     columnHelper.accessor('payloadPreview', {
         id: 'payload',
         header: 'Payload',
-        size: 240,
+        size: 260,
         cell: (info) => {
             const selected = isRowSelected(info);
             const value = info.getValue();
@@ -305,7 +294,6 @@ export const fuzzerColumns: ColumnDef<EnrichedFuzzerRow, any>[] = [
 
 
 export const fuzzerSearchFn = (row: EnrichedFuzzerRow, q: string) =>
-    row.targetUrl.toLowerCase().includes(q) ||
     row.status.toLowerCase().includes(q) ||
     row.payloadPreview.toLowerCase().includes(q) ||
     String(row.statusCode ?? '').includes(q);
