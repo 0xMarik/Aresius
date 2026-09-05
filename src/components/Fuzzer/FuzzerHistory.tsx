@@ -5,7 +5,7 @@ import { CodeMirrorEditor } from '../result-table.components';
 import { createColumnHelper, ColumnDef, SortingState } from '@tanstack/react-table';
 import Table, { isRowSelected, BaseRow } from '@/components/Table';
 import { FuzzerRequest, FuzzerParameter, FuzzConfig, initialFuzzRunState } from '@/types/fuzzer.type';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { parseRequest, parseResponse } from '../utils';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '../ui/resizable';
 import { renderFuzzerHistoryTableContextMenu } from './FuzzerHistoryTableContextMenu';
@@ -410,11 +410,34 @@ function FuzzerHistoryBody({
         });
     }, []);
 
+    const latestQueryKeyRef = useRef<string>('');
+    const latestReqIdRef = useRef<number>(0);
+    const latestCommittedReqIdRef = useRef<number>(0);
+    const isMountedRef = useRef<boolean>(true);
+
+    useEffect(() => {
+        isMountedRef.current = true;
+        return () => {
+            isMountedRef.current = false;
+        };
+    }, []);
+
+    const queryKey = `${sessionIndex}:${historyIndex}:${debouncedHttpqlQuery.trim()}:${JSON.stringify(sorting)}:${windowState.offset}:${windowState.limit}:${showUncompleted}`;
+
     // ─── Unified window fetch (with or without HTTPQL query) ─────────────────
     useEffect(() => {
-        let canceled = false;
+        const thisReqId = ++latestReqIdRef.current;
+        const isNewQuery = latestQueryKeyRef.current !== queryKey;
+        latestQueryKeyRef.current = queryKey;
+
+        if (isNewQuery) {
+            latestCommittedReqIdRef.current = thisReqId - 1;
+        }
+
         const sortBy = sorting[0]?.id ?? null;
         const sortOrder = sorting[0]?.desc ? 'desc' : 'asc';
+
+        console.log(`[FUZZER_FRONTEND_DEBUG] Dispatching fetch #${thisReqId}: query="${debouncedHttpqlQuery.trim()}", completed=${runState.completed}, offset=${windowState.offset}, limit=${windowState.limit}`);
 
         invoke<{ total: number; items: FuzzerRequest[] }>('get_fuzzer_history_window', {
             selectedSession: sessionIndex,
@@ -427,18 +450,25 @@ function FuzzerHistoryBody({
             showUncompleted,
         })
             .then((res) => {
-                if (canceled) return;
-                setIsSearching(false);
-                if (res && res.items) {
-                    setWindowState((prev) => ({
-                        ...prev,
-                        items: res.items,
-                        totalFromBackend: res.total,
-                    }));
+                console.log(`[FUZZER_FRONTEND_DEBUG] Response for #${thisReqId}: total=${res?.total}, items=${res?.items?.length}, isMounted=${isMountedRef.current}, keyMatch=${latestQueryKeyRef.current === queryKey}, committed=${thisReqId >= latestCommittedReqIdRef.current}`);
+                if (!isMountedRef.current || latestQueryKeyRef.current !== queryKey) return;
+                if (thisReqId >= latestCommittedReqIdRef.current) {
+                    latestCommittedReqIdRef.current = thisReqId;
+                    setIsSearching(false);
+                    if (res && res.items) {
+                        setWindowState((prev) => ({
+                            ...prev,
+                            items: res.items,
+                            totalFromBackend: res.total,
+                        }));
+                    }
                 }
             })
-            .catch(() => {
-                if (!canceled) {
+            .catch((err) => {
+                console.error(`[FUZZER_FRONTEND_DEBUG] Fetch #${thisReqId} failed:`, err);
+                if (!isMountedRef.current || latestQueryKeyRef.current !== queryKey) return;
+                if (thisReqId >= latestCommittedReqIdRef.current) {
+                    latestCommittedReqIdRef.current = thisReqId;
                     setIsSearching(false);
                     setWindowState((prev) => ({
                         ...prev,
@@ -447,20 +477,18 @@ function FuzzerHistoryBody({
                     }));
                 }
             });
-
-        return () => {
-            canceled = true;
-        };
     }, [
         sessionIndex,
         historyIndex,
         windowState.offset,
         windowState.limit,
         runState.completed,
+        runState.failed,
         runState.status,
         sorting,
         debouncedHttpqlQuery,
         showUncompleted,
+        queryKey,
     ]);
 
     const effectiveTotal = useMemo(() => {

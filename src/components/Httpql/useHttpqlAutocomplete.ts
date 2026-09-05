@@ -6,6 +6,7 @@ export interface UseHttpqlAutocompleteProps {
     onChange: (value: string) => void;
     inputRef: RefObject<HTMLInputElement | HTMLTextAreaElement | null>;
     dynamicPresets?: { alias: string; name: string; description?: string }[];
+    recentSearches?: string[];
 }
 
 export function useHttpqlAutocomplete({
@@ -13,6 +14,7 @@ export function useHttpqlAutocomplete({
     onChange,
     inputRef,
     dynamicPresets,
+    recentSearches,
 }: UseHttpqlAutocompleteProps) {
     const [suggestions, setSuggestions] = useState<AutocompleteSuggestion[]>([]);
     const [selectedIndex, setSelectedIndex] = useState<number>(0);
@@ -27,14 +29,15 @@ export function useHttpqlAutocomplete({
             const { suggestions: list, startPos, endPos } = getHttpqlSuggestions(
                 text,
                 pos,
-                dynamicPresets
+                dynamicPresets,
+                recentSearches
             );
             setSuggestions(list);
             setSelectedIndex(0);
             setShowSuggestions(list.length > 0);
             setReplacementRange({ start: startPos, end: endPos });
         },
-        [dynamicPresets]
+        [dynamicPresets, recentSearches]
     );
 
     const applySuggestion = useCallback(

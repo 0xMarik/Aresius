@@ -98,39 +98,39 @@ function renderSectionHeader(title: string): HTMLElement {
 }
 
 const sectionDefinitions: Record<string, CompletionSection> = {
-    'Recent Searches': {
-        name: 'Recent Searches',
-        rank: 1,
-        header: (s) => renderSectionHeader(s.name),
-    },
-    'Presets': {
-        name: 'Presets',
-        rank: 2,
-        header: (s) => renderSectionHeader(s.name),
-    },
     'Namespaces': {
         name: 'Namespaces',
-        rank: 3,
+        rank: 1,
         header: (s) => renderSectionHeader(s.name),
     },
     'Fields': {
         name: 'Fields',
-        rank: 1,
+        rank: 2,
         header: (s) => renderSectionHeader(s.name),
     },
     'Operators': {
         name: 'Operators',
-        rank: 1,
+        rank: 2,
         header: (s) => renderSectionHeader(s.name),
     },
     'Values': {
         name: 'Values',
-        rank: 1,
+        rank: 2,
         header: (s) => renderSectionHeader(s.name),
     },
     'Keywords': {
         name: 'Keywords',
-        rank: 4,
+        rank: 3,
+        header: (s) => renderSectionHeader(s.name),
+    },
+    'Presets': {
+        name: 'Presets',
+        rank: 10,
+        header: (s) => renderSectionHeader(s.name),
+    },
+    'Recent Searches': {
+        name: 'Recent Searches',
+        rank: 20,
         header: (s) => renderSectionHeader(s.name),
     },
 };
@@ -265,9 +265,10 @@ export const HttpqlCodeEditor = forwardRef<HttpqlCodeEditorRef, HttpqlCodeEditor
                     detail: s.category,
                     section: sectionDefinitions[s.section] || {
                         name: s.section,
-                        rank: 10,
+                        rank: 15,
                         header: () => renderSectionHeader(s.section),
                     },
+                    boost: s.category === 'Recent' ? -20 : s.section === 'Presets' ? -10 : 10,
                     info: () => createDocFlyout(s.displayText || s.text, s.description, s.category, s.replacement),
                     apply: (view: EditorView, _completion: any, from: number, to: number) => {
                         view.dispatch({

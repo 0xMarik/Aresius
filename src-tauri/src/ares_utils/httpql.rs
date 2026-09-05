@@ -3353,6 +3353,29 @@ mod tests {
     }
 
     #[test]
+    fn test_user_reported_query() {
+        let q = parse_httpql("resp.raw.regex:.404.").unwrap().unwrap();
+        let item = FuzzerEvaluableItem {
+            id: 1,
+            method: "GET",
+            host: "example.com",
+            path: "/test",
+            query: None,
+            ext: None,
+            status_code: 404,
+            response_length: 50,
+            response_time_ms: 25,
+            sent_at_ms: 1000,
+            state: "completed",
+            is_https: false,
+            raw_request: None,
+            raw_response: Some("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n"),
+            payload: Some("test"),
+        };
+        assert!(q.evaluate(&item));
+    }
+
+    #[test]
     fn test_ast_simplification() {
         // Double negation
         let expr1 = parse_httpql("not not resp.code:200").unwrap().unwrap();

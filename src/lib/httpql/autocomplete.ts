@@ -291,61 +291,14 @@ export function getHttpqlSuggestions(
     }
 
     // -------------------------------------------------------------------------
-    // LAYER 1: Root Suggestions (Recent Searches, Presets, Namespaces, Keywords)
+    // LAYER 1: Root Suggestions
+    // Order: 1. Primary Items (Namespaces, Fields, Keywords)
+    //        2. Presets (before history)
+    //        3. History Commands / Recent Searches (last)
     // -------------------------------------------------------------------------
     const rootSuggestions: AutocompleteSuggestion[] = [];
 
-    // 1. Recent Searches (if available)
-    if (recentSearches && recentSearches.length > 0) {
-        const matchingRecent = recentSearches
-            .filter((q) => !lowerToken || q.toLowerCase().includes(lowerToken))
-            .slice(0, 5);
-
-        for (const q of matchingRecent) {
-            rootSuggestions.push({
-                id: `recent-${q}`,
-                text: q,
-                displayText: q,
-                replacement: `${q} `,
-                category: 'Recent',
-                section: 'Recent Searches',
-                description: 'Recent query',
-                hasMoreLayers: false,
-            });
-        }
-    }
-
-    // 2. Presets (predefined presets)
-    const presetsList = dynamicPresets && dynamicPresets.length > 0
-        ? dynamicPresets.map((p) => ({ alias: p.alias, label: p.name, desc: p.description || `Preset: ${p.name}` }))
-        : [
-            { alias: 'hide-static', label: 'Hide Static', desc: 'Hide static assets (images, CSS, JS, fonts, maps)' },
-            { alias: 'errors-only', label: '4xx / 5xx Errors', desc: 'Filter for client and server error responses' },
-            { alias: 'success-only', label: '2xx Success', desc: 'Filter for successful responses (200-299)' },
-            { alias: 'mutating-methods', label: 'POST / PUT / DELETE', desc: 'Filter for mutating HTTP request methods' },
-            { alias: 'json-only', label: 'JSON Traffic', desc: 'Filter for JSON requests or responses' },
-            { alias: 'slow-requests', label: 'Slow (>1s)', desc: 'Requests taking longer than 1,000ms' },
-            { alias: 'has-params', label: 'With Query Params', desc: 'Requests containing URL query parameters' },
-        ];
-
-    const matchingPresets = presetsList
-        .filter((p) => !lowerToken || p.alias.toLowerCase().includes(lowerToken) || p.label.toLowerCase().includes(lowerToken) || 'preset'.startsWith(lowerToken))
-        .slice(0, 7);
-
-    for (const p of matchingPresets) {
-        rootSuggestions.push({
-            id: `preset-item-${p.alias}`,
-            text: `preset:"${p.alias}"`,
-            displayText: `preset:"${p.alias}"`,
-            replacement: `preset:"${p.alias}" `,
-            category: 'Value',
-            section: 'Presets',
-            description: `${p.label} - ${p.desc}`,
-            hasMoreLayers: false,
-        });
-    }
-
-    // 3. Namespaces (req, resp, row)
+    // 1A. Primary Namespaces (req, resp, row)
     const namespaces = [
         {
             name: 'req',
@@ -382,7 +335,30 @@ export function getHttpqlSuggestions(
         }
     }
 
-    // 4. Logical keywords (AND, OR, NOT)
+    // 1B. Primary Fields & Aliases matching token (e.g. "method", "status", "host", "port", "len")
+    if (lowerToken.length > 0 && !['req', 'resp', 'row'].includes(lowerToken)) {
+        const matchedFields = HTTPQL_FIELDS.filter((f) => {
+            const nameMatch = f.name.toLowerCase().includes(lowerToken);
+            const aliasMatch = f.aliases?.some((a) => a.toLowerCase().includes(lowerToken));
+            return nameMatch || aliasMatch;
+        }).slice(0, 8);
+
+        for (const f of matchedFields) {
+            const repl = f.name.endsWith('.header') ? `${f.name}["` : `${f.name}.`;
+            rootSuggestions.push({
+                id: `root-field-${f.name}`,
+                text: f.name,
+                displayText: f.name,
+                replacement: repl,
+                category: 'Field',
+                section: 'Fields',
+                description: f.description,
+                hasMoreLayers: true,
+            });
+        }
+    }
+
+    // 1C. Primary Logical keywords (AND, OR, NOT)
     if (textBefore.trim().length > 0 && (lowerToken === '' || 'and'.startsWith(lowerToken) || 'or'.startsWith(lowerToken) || 'not'.startsWith(lowerToken))) {
         const keywords = [
             { text: 'and', desc: 'Both clauses must be true (higher precedence)' },
@@ -403,6 +379,56 @@ export function getHttpqlSuggestions(
                     hasMoreLayers: true,
                 });
             }
+        }
+    }
+
+    // 2. Presets (predefined / dynamic presets) - before history
+    const presetsList = dynamicPresets && dynamicPresets.length > 0
+        ? dynamicPresets.map((p) => ({ alias: p.alias, label: p.name, desc: p.description || `Preset: ${p.name}` }))
+        : [
+            { alias: 'hide-static', label: 'Hide Static', desc: 'Hide static assets (images, CSS, JS, fonts, maps)' },
+            { alias: 'errors-only', label: '4xx / 5xx Errors', desc: 'Filter for client and server error responses' },
+            { alias: 'success-only', label: '2xx Success', desc: 'Filter for successful responses (200-299)' },
+            { alias: 'mutating-methods', label: 'POST / PUT / DELETE', desc: 'Filter for mutating HTTP request methods' },
+            { alias: 'json-only', label: 'JSON Traffic', desc: 'Filter for JSON requests or responses' },
+            { alias: 'slow-requests', label: 'Slow (>1s)', desc: 'Requests taking longer than 1,000ms' },
+            { alias: 'has-params', label: 'With Query Params', desc: 'Requests containing URL query parameters' },
+        ];
+
+    const matchingPresets = presetsList
+        .filter((p) => !lowerToken || p.alias.toLowerCase().includes(lowerToken) || p.label.toLowerCase().includes(lowerToken) || 'preset'.startsWith(lowerToken))
+        .slice(0, 7);
+
+    for (const p of matchingPresets) {
+        rootSuggestions.push({
+            id: `preset-item-${p.alias}`,
+            text: `preset:"${p.alias}"`,
+            displayText: `preset:"${p.alias}"`,
+            replacement: `preset:"${p.alias}" `,
+            category: 'Value',
+            section: 'Presets',
+            description: `${p.label} - ${p.desc}`,
+            hasMoreLayers: false,
+        });
+    }
+
+    // 3. History Commands / Recent Searches (last)
+    if (recentSearches && recentSearches.length > 0) {
+        const matchingRecent = recentSearches
+            .filter((q) => !lowerToken || q.toLowerCase().includes(lowerToken))
+            .slice(0, 5);
+
+        for (const q of matchingRecent) {
+            rootSuggestions.push({
+                id: `recent-${q}`,
+                text: q,
+                displayText: q,
+                replacement: `${q} `,
+                category: 'Recent',
+                section: 'Recent Searches',
+                description: 'Recent query',
+                hasMoreLayers: false,
+            });
         }
     }
 

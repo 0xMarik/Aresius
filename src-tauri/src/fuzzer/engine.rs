@@ -57,6 +57,8 @@ fn fuzz_store() -> &'static Mutex<HashMap<String, FuzzerRunData>> {
 struct CachedSearch {
     key: String,
     rows: Vec<FuzzerRequestRow>,
+    seen_ids: std::collections::HashSet<String>,
+    last_scanned_date: i64,
     #[allow(dead_code)]
     last_accessed: std::time::Instant,
 }
@@ -73,10 +75,12 @@ pub async fn invalidate_fuzzer_search_cache(session: u32, history: u32) {
     cache.retain(|item| !item.key.starts_with(&prefix));
 }
 
-pub fn sort_fuzzer_rows_in_place(rows: &mut [FuzzerRequestRow], sort_by: Option<&str>, is_desc: bool) {
+pub fn sort_fuzzer_rows_in_place<T: std::borrow::Borrow<FuzzerRequestRow>>(rows: &mut [T], sort_by: Option<&str>, is_desc: bool) {
     match sort_by {
         Some("statusCode") | Some("responseCode") => {
-            rows.sort_by(|a, b| {
+            rows.sort_by(|item_a, item_b| {
+                let a = item_a.borrow();
+                let b = item_b.borrow();
                 let cmp = match (a.status_code, b.status_code) {
                     (Some(x), Some(y)) => x.cmp(&y),
                     (Some(_), None) => std::cmp::Ordering::Less,
@@ -87,7 +91,9 @@ pub fn sort_fuzzer_rows_in_place(rows: &mut [FuzzerRequestRow], sort_by: Option<
             });
         }
         Some("duration") => {
-            rows.sort_by(|a, b| {
+            rows.sort_by(|item_a, item_b| {
+                let a = item_a.borrow();
+                let b = item_b.borrow();
                 let cmp = match (a.response_time_ms, b.response_time_ms) {
                     (Some(x), Some(y)) => x.cmp(&y),
                     (Some(_), None) => std::cmp::Ordering::Less,
@@ -98,7 +104,9 @@ pub fn sort_fuzzer_rows_in_place(rows: &mut [FuzzerRequestRow], sort_by: Option<
             });
         }
         Some("length") => {
-            rows.sort_by(|a, b| {
+            rows.sort_by(|item_a, item_b| {
+                let a = item_a.borrow();
+                let b = item_b.borrow();
                 let cmp = match (a.response_length, b.response_length) {
                     (Some(x), Some(y)) => x.cmp(&y),
                     (Some(_), None) => std::cmp::Ordering::Less,
@@ -109,13 +117,17 @@ pub fn sort_fuzzer_rows_in_place(rows: &mut [FuzzerRequestRow], sort_by: Option<
             });
         }
         Some("status") => {
-            rows.sort_by(|a, b| {
+            rows.sort_by(|item_a, item_b| {
+                let a = item_a.borrow();
+                let b = item_b.borrow();
                 let cmp = a.status.cmp(&b.status).then_with(|| a.id.cmp(&b.id));
                 if is_desc { cmp.reverse() } else { cmp }
             });
         }
         Some("payload") | Some("payloadPreview") => {
-            rows.sort_by(|a, b| {
+            rows.sort_by(|item_a, item_b| {
+                let a = item_a.borrow();
+                let b = item_b.borrow();
                 let p_a = a.payload.as_deref().unwrap_or("");
                 let p_b = b.payload.as_deref().unwrap_or("");
                 let cmp = p_a.cmp(p_b).then_with(|| a.id.cmp(&b.id));
@@ -123,19 +135,23 @@ pub fn sort_fuzzer_rows_in_place(rows: &mut [FuzzerRequestRow], sort_by: Option<
             });
         }
         Some("requestDate") => {
-            rows.sort_by(|a, b| {
+            rows.sort_by(|item_a, item_b| {
+                let a = item_a.borrow();
+                let b = item_b.borrow();
                 let cmp = a.request_date.cmp(&b.request_date).then_with(|| a.id.cmp(&b.id));
                 if is_desc { cmp.reverse() } else { cmp }
             });
         }
         Some("id") => {
-            rows.sort_by(|a, b| {
+            rows.sort_by(|item_a, item_b| {
+                let a = item_a.borrow();
+                let b = item_b.borrow();
                 let cmp = a.id.cmp(&b.id);
                 if is_desc { cmp.reverse() } else { cmp }
             });
         }
         _ => {
-            rows.sort_by_key(|r| r.id);
+            rows.sort_by_key(|r| r.borrow().id);
             if is_desc {
                 rows.reverse();
             }
@@ -344,6 +360,11 @@ pub async fn get_fuzzer_history_window(
     let key = run_key(selected_session, fuzz_history);
     let store = fuzz_store().lock().await;
 
+    eprintln!("[FUZZER_BACKEND_DEBUG] === get_fuzzer_history_window ===");
+    eprintln!("[FUZZER_BACKEND_DEBUG] session={}, history={}, offset={}, limit={}, query={:?}", selected_session, fuzz_history, offset, limit, search_query);
+    eprintln!("[FUZZER_BACKEND_DEBUG] parsed_httpql={:?}", parsed_httpql);
+    eprintln!("[FUZZER_BACKEND_DEBUG] In-memory store has key '{}': {}", key, store.contains_key(&key));
+
     // ─── 1. In-Memory Store for Live / Active Runs ─────────────────────────
     if store.contains_key(&key) {
         let run_data = store.get(&key).unwrap();
@@ -353,7 +374,9 @@ pub async fn get_fuzzer_history_window(
             run_data.rows.iter().filter(|r| r.status == "completed" || r.status == "error").collect()
         };
 
-        let mut filtered_rows: Vec<FuzzerRequestRow> = if let Some(ref expr) = parsed_httpql {
+        eprintln!("[FUZZER_BACKEND_DEBUG][IN-MEMORY] total in-store rows={}, target_rows (completed/error)={}", run_data.rows.len(), target_rows.len());
+
+        let mut filtered_refs: Vec<&FuzzerRequestRow> = if let Some(ref expr) = parsed_httpql {
             let (tmpl_method, tmpl_path) = run_data.config_snapshot
                 .as_ref()
                 .map(|cfg| {
@@ -376,7 +399,8 @@ pub async fn get_fuzzer_history_window(
                 .as_ref()
                 .map(|cfg| cfg.raw_request.as_str());
 
-            target_rows.into_iter().filter(|r| {
+            let mut matched_count = 0;
+            let res: Vec<&FuzzerRequestRow> = target_rows.into_iter().filter(|r| {
                 let raw_resp_str = r.response.as_ref().map(|resp| resp.response.as_str());
                 let item = crate::ares_utils::httpql::FuzzerEvaluableItem {
                     id: r.id as u32,
@@ -397,18 +421,30 @@ pub async fn get_fuzzer_history_window(
                     raw_response: raw_resp_str,
                     payload: r.payload.as_deref(),
                 };
-                expr.evaluate(&item)
-            }).cloned().collect()
+                let matches = expr.evaluate(&item);
+                if matches {
+                    matched_count += 1;
+                }
+                matches
+            }).collect();
+            eprintln!("[FUZZER_BACKEND_DEBUG][IN-MEMORY] Filter matched {} / {} rows", matched_count, res.len());
+            res
         } else {
-            target_rows.into_iter().cloned().collect()
+            target_rows
         };
 
-        let total = filtered_rows.len();
-        sort_fuzzer_rows_in_place(&mut filtered_rows, sort_by.as_deref(), is_desc);
+        let total = filtered_refs.len();
+        sort_fuzzer_rows_in_place(&mut filtered_refs, sort_by.as_deref(), is_desc);
         let start = offset.min(total);
         let end = (offset + limit).min(total);
-        let items = filtered_rows[start..end].to_vec();
+        let items: Vec<FuzzerRequestRow> = filtered_refs[start..end].iter().map(|&r| {
+            let mut row = r.clone();
+            row.response = None;
+            row.raw_request = None;
+            row
+        }).collect();
 
+        eprintln!("[FUZZER_BACKEND_DEBUG][IN-MEMORY] Returning window: total={}, returned items={}", total, items.len());
         return Ok(FuzzerWindowResult { total, items });
     }
 
@@ -528,79 +564,132 @@ pub async fn get_fuzzer_history_window(
                         .as_ref()
                         .map_or(false, |expr| crate::ares_utils::httpql::has_in_memory_checks(expr, raw_template_req, target_url));
 
+                    eprintln!("[FUZZER_BACKEND_DEBUG][SQLITE-FALLBACK] Entering SQLite fallback for run_id='{}', run_status='{}'", run_id, run_status);
+                    eprintln!("[FUZZER_BACKEND_DEBUG][SQLITE-FALLBACK] needs_memory_filter={}", needs_memory_filter);
+
                     if needs_memory_filter {
                         // ─── Path B: Content-heavy search using FuzzerSearchCache ────
                         let query_str = search_query.as_deref().unwrap_or("").trim();
                         let cache_key = format!("{}:{}:{}", selected_session, fuzz_history, query_str);
+                        let is_active = is_run_active(selected_session, fuzz_history).await || run_status == "running";
 
-                        let cached = {
-                            let mut cache = search_cache().lock().await;
-                            if let Some(pos) = cache.iter().position(|c| c.key == cache_key) {
-                                let mut item = cache.remove(pos).unwrap();
-                                item.last_accessed = std::time::Instant::now();
-                                let rows = item.rows.clone();
-                                cache.push_back(item);
-                                Some(rows)
-                            } else {
-                                None
-                            }
-                        };
+                        let mut cache = search_cache().lock().await;
+                        let existing_pos = cache.iter().position(|c| c.key == cache_key);
 
-                        let mut all_rows = if let Some(rows) = cached {
-                            rows
-                        } else {
-                            let db_rows = crate::ares_utils::database::fuzzer::query_fuzzer_requests_all_matching(
-                                &pool,
-                                &run_id,
-                                parsed_httpql.as_ref(),
-                                raw_template_req,
-                                target_url,
-                            ).await.unwrap_or_default();
+                        let mut all_rows = match existing_pos {
+                            Some(pos) => {
+                                let mut cached_item = cache.remove(pos).unwrap();
+                                cached_item.last_accessed = std::time::Instant::now();
 
-                            let converted: Vec<FuzzerRequestRow> = db_rows.into_iter().map(|r| {
-                                let status = if r.error_message.is_some() || r.connection_dropped {
-                                    "error".to_string()
-                                } else {
-                                    "completed".to_string()
-                                };
-                                FuzzerRequestRow {
-                                    id: r.sort_order as usize,
-                                    fuzz_request_id: r.id,
-                                    raw_request: None,
-                                    payload: r.payload,
-                                    response: None,
-                                    request_date: chrono::DateTime::from_timestamp_millis(r.request_date)
-                                        .map(|dt| dt.to_rfc3339())
-                                        .unwrap_or_default(),
-                                    status,
-                                    error_message: r.error_message,
-                                    connection_dropped: r.connection_dropped,
-                                    worker_id: r.worker_id.map(|w| w as u32),
-                                    status_code: r.status_code.map(|c| c as u16),
-                                    response_length: r.response_length.map(|l| l as usize),
-                                    response_time_ms: r.response_time_ms.map(|t| t as u128),
-                                    chunk_id: r.chunk_id,
-                                    chunk_index: r.chunk_index,
+                                if is_active {
+                                    // Incremental scan: only inspect requests completed since last scan
+                                    let since_date = cached_item.last_scanned_date.saturating_sub(2000);
+                                    if let Ok((new_db_rows, new_max_date)) = crate::ares_utils::database::fuzzer::query_fuzzer_requests_matching_since(
+                                        &pool,
+                                        &run_id,
+                                        since_date,
+                                        parsed_httpql.as_ref(),
+                                        raw_template_req,
+                                        target_url,
+                                    ).await {
+                                        for r in new_db_rows {
+                                            if cached_item.seen_ids.insert(r.id.clone()) {
+                                                let status = if r.error_message.is_some() || r.connection_dropped {
+                                                    "error".to_string()
+                                                } else {
+                                                    "completed".to_string()
+                                                };
+                                                cached_item.rows.push(FuzzerRequestRow {
+                                                    id: r.sort_order as usize,
+                                                    fuzz_request_id: r.id,
+                                                    raw_request: None,
+                                                    payload: r.payload,
+                                                    response: None,
+                                                    request_date: chrono::DateTime::from_timestamp_millis(r.request_date)
+                                                        .map(|dt| dt.to_rfc3339())
+                                                        .unwrap_or_default(),
+                                                    status,
+                                                    error_message: r.error_message,
+                                                    connection_dropped: r.connection_dropped,
+                                                    worker_id: r.worker_id.map(|w| w as u32),
+                                                    status_code: r.status_code.map(|c| c as u16),
+                                                    response_length: r.response_length.map(|l| l as usize),
+                                                    response_time_ms: r.response_time_ms.map(|t| t as u128),
+                                                    chunk_id: r.chunk_id,
+                                                    chunk_index: r.chunk_index,
+                                                });
+                                            }
+                                        }
+                                        cached_item.last_scanned_date = cached_item.last_scanned_date.max(new_max_date);
+                                    }
                                 }
-                            }).collect();
 
-                            let mut cache = search_cache().lock().await;
-                            if cache.len() >= 10 {
-                                cache.pop_front();
+                                let rows = cached_item.rows.clone();
+                                cache.push_back(cached_item);
+                                eprintln!("[FUZZER_BACKEND_DEBUG][SQLITE-FALLBACK] Path B cache updated for key '{}' ({} rows, is_active={})", cache_key, rows.len(), is_active);
+                                rows
                             }
-                            cache.push_back(CachedSearch {
-                                key: cache_key,
-                                rows: converted.clone(),
-                                last_accessed: std::time::Instant::now(),
-                            });
-                            converted
+                            None => {
+                                let (db_rows, max_date) = crate::ares_utils::database::fuzzer::query_fuzzer_requests_matching_since(
+                                    &pool,
+                                    &run_id,
+                                    0,
+                                    parsed_httpql.as_ref(),
+                                    raw_template_req,
+                                    target_url,
+                                ).await.unwrap_or_default();
+
+                                let mut seen_ids = std::collections::HashSet::with_capacity(db_rows.len());
+                                let converted: Vec<FuzzerRequestRow> = db_rows.into_iter().map(|r| {
+                                    seen_ids.insert(r.id.clone());
+                                    let status = if r.error_message.is_some() || r.connection_dropped {
+                                        "error".to_string()
+                                    } else {
+                                        "completed".to_string()
+                                    };
+                                    FuzzerRequestRow {
+                                        id: r.sort_order as usize,
+                                        fuzz_request_id: r.id,
+                                        raw_request: None,
+                                        payload: r.payload,
+                                        response: None,
+                                        request_date: chrono::DateTime::from_timestamp_millis(r.request_date)
+                                            .map(|dt| dt.to_rfc3339())
+                                            .unwrap_or_default(),
+                                        status,
+                                        error_message: r.error_message,
+                                        connection_dropped: r.connection_dropped,
+                                        worker_id: r.worker_id.map(|w| w as u32),
+                                        status_code: r.status_code.map(|c| c as u16),
+                                        response_length: r.response_length.map(|l| l as usize),
+                                        response_time_ms: r.response_time_ms.map(|t| t as u128),
+                                        chunk_id: r.chunk_id,
+                                        chunk_index: r.chunk_index,
+                                    }
+                                }).collect();
+
+                                if cache.len() >= 10 {
+                                    cache.pop_front();
+                                }
+                                cache.push_back(CachedSearch {
+                                    key: cache_key,
+                                    rows: converted.clone(),
+                                    seen_ids,
+                                    last_scanned_date: max_date,
+                                    last_accessed: std::time::Instant::now(),
+                                });
+                                eprintln!("[FUZZER_BACKEND_DEBUG][SQLITE-FALLBACK] Path B initial scan matched {} rows", converted.len());
+                                converted
+                            }
                         };
+                        drop(cache);
 
                         let total = all_rows.len();
                         sort_fuzzer_rows_in_place(&mut all_rows, sort_by.as_deref(), is_desc);
                         let start = offset.min(total);
                         let end = (offset + limit).min(total);
                         let items = all_rows[start..end].to_vec();
+                        eprintln!("[FUZZER_BACKEND_DEBUG][SQLITE-FALLBACK] Path B returning total={}, items={}", total, items.len());
                         return Ok(FuzzerWindowResult { total, items });
                     } else {
                         // ─── Path A: Pure SQL fast path for metadata queries & sorting ───
@@ -615,6 +704,7 @@ pub async fn get_fuzzer_history_window(
                             raw_template_req,
                             target_url,
                         ).await {
+                            eprintln!("[FUZZER_BACKEND_DEBUG][SQLITE-FALLBACK] Path A (pure SQL) total={}, rows={}", total, db_rows.len());
                             let items: Vec<FuzzerRequestRow> = db_rows.into_iter().map(|r| {
                                 let status = if r.error_message.is_some() || r.connection_dropped {
                                     "error".to_string()
@@ -1269,6 +1359,11 @@ fn cancellations() -> &'static Mutex<HashMap<String, Arc<AtomicBool>>> {
 
 fn run_key(session: u32, history: u32) -> String {
     format!("{session}:{history}")
+}
+
+pub async fn is_run_active(session: u32, history: u32) -> bool {
+    let key = run_key(session, history);
+    cancellations().lock().await.contains_key(&key)
 }
 
 pub async fn register_run(session: u32, history: u32) -> Arc<AtomicBool> {
@@ -2013,6 +2108,7 @@ pub async fn cancel_fuzzing(
     if let Some(flag) = get_cancel_flag(selected_session, fuzz_history).await {
         flag.store(true, Ordering::Relaxed);
         update_store_cancelled(selected_session, fuzz_history).await;
+        invalidate_fuzzer_search_cache(selected_session, fuzz_history).await;
 
         let key = run_key(selected_session, fuzz_history);
         let (completed, total, failed) = {
@@ -2215,7 +2311,7 @@ pub async fn resend_fuzz_request(
         // Recalculate true stats for the whole run from the in-memory store (or DB)
         let key = run_key(selected_session, fuzz_history);
         let store = fuzz_store().lock().await;
-        if let Some(run_data) = store.get(&key) {
+        let (completed, failed, total, status) = if let Some(run_data) = store.get(&key) {
             let completed = run_data.rows.iter().filter(|r| r.status == "completed").count() as u32;
             let failed = run_data.rows.iter().filter(|r| r.status == "error").count() as u32;
             let total = run_data.rows.len() as u32;
@@ -2228,50 +2324,91 @@ pub async fn resend_fuzz_request(
             } else {
                 "cancelled"
             };
+            (completed, failed, total, status)
+        } else if let Some(ref pool) = db_pool {
+            let total_count = sqlx::query_scalar::<_, i64>(
+                "SELECT total FROM fuzzer_runs WHERE id = ?"
+            )
+            .bind(&run_id)
+            .fetch_one(pool)
+            .await
+            .unwrap_or(0) as u32;
 
-            if let Some(ref pool) = db_pool {
-                let now = chrono::Utc::now().timestamp_millis();
-                let _ = sqlx::query(
-                    "UPDATE fuzzer_runs SET status = ?, completed = ?, failed = ?, finished_at = ? WHERE id = ?"
-                )
-                .bind(status)
-                .bind(completed as i64)
-                .bind(failed as i64)
-                .bind(now)
-                .bind(&run_id)
-                .execute(pool)
-                .await;
-            }
+            let completed_count = sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM fuzzer_requests WHERE run_id = ? AND status_code IS NOT NULL"
+            )
+            .bind(&run_id)
+            .fetch_one(pool)
+            .await
+            .unwrap_or(0) as u32;
 
-            emit_progress(
-                &app,
-                selected_session,
-                fuzz_history,
-                completed,
-                total,
-                failed,
-                status,
-                false,
-            );
+            let failed_count = sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM fuzzer_requests WHERE run_id = ? AND (error_message IS NOT NULL OR connection_dropped = 1)"
+            )
+            .bind(&run_id)
+            .fetch_one(pool)
+            .await
+            .unwrap_or(0) as u32;
 
-            invalidate_fuzzer_search_cache(selected_session, fuzz_history).await;
+            let status = if total_count > 0 && (completed_count + failed_count >= total_count) {
+                "completed"
+            } else {
+                "cancelled"
+            };
+            (completed_count, failed_count, total_count, status)
+        } else {
+            (0, 0, 0, "cancelled")
+        };
+        drop(store);
+
+        if let Some(ref pool) = db_pool {
+            let now = chrono::Utc::now().timestamp_millis();
+            let _ = sqlx::query(
+                "UPDATE fuzzer_runs SET status = ?, completed = ?, failed = ?, finished_at = ? WHERE id = ?"
+            )
+            .bind(status)
+            .bind(completed as i64)
+            .bind(failed as i64)
+            .bind(now)
+            .bind(&run_id)
+            .execute(pool)
+            .await;
         }
+
+        emit_progress(
+            &app,
+            selected_session,
+            fuzz_history,
+            completed,
+            total,
+            failed,
+            status,
+            false,
+        );
+
+        invalidate_fuzzer_search_cache(selected_session, fuzz_history).await;
     });
 
     Ok(())
 }
 
-async fn get_remaining_or_failed_targets(app: &AppHandle, session: u32, history: u32) -> (Vec<FuzzTarget>, u32, u32, u32) {
+async fn get_remaining_or_failed_targets(
+    app: &AppHandle,
+    session: u32,
+    history: u32,
+) -> (Vec<FuzzTarget>, u32, u32, u32, Option<String>) {
     let key = run_key(session, history);
     let store = fuzz_store().lock().await;
     let mut targets = Vec::new();
     let mut completed_count = 0;
     let mut failed_count = 0;
     let mut total_count = 0;
+    let mut config_snapshot_str = None;
 
     if let Some(run_data) = store.get(&key) {
         total_count = run_data.rows.len() as u32;
         let config = run_data.config_snapshot.clone();
+        config_snapshot_str = config.as_ref().and_then(|c| serde_json::to_string(c).ok());
         for row in run_data.rows.iter() {
             if row.status == "completed" {
                 completed_count += 1;
@@ -2303,10 +2440,12 @@ async fn get_remaining_or_failed_targets(app: &AppHandle, session: u32, history:
             .await
             .unwrap_or(None);
 
-            if let Some((total_i64, config_snapshot_str)) = run_info {
+            if let Some((total_i64, db_snapshot)) = run_info {
                 total_count = total_i64 as u32;
+                config_snapshot_str = db_snapshot;
                 let config_snapshot: Option<crate::types::SessionPayload> = config_snapshot_str
-                    .and_then(|s| serde_json::from_str(&s).ok());
+                    .as_ref()
+                    .and_then(|s| serde_json::from_str(s).ok());
 
                 let completed_set = crate::ares_utils::database::fuzzer::fetch_completed_sort_orders(&pool, &run_id).await.unwrap_or_default();
                 completed_count = completed_set.len() as u32;
@@ -2329,7 +2468,7 @@ async fn get_remaining_or_failed_targets(app: &AppHandle, session: u32, history:
         }
     }
 
-    (targets, completed_count, failed_count, total_count)
+    (targets, completed_count, failed_count, total_count, config_snapshot_str)
 }
 
 #[tauri::command]
@@ -2342,7 +2481,7 @@ pub async fn resend_failed_fuzz_requests(
     already_completed: u32,
     overall_total: u32,
 ) -> Result<(), String> {
-    let (targets, completed_count, _failed_count, total_count) =
+    let (targets, completed_count, _failed_count, total_count, config_snapshot_str) =
         get_remaining_or_failed_targets(&app, selected_session, fuzz_history).await;
 
     if targets.is_empty() {
@@ -2350,6 +2489,7 @@ pub async fn resend_failed_fuzz_requests(
     }
     let ids: Vec<String> = targets.iter().map(|t| t.id.clone()).collect();
     update_store_pending(selected_session, fuzz_history, &ids).await;
+    invalidate_fuzzer_search_cache(selected_session, fuzz_history).await;
 
     let total = if overall_total > 0 { overall_total } else { total_count };
     let completed = if already_completed > 0 { already_completed } else { completed_count };
@@ -2360,6 +2500,18 @@ pub async fn resend_failed_fuzz_requests(
         None
     };
 
+    if let Some(ref pool) = db_pool {
+        let run_id = crate::ares_utils::database::fuzzer::resolve_fuzzer_run_id(
+            pool,
+            selected_session as usize,
+            fuzz_history as usize,
+        ).await;
+        let _ = sqlx::query("UPDATE fuzzer_runs SET status = 'running' WHERE id = ?")
+            .bind(&run_id)
+            .execute(pool)
+            .await;
+    }
+
     let config = FuzzRunConfig {
         url,
         delay_ms,
@@ -2367,7 +2519,7 @@ pub async fn resend_failed_fuzz_requests(
         selected_session,
         fuzz_history,
         register_cancel: true,
-        config_snapshot: None,
+        config_snapshot: config_snapshot_str,
     };
 
     tokio::spawn(async move {
@@ -2375,5 +2527,89 @@ pub async fn resend_failed_fuzz_requests(
     });
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_live_store_regex_filter() {
+        let targets = vec![
+            FuzzTarget {
+                id: "0-0".to_string(),
+                sort_order: 0,
+                request: "GET /0 HTTP/1.1\r\n\r\n".to_string(),
+                payload: Some("0".to_string()),
+            },
+            FuzzTarget {
+                id: "0-1".to_string(),
+                sort_order: 1,
+                request: "GET /1 HTTP/1.1\r\n\r\n".to_string(),
+                payload: Some("1".to_string()),
+            },
+        ];
+
+        init_fuzz_store(999, 999, &targets, None).await;
+
+        update_store_completed(
+            999,
+            999,
+            "0-0",
+            1000,
+            Some(200),
+            Some(100),
+            Some(50),
+            Some("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_string()),
+            Some(0),
+        ).await;
+
+        update_store_completed(
+            999,
+            999,
+            "0-1",
+            1005,
+            Some(404),
+            Some(50),
+            Some(30),
+            Some("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n".to_string()),
+            Some(0),
+        ).await;
+
+        let key = run_key(999, 999);
+        let store = fuzz_store().lock().await;
+        assert!(store.contains_key(&key));
+        let run_data = store.get(&key).unwrap();
+        let target_rows: Vec<&FuzzerRequestRow> = run_data.rows.iter().filter(|r| r.status == "completed" || r.status == "error").collect();
+        assert_eq!(target_rows.len(), 2);
+
+        let expr = crate::ares_utils::httpql::parse_httpql("resp.raw.regex:.404.").unwrap().unwrap();
+        let filtered: Vec<&FuzzerRequestRow> = target_rows.into_iter().filter(|r| {
+            let raw_resp_str = r.response.as_ref().map(|resp| resp.response.as_str());
+            let item = crate::ares_utils::httpql::FuzzerEvaluableItem {
+                id: r.id as u32,
+                method: "GET",
+                host: "example.com",
+                path: "/",
+                query: None,
+                ext: None,
+                status_code: r.status_code.map(|c| c as i64).unwrap_or(0),
+                response_length: r.response_length.map(|l| l as i64).unwrap_or(0),
+                response_time_ms: r.response_time_ms.map(|t| t as i64).unwrap_or(0),
+                sent_at_ms: chrono::DateTime::parse_from_rfc3339(&r.request_date)
+                    .map(|dt| dt.timestamp_millis())
+                    .unwrap_or(0),
+                state: &r.status,
+                is_https: false,
+                raw_request: None,
+                raw_response: raw_resp_str,
+                payload: r.payload.as_deref(),
+            };
+            expr.evaluate(&item)
+        }).collect();
+
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].fuzz_request_id, "0-1");
+    }
 }
 

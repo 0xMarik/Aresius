@@ -853,16 +853,21 @@ pub fn sort_fuzzer_db_rows_in_place(rows: &mut [FuzzerRequestDb], sort_by: Optio
     }
 }
 
-pub async fn query_fuzzer_requests_all_matching(
+pub async fn query_fuzzer_requests_matching_since(
     pool: &SqlitePool,
     run_id: &str,
+    since_date: i64,
     httpql_expr: Option<&crate::ares_utils::httpql::HttpqlExpr>,
     raw_template_req: Option<&str>,
     target_url: Option<&str>,
-) -> Result<Vec<FuzzerRequestDb>, String> {
+) -> Result<(Vec<FuzzerRequestDb>, i64), String> {
     let mut builder =
         sqlx::QueryBuilder::<sqlx::Sqlite>::new("SELECT * FROM fuzzer_requests WHERE run_id = ");
     builder.push_bind(run_id);
+    if since_date > 0 {
+        builder.push(" AND request_date >= ");
+        builder.push_bind(since_date);
+    }
     if let Some(expr) = httpql_expr {
         builder.push(" AND ");
         crate::ares_utils::httpql::compile_fuzzer_httpql_to_sql(&mut builder, expr, raw_template_req, target_url);
@@ -874,6 +879,8 @@ pub async fn query_fuzzer_requests_all_matching(
         .fetch_all(pool)
         .await
         .map_err(|e| e.to_string())?;
+
+    let max_date = candidates.iter().map(|r| r.request_date).max().unwrap_or(since_date);
 
     let (tmpl_method, tmpl_path) = raw_template_req
         .map(|r| {
@@ -959,7 +966,19 @@ pub async fn query_fuzzer_requests_all_matching(
         }
     }
 
-    Ok(filtered)
+    Ok((filtered, max_date))
+}
+
+pub async fn query_fuzzer_requests_all_matching(
+    pool: &SqlitePool,
+    run_id: &str,
+    httpql_expr: Option<&crate::ares_utils::httpql::HttpqlExpr>,
+    raw_template_req: Option<&str>,
+    target_url: Option<&str>,
+) -> Result<Vec<FuzzerRequestDb>, String> {
+    query_fuzzer_requests_matching_since(pool, run_id, 0, httpql_expr, raw_template_req, target_url)
+        .await
+        .map(|(rows, _)| rows)
 }
 
 /// Query window of fuzzer requests directly from SQLite with server-side sorting and two-stage HTTPQL filtering
@@ -1523,6 +1542,20 @@ mod tests {
         ).await.unwrap();
         assert_eq!(total5, 1);
         assert_eq!(rows5[0].id, "req-3");
+
+        // 6. Query incremental matching with regex (resp.raw.regex:.404.)
+        let q6 = crate::ares_utils::httpql::parse_httpql("resp.raw.regex:.404.").unwrap().unwrap();
+        let (since_rows1, max_date1) = query_fuzzer_requests_matching_since(
+            &pool, "run-1", 0, Some(&q6), None, None
+        ).await.unwrap();
+        assert_eq!(since_rows1.len(), 1);
+        assert_eq!(since_rows1[0].id, "req-2");
+        assert_eq!(max_date1, 1002);
+
+        let (since_rows2, _) = query_fuzzer_requests_matching_since(
+            &pool, "run-1", 1003, Some(&q6), None, None
+        ).await.unwrap();
+        assert_eq!(since_rows2.len(), 0);
     }
 
     #[tokio::test]
