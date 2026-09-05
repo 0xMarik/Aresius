@@ -532,6 +532,7 @@ fn db_row_to_request_row(r: &crate::ares_utils::database::fuzzer::FuzzerRequestD
     }
 }
 
+
 /// Stream HTTPQL search results chunk-by-chunk.
 ///
 /// When the HTTPQL expression requires in-memory body/header/regex evaluation
@@ -540,9 +541,9 @@ fn db_row_to_request_row(r: &crate::ares_utils::database::fuzzer::FuzzerRequestD
 /// the Tauri `Channel` — so the frontend can render results progressively
 /// without waiting for the full scan to complete.
 ///
-/// For queries that are purely SQL-evaluable (Path A: status code, length,
-/// duration, payload), a single `Items` batch + `Done` is emitted from the
-/// regular windowed query so the frontend code path is identical.
+/// If the fuzzer is actively running, this function first scans historical
+/// requests up to the current watermark, then subscribes to live worker
+/// events, micro-batching and streaming new matching requests in real-time.
 #[tauri::command]
 pub async fn stream_fuzzer_search(
     app: tauri::AppHandle,
@@ -605,230 +606,149 @@ pub async fn stream_fuzzer_search(
     let raw_template_req = raw_template_req_owned.as_deref();
     let target_url = target_url_owned.as_deref();
 
+    // Optimize query evaluation order
+    let mut expr = expr;
+    expr.optimize_evaluation_order();
+    let expr = std::sync::Arc::new(expr);
+
     // Determine whether we need in-memory chunk evaluation.
     let needs_memory_filter =
         crate::ares_utils::httpql::has_response_content_checks(&expr);
 
-    if !needs_memory_filter {
-        // Path A: pure SQL filter — emit one batch then Done.
-        if let Ok((total, db_rows)) =
-            crate::ares_utils::database::fuzzer::query_fuzzer_requests_window(
-                &pool,
-                &run_id,
-                0,
-                usize::MAX,
-                None,
-                None,
-                Some(&expr),
-                raw_template_req,
-                target_url,
-            )
-            .await
-        {
-            let items: Vec<FuzzerRequestRow> = db_rows.iter().map(db_row_to_request_row).collect();
-            let _ = on_event.send(FuzzerSearchEvent::Items {
-                total_so_far: total,
-                items,
-            });
-            let _ = on_event.send(FuzzerSearchEvent::Done { total });
-        } else {
-            let _ = on_event.send(FuzzerSearchEvent::Done { total: 0 });
-        }
-        return Ok(());
-    }
-
-    // Path B: parallel chunk-by-chunk streaming evaluation.
-    //
-    // Architecture:
-    //   • One tokio task per chunk, concurrency capped by a Semaphore at
-    //     floor(available_cpus / 2) so we never saturate the machine.
-    //   • Within each task the blob is fetched/decompressed asynchronously
-    //     (already cached after first access by fetch_fuzzer_chunk_responses),
-    //     then row evaluation is handed to spawn_blocking + rayon::par_iter so
-    //     CPU-bound regex/string matching never blocks the async executor.
-    //   • Results flow back through JoinSet::join_next() and are accumulated
-    //     in a local batch buffer before being sent as Channel events, capping
-    //     the IPC message rate at ≤ one event per BATCH_SIZE matches.
-
-    // ── 1. Shared, cheaply-cloneable handles ──────────────────────────────────
-    let concurrency = (std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(4)
-        / 2)
-        .max(1);
-
-    let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(concurrency));
-
-    // Wrap the expression in Arc so it can be shared across tasks without Clone.
-    let expr = std::sync::Arc::new(expr);
-
-    // ── 2. Pre-compute request-side metadata used in every evaluation ─────────
-    let (tmpl_method, tmpl_path) = raw_template_req
-        .map(|r| {
-            let meta = crate::ares_utils::parse::parse_request_line(r.as_bytes());
-            (meta.method, meta.path)
-        })
-        .unwrap_or((String::new(), String::new()));
-
-    let tmpl_host = target_url
-        .and_then(|u| url::Url::parse(u).ok())
-        .and_then(|url| url.host_str().map(String::from))
-        .unwrap_or_default();
-
-    let is_https = target_url.map_or(false, |u| u.starts_with("https://"));
-
-    // ── 3. Fetch all candidate rows via the cheap SQL pre-filter ─────────────
-    let mut builder = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
-        "SELECT * FROM fuzzer_requests WHERE run_id = ",
-    );
-    builder.push_bind(&run_id);
-    builder.push(" AND ");
-    crate::ares_utils::httpql::compile_fuzzer_httpql_to_sql(
-        &mut builder,
-        &expr,
-        raw_template_req,
-        target_url,
-    );
-    builder.push(" ORDER BY sort_order ASC");
-
-    let candidates = match builder
-        .build_query_as::<crate::ares_utils::database::fuzzer::FuzzerRequestDb>()
-        .fetch_all(&pool)
-        .await
-    {
-        Ok(rows) => rows,
-        Err(_) => {
-            let _ = on_event.send(FuzzerSearchEvent::Done { total: 0 });
-            return Ok(());
-        }
-    };
-
-    // ── 4. Group candidates by chunk_id ───────────────────────────────────────
-    let mut chunk_groups: std::collections::BTreeMap<
-        i64,
-        Vec<crate::ares_utils::database::fuzzer::FuzzerRequestDb>,
-    > = std::collections::BTreeMap::new();
-    let mut no_chunk_rows: Vec<crate::ares_utils::database::fuzzer::FuzzerRequestDb> =
-        Vec::new();
-
-    for row in candidates {
-        match row.chunk_id {
-            Some(cid) => chunk_groups.entry(cid).or_default().push(row),
-            None => no_chunk_rows.push(row),
-        }
-    }
-
-    // ── 5. Evaluate no-chunk rows (error / pending rows) in parallel ──────────
     let mut total_so_far: usize = 0;
-    if !no_chunk_rows.is_empty() {
-        let expr_nc = expr.clone();
-        let tmpl_method_nc = tmpl_method.clone();
-        let tmpl_host_nc = tmpl_host.clone();
-        let tmpl_path_nc = tmpl_path.clone();
-        let raw_req_nc = raw_template_req_owned.clone();
 
-        let no_chunk_matches = tokio::task::spawn_blocking(move || {
-            use rayon::prelude::*;
-            no_chunk_rows
-                .par_iter()
-                .filter_map(|row| {
-                    let state = if row.error_message.is_some() || row.connection_dropped {
-                        "error"
-                    } else {
-                        "pending"
-                    };
-                    let item = crate::ares_utils::httpql::FuzzerEvaluableItem {
-                        id: row.sort_order as u32,
-                        method: &tmpl_method_nc,
-                        host: &tmpl_host_nc,
-                        path: &tmpl_path_nc,
-                        query: None,
-                        ext: None,
-                        status_code: row.status_code.unwrap_or(0),
-                        response_length: row.response_length.unwrap_or(0),
-                        response_time_ms: row.response_time_ms.unwrap_or(0),
-                        sent_at_ms: row.request_date,
-                        state,
-                        is_https,
-                        raw_request: raw_req_nc.as_deref(),
-                        raw_response: None,
-                        payload: row.payload.as_deref(),
-                    };
-                    if expr_nc.evaluate(&item) {
-                        Some(db_row_to_request_row(row))
-                    } else {
-                        None
-                    }
-                })
-                .collect::<Vec<_>>()
-        })
-        .await
-        .unwrap_or_default();
+    if !needs_memory_filter {
+        // Path A: SQL filter with batching in chunks of 50
+        let mut builder = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
+            "SELECT * FROM fuzzer_requests WHERE run_id = ",
+        );
+        builder.push_bind(&run_id);
+        builder.push(" AND ");
+        crate::ares_utils::httpql::compile_fuzzer_httpql_to_sql(
+            &mut builder,
+            &expr,
+            raw_template_req,
+            target_url,
+        );
+        builder.push(" ORDER BY sort_order ASC");
 
-        if !no_chunk_matches.is_empty() {
-            total_so_far += no_chunk_matches.len();
+        let db_rows = builder
+            .build_query_as::<crate::ares_utils::database::fuzzer::FuzzerRequestDb>()
+            .fetch_all(&pool)
+            .await
+            .unwrap_or_default();
+
+        for chunk in db_rows.chunks(50) {
+            total_so_far += chunk.len();
+            let items: Vec<FuzzerRequestRow> = chunk.iter().map(db_row_to_request_row).collect();
             if on_event
                 .send(FuzzerSearchEvent::Items {
-                    items: no_chunk_matches,
                     total_so_far,
+                    items,
                 })
                 .is_err()
             {
                 return Ok(());
             }
         }
-    }
+    } else {
+        // Path B: parallel chunk-by-chunk streaming evaluation up to watermark
+        let concurrency = (std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4)
+            / 2)
+            .max(1);
 
-    // ── 6. Spawn concurrent chunk tasks ──────────────────────────────────────
-    let mut join_set =
-        tokio::task::JoinSet::<Result<Vec<FuzzerRequestRow>, String>>::new();
+        let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(concurrency));
 
-    for (chunk_id, rows) in chunk_groups {
-        let sem = semaphore.clone();
-        let pool = pool.clone();
-        let expr = expr.clone();
-        let tmpl_method = tmpl_method.clone();
-        let tmpl_host = tmpl_host.clone();
-        let tmpl_path = tmpl_path.clone();
-        let raw_req = raw_template_req_owned.clone();
+        let (tmpl_method, tmpl_path) = raw_template_req
+            .map(|r| {
+                let meta = crate::ares_utils::parse::parse_request_line(r.as_bytes());
+                (meta.method, meta.path)
+            })
+            .unwrap_or((String::new(), String::new()));
 
-        join_set.spawn(async move {
-            // Acquire semaphore permit — limits concurrency to available_cpus/2.
-            let _permit = sem.acquire().await.map_err(|e| e.to_string())?;
+        let tmpl_host = target_url
+            .and_then(|u| url::Url::parse(u).ok())
+            .and_then(|url| url.host_str().map(String::from))
+            .unwrap_or_default();
 
-            // Async I/O: fetch + decompress blob (LRU-cached after first access).
-            let resps =
-                crate::ares_utils::database::fuzzer::fetch_fuzzer_chunk_responses(
-                    &pool, chunk_id,
-                )
-                .await?;
+        let is_https = target_url.map_or(false, |u| u.starts_with("https://"));
 
-            // CPU-bound: move row evaluation to the blocking thread pool.
-            // rayon::par_iter distributes work across available cores within the task.
-            let matches = tokio::task::spawn_blocking(move || {
+        let mut builder = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
+            "SELECT * FROM fuzzer_requests WHERE run_id = ",
+        );
+        builder.push_bind(&run_id);
+        builder.push(" AND ");
+        crate::ares_utils::httpql::compile_fuzzer_httpql_to_sql(
+            &mut builder,
+            &expr,
+            raw_template_req,
+            target_url,
+        );
+        builder.push(" ORDER BY sort_order ASC");
+
+        let candidates = match builder
+            .build_query_as::<crate::ares_utils::database::fuzzer::FuzzerRequestDb>()
+            .fetch_all(&pool)
+            .await
+        {
+            Ok(rows) => rows,
+            Err(_) => {
+                let _ = on_event.send(FuzzerSearchEvent::Done { total: 0 });
+                return Ok(());
+            }
+        };
+
+        let mut chunk_groups: std::collections::BTreeMap<
+            i64,
+            Vec<crate::ares_utils::database::fuzzer::FuzzerRequestDb>,
+        > = std::collections::BTreeMap::new();
+        let mut no_chunk_rows: Vec<crate::ares_utils::database::fuzzer::FuzzerRequestDb> =
+            Vec::new();
+
+        for row in candidates {
+            match row.chunk_id {
+                Some(cid) => chunk_groups.entry(cid).or_default().push(row),
+                None => no_chunk_rows.push(row),
+            }
+        }
+
+        if !no_chunk_rows.is_empty() {
+            let expr_nc = expr.clone();
+            let tmpl_method_nc = tmpl_method.clone();
+            let tmpl_host_nc = tmpl_host.clone();
+            let tmpl_path_nc = tmpl_path.clone();
+            let raw_req_nc = raw_template_req_owned.clone();
+
+            let no_chunk_matches = tokio::task::spawn_blocking(move || {
                 use rayon::prelude::*;
-                rows.par_iter()
+                no_chunk_rows
+                    .par_iter()
                     .filter_map(|row| {
-                        let cidx = row.chunk_index? as usize;
-                        let raw_resp = resps.get(cidx)?;
+                        let state = if row.error_message.is_some() || row.connection_dropped {
+                            "error"
+                        } else {
+                            "pending"
+                        };
                         let item = crate::ares_utils::httpql::FuzzerEvaluableItem {
                             id: row.sort_order as u32,
-                            method: &tmpl_method,
-                            host: &tmpl_host,
-                            path: &tmpl_path,
+                            method: &tmpl_method_nc,
+                            host: &tmpl_host_nc,
+                            path: &tmpl_path_nc,
                             query: None,
                             ext: None,
                             status_code: row.status_code.unwrap_or(0),
                             response_length: row.response_length.unwrap_or(0),
                             response_time_ms: row.response_time_ms.unwrap_or(0),
                             sent_at_ms: row.request_date,
-                            state: "completed",
+                            state,
                             is_https,
-                            raw_request: raw_req.as_deref(),
-                            raw_response: Some(raw_resp.as_str()),
+                            raw_request: raw_req_nc.as_deref(),
+                            raw_response: None,
                             payload: row.payload.as_deref(),
                         };
-                        if expr.evaluate(&item) {
+                        if expr_nc.evaluate(&item) {
                             Some(db_row_to_request_row(row))
                         } else {
                             None
@@ -837,46 +757,115 @@ pub async fn stream_fuzzer_search(
                     .collect::<Vec<_>>()
             })
             .await
-            .map_err(|e| e.to_string())?;
+            .unwrap_or_default();
 
-            Ok(matches)
-        });
-    }
-
-    // ── 7. Collect results as tasks finish; batch before sending ─────────────
-    // Batching caps the IPC event rate: we only emit to the frontend once we
-    // have BATCH_SIZE matches accumulated, or when all tasks are done.
-    const BATCH_SIZE: usize = 50;
-    let mut batch: Vec<FuzzerRequestRow> = Vec::with_capacity(BATCH_SIZE);
-
-    while let Some(result) = join_set.join_next().await {
-        if let Ok(Ok(matches)) = result {
-            batch.extend(matches);
-            if batch.len() >= BATCH_SIZE {
-                total_so_far += batch.len();
-                let to_send = std::mem::take(&mut batch);
+            if !no_chunk_matches.is_empty() {
+                total_so_far += no_chunk_matches.len();
                 if on_event
                     .send(FuzzerSearchEvent::Items {
-                        items: to_send,
+                        items: no_chunk_matches,
                         total_so_far,
                     })
                     .is_err()
                 {
-                    // Frontend dropped the channel — cancel all in-flight tasks.
-                    join_set.abort_all();
                     return Ok(());
                 }
             }
         }
-    }
 
-    // Flush any remaining matches that didn't fill a full batch.
-    if !batch.is_empty() {
-        total_so_far += batch.len();
-        let _ = on_event.send(FuzzerSearchEvent::Items {
-            items: batch,
-            total_so_far,
-        });
+        let mut join_set =
+            tokio::task::JoinSet::<Result<Vec<FuzzerRequestRow>, String>>::new();
+
+        for (chunk_id, rows) in chunk_groups {
+            let sem = semaphore.clone();
+            let pool = pool.clone();
+            let expr = expr.clone();
+            let tmpl_method = tmpl_method.clone();
+            let tmpl_host = tmpl_host.clone();
+            let tmpl_path = tmpl_path.clone();
+            let raw_req = raw_template_req_owned.clone();
+
+            join_set.spawn(async move {
+                let _permit = sem.acquire().await.map_err(|e| e.to_string())?;
+                let resps =
+                    crate::ares_utils::database::fuzzer::fetch_fuzzer_chunk_responses(
+                        &pool, chunk_id,
+                    )
+                    .await?;
+
+                let matches = tokio::task::spawn_blocking(move || {
+                    use rayon::prelude::*;
+                    rows.par_iter()
+                        .filter_map(|row| {
+                            let cidx = row.chunk_index? as usize;
+                            let raw_resp = resps.get(cidx)?;
+                            let item = crate::ares_utils::httpql::FuzzerEvaluableItem {
+                                id: row.sort_order as u32,
+                                method: &tmpl_method,
+                                host: &tmpl_host,
+                                path: &tmpl_path,
+                                query: None,
+                                ext: None,
+                                status_code: row.status_code.unwrap_or(0),
+                                response_length: row.response_length.unwrap_or(0),
+                                response_time_ms: row.response_time_ms.unwrap_or(0),
+                                sent_at_ms: row.request_date,
+                                state: "completed",
+                                is_https,
+                                raw_request: raw_req.as_deref(),
+                                raw_response: Some(raw_resp.as_str()),
+                                payload: row.payload.as_deref(),
+                            };
+                            if expr.evaluate(&item) {
+                                Some(db_row_to_request_row(row))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .await
+                .map_err(|e| e.to_string())?;
+
+                Ok(matches)
+            });
+        }
+
+        const BATCH_SIZE: usize = 50;
+        let mut batch: Vec<FuzzerRequestRow> = Vec::with_capacity(BATCH_SIZE);
+
+        while let Some(result) = join_set.join_next().await {
+            if let Ok(Ok(matches)) = result {
+                batch.extend(matches);
+                if batch.len() >= BATCH_SIZE {
+                    total_so_far += batch.len();
+                    let to_send = std::mem::take(&mut batch);
+                    if on_event
+                        .send(FuzzerSearchEvent::Items {
+                            items: to_send,
+                            total_so_far,
+                        })
+                        .is_err()
+                    {
+                        join_set.abort_all();
+                        return Ok(());
+                    }
+                }
+            }
+        }
+
+        if !batch.is_empty() {
+            total_so_far += batch.len();
+            if on_event
+                .send(FuzzerSearchEvent::Items {
+                    items: batch,
+                    total_so_far,
+                })
+                .is_err()
+            {
+                return Ok(());
+            }
+        }
     }
 
     let _ = on_event.send(FuzzerSearchEvent::Done { total: total_so_far });
@@ -1314,7 +1303,6 @@ async fn run_dynamic_fuzzer(
     let (chunk_tx, mut chunk_rx) = tokio::sync::mpsc::channel::<ChunkWorkerMessage>(2048);
     let flusher_pool = db_pool.clone();
     let flusher_run_id = run_id.clone();
-
     let flusher_handle = tokio::spawn(async move {
         struct StatusChunkBuffer {
             responses: Vec<String>,
@@ -1404,7 +1392,7 @@ async fn run_dynamic_fuzzer(
 
         let mut status_buffers: std::collections::HashMap<i64, StatusChunkBuffer> = std::collections::HashMap::new();
         let mut ticker = interval(Duration::from_millis(500));
-        const TIMEOUT_FLUSH_DURATION: Duration = Duration::from_millis(2000);
+        const TIMEOUT_FLUSH_DURATION: Duration = Duration::from_millis(500);
 
         loop {
             tokio::select! {
@@ -1458,7 +1446,7 @@ async fn run_dynamic_fuzzer(
                                     worker_id,
                                     &message,
                                     connection_dropped,
-                                    ).await;
+                                ).await;
                             }
                         }
                         None => {

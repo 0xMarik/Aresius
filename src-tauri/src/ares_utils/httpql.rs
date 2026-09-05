@@ -2,6 +2,7 @@ use chrono::{DateTime, NaiveDate, NaiveDateTime};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use crate::ares_utils::parse::split_message;
 
 pub fn parse_datetime_to_ms(s: &str) -> Option<i64> {
@@ -96,11 +97,80 @@ pub enum HttpqlValue {
     List(Vec<String>),
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HttpqlCondition {
     pub field: HttpqlField,
     pub op: HttpqlOperator,
     pub value: HttpqlValue,
+    #[serde(skip)]
+    pub compiled_regex: Option<Arc<Regex>>,
+}
+
+impl PartialEq for HttpqlCondition {
+    fn eq(&self, other: &Self) -> bool {
+        self.field == other.field && self.op == other.op && self.value == other.value
+    }
+}
+
+impl HttpqlCondition {
+    pub fn new(field: HttpqlField, op: HttpqlOperator, value: HttpqlValue) -> Self {
+        let mut cond = Self {
+            field,
+            op,
+            value,
+            compiled_regex: None,
+        };
+        cond.compile_regex();
+        cond
+    }
+
+    pub fn compile_regex(&mut self) {
+        match self.op {
+            HttpqlOperator::Regex | HttpqlOperator::Nregex => {
+                let exp_str = val_as_string(&self.value);
+                if let Ok(re) = Regex::new(&exp_str) {
+                    self.compiled_regex = Some(Arc::new(re));
+                }
+            }
+            HttpqlOperator::Like | HttpqlOperator::Nlike => {
+                let pattern = val_as_string(&self.value);
+                if let Ok(re) = sql_like_to_regex(&pattern) {
+                    self.compiled_regex = Some(Arc::new(re));
+                }
+            }
+            _ => {
+                self.compiled_regex = None;
+            }
+        }
+    }
+
+    pub fn is_exact_column(&self) -> bool {
+        match self.field {
+            HttpqlField::RespCode
+            | HttpqlField::RespLen
+            | HttpqlField::RespTime
+            | HttpqlField::ReqId
+            | HttpqlField::Payload
+            | HttpqlField::ReqCreatedAt => {
+                !matches!(self.op, HttpqlOperator::Regex | HttpqlOperator::Nregex)
+            }
+            _ => false,
+        }
+    }
+
+    pub fn is_fts_chunk_match(&self) -> bool {
+        match self.field {
+            HttpqlField::RespHeader(_) | HttpqlField::RespRaw | HttpqlField::RespBody => {
+                let term = val_as_string(&self.value);
+                term.trim().len() >= 3
+                    && matches!(
+                        self.op,
+                        HttpqlOperator::Cont | HttpqlOperator::Eq | HttpqlOperator::Like
+                    )
+            }
+            _ => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -712,7 +782,7 @@ impl Parser {
                 let field = parse_field_type(&field_str, header_key)?;
                 let op = parse_operator(op_str.as_deref(), &value);
 
-                Ok(HttpqlExpr::Condition(HttpqlCondition { field, op, value }))
+                Ok(HttpqlExpr::Condition(HttpqlCondition::new(field, op, value)))
             }
             Token::BareWord(s) => {
                 if let Some(Token::Colon) = self.peek() {
@@ -733,7 +803,7 @@ impl Parser {
                     let (field_str, header_key, op_str) = parse_field_with_modifiers(&s);
                     let field = parse_field_type(&field_str, header_key)?;
                     let op = parse_operator(op_str.as_deref(), &value);
-                    Ok(HttpqlExpr::Condition(HttpqlCondition { field, op, value }))
+                    Ok(HttpqlExpr::Condition(HttpqlCondition::new(field, op, value)))
                 } else {
                     Ok(HttpqlExpr::Bare(s))
                 }
@@ -834,7 +904,12 @@ pub fn parse_httpql(input: &str) -> Result<Option<HttpqlExpr>, String> {
     let mut lexer = Lexer::new(trimmed);
     let tokens = lexer.tokenize()?;
     let mut parser = Parser::new(tokens);
-    parser.parse()
+    let expr = parser.parse()?;
+    Ok(expr.map(|e| {
+        let mut simplified = e.simplify();
+        simplified.compile_regexes();
+        simplified
+    }))
 }
 
 pub fn expand_presets_in_expr(
@@ -913,6 +988,181 @@ impl HttpqlExpr {
             HttpqlExpr::Bare(_) => false,
         }
     }
+
+    pub fn compile_regexes(&mut self) {
+        match self {
+            HttpqlExpr::Condition(cond) => {
+                cond.compile_regex();
+            }
+            HttpqlExpr::Not(inner) => {
+                inner.compile_regexes();
+            }
+            HttpqlExpr::And(list) | HttpqlExpr::Or(list) => {
+                for item in list {
+                    item.compile_regexes();
+                }
+            }
+            HttpqlExpr::Bare(_) => {}
+        }
+    }
+
+    pub fn simplify(self) -> Self {
+        match self {
+            HttpqlExpr::Not(inner) => {
+                let inner = inner.simplify();
+                match inner {
+                    HttpqlExpr::Not(double_inner) => *double_inner,
+                    other => HttpqlExpr::Not(Box::new(other)),
+                }
+            }
+            HttpqlExpr::And(items) => {
+                let mut flat = Vec::new();
+                for item in items {
+                    let simplified = item.simplify();
+                    match simplified {
+                        HttpqlExpr::And(nested) => flat.extend(nested),
+                        other => flat.push(other),
+                    }
+                }
+                if flat.len() == 1 {
+                    flat.into_iter().next().unwrap()
+                } else {
+                    HttpqlExpr::And(flat)
+                }
+            }
+            HttpqlExpr::Or(items) => {
+                let mut flat = Vec::new();
+                for item in items {
+                    let simplified = item.simplify();
+                    match simplified {
+                        HttpqlExpr::Or(nested) => flat.extend(nested),
+                        other => flat.push(other),
+                    }
+                }
+                if flat.len() == 1 {
+                    flat.into_iter().next().unwrap()
+                } else {
+                    HttpqlExpr::Or(flat)
+                }
+            }
+            other => other,
+        }
+    }
+
+    pub fn predicate_cost(&self) -> u32 {
+        match self {
+            HttpqlExpr::Condition(cond) => {
+                let base = match cond.field {
+                    HttpqlField::RespCode
+                    | HttpqlField::RespLen
+                    | HttpqlField::RespTime
+                    | HttpqlField::ReqId
+                    | HttpqlField::ReqLen
+                    | HttpqlField::ReqCreatedAt
+                    | HttpqlField::ReqPort
+                    | HttpqlField::ReqTls => 1,
+
+                    HttpqlField::ReqMethod | HttpqlField::ReqExt | HttpqlField::RespExt => 2,
+
+                    HttpqlField::ReqHost
+                    | HttpqlField::ReqPath
+                    | HttpqlField::ReqQuery
+                    | HttpqlField::Payload => 5,
+
+                    HttpqlField::ReqHeader(_) | HttpqlField::RespHeader(_) => 15,
+
+                    HttpqlField::ReqBody
+                    | HttpqlField::RespBody
+                    | HttpqlField::ReqRaw
+                    | HttpqlField::RespRaw => 50,
+
+                    HttpqlField::RespState | HttpqlField::Preset => 5,
+                    HttpqlField::Bare => 100,
+                };
+
+                let op_multiplier = match cond.op {
+                    HttpqlOperator::Regex | HttpqlOperator::Nregex => 10,
+                    HttpqlOperator::Like | HttpqlOperator::Nlike => 3,
+                    _ => 1,
+                };
+
+                base * op_multiplier
+            }
+            HttpqlExpr::Bare(_) => 100,
+            HttpqlExpr::Not(inner) => inner.predicate_cost(),
+            HttpqlExpr::And(list) | HttpqlExpr::Or(list) => {
+                list.iter().map(|item| item.predicate_cost()).sum()
+            }
+        }
+    }
+
+    pub fn optimize_evaluation_order(&mut self) {
+        match self {
+            HttpqlExpr::And(list) => {
+                for item in list.iter_mut() {
+                    item.optimize_evaluation_order();
+                }
+                list.sort_by_key(|item| item.predicate_cost());
+            }
+            HttpqlExpr::Or(list) => {
+                for item in list.iter_mut() {
+                    item.optimize_evaluation_order();
+                }
+                list.sort_by_key(|item| item.predicate_cost());
+            }
+            HttpqlExpr::Not(inner) => {
+                inner.optimize_evaluation_order();
+            }
+            _ => {}
+        }
+    }
+
+    pub fn is_pushdown_unconstrained(
+        &self,
+        raw_template_req: Option<&str>,
+        target_url: Option<&str>,
+        negated: bool,
+    ) -> bool {
+        match self {
+            HttpqlExpr::Condition(cond) => {
+                if cond.is_exact_column() {
+                    false
+                } else if cond.is_fts_chunk_match() {
+                    negated
+                } else {
+                    true
+                }
+            }
+            HttpqlExpr::Bare(_) => negated,
+            HttpqlExpr::Not(inner) => {
+                inner.is_pushdown_unconstrained(raw_template_req, target_url, !negated)
+            }
+            HttpqlExpr::And(list) => {
+                if negated {
+                    list.iter().any(|item| {
+                        item.is_pushdown_unconstrained(raw_template_req, target_url, true)
+                    })
+                } else {
+                    list.is_empty()
+                        || list.iter().all(|item| {
+                            item.is_pushdown_unconstrained(raw_template_req, target_url, false)
+                        })
+                }
+            }
+            HttpqlExpr::Or(list) => {
+                if negated {
+                    list.is_empty()
+                        || list.iter().all(|item| {
+                            item.is_pushdown_unconstrained(raw_template_req, target_url, true)
+                        })
+                } else {
+                    list.iter().any(|item| {
+                        item.is_pushdown_unconstrained(raw_template_req, target_url, false)
+                    })
+                }
+            }
+        }
+    }
 }
 
 pub fn compile_httpql_to_sql(
@@ -984,41 +1234,87 @@ pub fn compile_fuzzer_httpql_to_sql(
     raw_template_req: Option<&str>,
     target_url: Option<&str>,
 ) {
+    compile_fuzzer_httpql_to_sql_inner(builder, expr, raw_template_req, target_url, false);
+}
+
+fn compile_fuzzer_httpql_to_sql_inner(
+    builder: &mut sqlx::QueryBuilder<sqlx::Sqlite>,
+    expr: &HttpqlExpr,
+    raw_template_req: Option<&str>,
+    target_url: Option<&str>,
+    negated: bool,
+) {
     match expr {
         HttpqlExpr::Condition(cond) => {
-            compile_fuzzer_condition_to_sql(builder, cond, raw_template_req, target_url);
+            compile_fuzzer_condition_to_sql_inner(
+                builder,
+                cond,
+                raw_template_req,
+                target_url,
+                negated,
+            );
         }
         HttpqlExpr::Bare(term) => {
-            let trimmed = term.trim();
-            let pattern = format!("%{}%", trimmed);
-            builder.push("(");
-            builder.push("COALESCE(payload, '') LIKE ");
-            builder.push_bind(pattern.clone());
-            builder.push(" OR CAST(status_code AS TEXT) LIKE ");
-            builder.push_bind(pattern.clone());
-            builder.push(" OR CAST(response_length AS TEXT) LIKE ");
-            builder.push_bind(pattern.clone());
-            builder.push(" OR CAST(response_time_ms AS TEXT) LIKE ");
-            builder.push_bind(pattern.clone());
-            builder.push(" OR id LIKE ");
-            builder.push_bind(pattern.clone());
-            builder.push(" OR CAST(sort_order AS TEXT) LIKE ");
-            builder.push_bind(pattern.clone());
-            if trimmed.len() >= 3 {
-                let escaped = format!("\"{}\"", trimmed.replace('"', "\"\""));
-                builder.push(" OR chunk_id IN (SELECT rowid FROM fuzzer_chunks_fts WHERE fuzzer_chunks_fts MATCH ");
-                builder.push_bind(escaped);
+            if negated {
+                builder.push("1=1");
+            } else {
+                let trimmed = term.trim();
+                let pattern = format!("%{}%", trimmed);
+                builder.push("(");
+                builder.push("COALESCE(payload, '') LIKE ");
+                builder.push_bind(pattern.clone());
+                builder.push(" OR CAST(status_code AS TEXT) LIKE ");
+                builder.push_bind(pattern.clone());
+                builder.push(" OR CAST(response_length AS TEXT) LIKE ");
+                builder.push_bind(pattern.clone());
+                builder.push(" OR CAST(response_time_ms AS TEXT) LIKE ");
+                builder.push_bind(pattern.clone());
+                builder.push(" OR id LIKE ");
+                builder.push_bind(pattern.clone());
+                builder.push(" OR CAST(sort_order AS TEXT) LIKE ");
+                builder.push_bind(pattern.clone());
+                if trimmed.len() >= 3 {
+                    let escaped = format!("\"{}\"", trimmed.replace('"', "\"\""));
+                    builder.push(" OR chunk_id IN (SELECT rowid FROM fuzzer_chunks_fts WHERE fuzzer_chunks_fts MATCH ");
+                    builder.push_bind(escaped);
+                    builder.push(")");
+                }
                 builder.push(")");
             }
-            builder.push(")");
         }
         HttpqlExpr::Not(inner) => {
-            builder.push("NOT (");
-            compile_fuzzer_httpql_to_sql(builder, inner, raw_template_req, target_url);
-            builder.push(")");
+            compile_fuzzer_httpql_to_sql_inner(
+                builder,
+                inner,
+                raw_template_req,
+                target_url,
+                !negated,
+            );
         }
         HttpqlExpr::And(list) => {
-            if list.is_empty() {
+            if negated {
+                let any_unconstrained = list.iter().any(|item| {
+                    item.is_pushdown_unconstrained(raw_template_req, target_url, true)
+                });
+                if any_unconstrained || list.is_empty() {
+                    builder.push("1=1");
+                } else {
+                    builder.push("(");
+                    for (i, item) in list.iter().enumerate() {
+                        if i > 0 {
+                            builder.push(" OR ");
+                        }
+                        compile_fuzzer_httpql_to_sql_inner(
+                            builder,
+                            item,
+                            raw_template_req,
+                            target_url,
+                            true,
+                        );
+                    }
+                    builder.push(")");
+                }
+            } else if list.is_empty() {
                 builder.push("1=1");
             } else {
                 builder.push("(");
@@ -1026,23 +1322,61 @@ pub fn compile_fuzzer_httpql_to_sql(
                     if i > 0 {
                         builder.push(" AND ");
                     }
-                    compile_fuzzer_httpql_to_sql(builder, item, raw_template_req, target_url);
+                    compile_fuzzer_httpql_to_sql_inner(
+                        builder,
+                        item,
+                        raw_template_req,
+                        target_url,
+                        false,
+                    );
                 }
                 builder.push(")");
             }
         }
         HttpqlExpr::Or(list) => {
-            if list.is_empty() {
-                builder.push("1=0");
-            } else {
-                builder.push("(");
-                for (i, item) in list.iter().enumerate() {
-                    if i > 0 {
-                        builder.push(" OR ");
+            if negated {
+                if list.is_empty() {
+                    builder.push("1=1");
+                } else {
+                    builder.push("(");
+                    for (i, item) in list.iter().enumerate() {
+                        if i > 0 {
+                            builder.push(" AND ");
+                        }
+                        compile_fuzzer_httpql_to_sql_inner(
+                            builder,
+                            item,
+                            raw_template_req,
+                            target_url,
+                            true,
+                        );
                     }
-                    compile_fuzzer_httpql_to_sql(builder, item, raw_template_req, target_url);
+                    builder.push(")");
                 }
-                builder.push(")");
+            } else {
+                let any_unconstrained = list.iter().any(|item| {
+                    item.is_pushdown_unconstrained(raw_template_req, target_url, false)
+                });
+                if any_unconstrained {
+                    builder.push("1=1");
+                } else if list.is_empty() {
+                    builder.push("1=0");
+                } else {
+                    builder.push("(");
+                    for (i, item) in list.iter().enumerate() {
+                        if i > 0 {
+                            builder.push(" OR ");
+                        }
+                        compile_fuzzer_httpql_to_sql_inner(
+                            builder,
+                            item,
+                            raw_template_req,
+                            target_url,
+                            false,
+                        );
+                    }
+                    builder.push(")");
+                }
             }
         }
     }
@@ -1062,68 +1396,81 @@ pub fn has_response_content_checks(expr: &HttpqlExpr) -> bool {
     }
 }
 
-fn compile_fuzzer_condition_to_sql(
+fn compile_fuzzer_condition_to_sql_inner(
     builder: &mut sqlx::QueryBuilder<sqlx::Sqlite>,
     cond: &HttpqlCondition,
     raw_template_req: Option<&str>,
     target_url: Option<&str>,
+    negated: bool,
 ) {
-    match &cond.field {
-        HttpqlField::RespCode => {
-            compile_num_field(builder, "status_code", cond.op, &cond.value);
+    if cond.is_exact_column() {
+        if negated {
+            builder.push("NOT (");
         }
-        HttpqlField::RespLen => {
-            compile_num_field(builder, "response_length", cond.op, &cond.value);
+        match &cond.field {
+            HttpqlField::RespCode => {
+                compile_num_field(builder, "status_code", cond.op, &cond.value);
+            }
+            HttpqlField::RespLen => {
+                compile_num_field(builder, "response_length", cond.op, &cond.value);
+            }
+            HttpqlField::RespTime => {
+                compile_num_field(builder, "response_time_ms", cond.op, &cond.value);
+            }
+            HttpqlField::ReqId => {
+                compile_num_field(builder, "sort_order", cond.op, &cond.value);
+            }
+            HttpqlField::Payload => {
+                compile_str_field(builder, "COALESCE(payload, '')", cond.op, &cond.value, false);
+            }
+            HttpqlField::ReqCreatedAt => {
+                let s = val_as_string(&cond.value);
+                let ms = parse_datetime_to_ms(&s).unwrap_or(0);
+                let op_sym = match cond.op {
+                    HttpqlOperator::Gt => " > ",
+                    HttpqlOperator::Ge => " >= ",
+                    HttpqlOperator::Lt => " < ",
+                    HttpqlOperator::Le => " <= ",
+                    HttpqlOperator::Ne => " != ",
+                    _ => " = ",
+                };
+                builder.push("request_date");
+                builder.push(op_sym);
+                builder.push_bind(ms);
+            }
+            _ => {}
         }
-        HttpqlField::RespTime => {
-            compile_num_field(builder, "response_time_ms", cond.op, &cond.value);
+        if negated {
+            builder.push(")");
         }
-        HttpqlField::ReqId => {
-            compile_num_field(builder, "sort_order", cond.op, &cond.value);
-        }
-        HttpqlField::Payload => {
-            compile_str_field(builder, "COALESCE(payload, '')", cond.op, &cond.value, false);
-        }
-        // FTS-accelerated header and raw response checks
-        HttpqlField::RespHeader(_) | HttpqlField::RespRaw | HttpqlField::RespBody => {
+        return;
+    }
+
+    if cond.is_fts_chunk_match() {
+        if negated {
+            builder.push("1=1");
+        } else {
             let term = val_as_string(&cond.value);
             let trimmed = term.trim();
-            if trimmed.len() >= 3 && matches!(cond.op, HttpqlOperator::Cont | HttpqlOperator::Eq | HttpqlOperator::Like) {
-                let escaped = format!("\"{}\"", trimmed.replace('"', "\"\""));
-                builder.push("chunk_id IN (SELECT rowid FROM fuzzer_chunks_fts WHERE fuzzer_chunks_fts MATCH ");
-                builder.push_bind(escaped);
-                builder.push(")");
-            } else {
-                builder.push("1=1");
-            }
+            let escaped = format!("\"{}\"", trimmed.replace('"', "\"\""));
+            builder.push("chunk_id IN (SELECT rowid FROM fuzzer_chunks_fts WHERE fuzzer_chunks_fts MATCH ");
+            builder.push_bind(escaped);
+            builder.push(")");
         }
+        return;
+    }
+
+    let re_ref = cond.compiled_regex.as_deref();
+    match &cond.field {
         HttpqlField::RespState | HttpqlField::RespExt | HttpqlField::Preset => {
             builder.push("1=1");
         }
-        HttpqlField::ReqCreatedAt => {
-            let s = val_as_string(&cond.value);
-            let ms = parse_datetime_to_ms(&s).unwrap_or(0);
-            let op_sym = match cond.op {
-                HttpqlOperator::Gt => " > ",
-                HttpqlOperator::Ge => " >= ",
-                HttpqlOperator::Lt => " < ",
-                HttpqlOperator::Le => " <= ",
-                HttpqlOperator::Ne => " != ",
-                _ => " = ",
-            };
-            builder.push("request_date");
-            builder.push(op_sym);
-            builder.push_bind(ms);
-        }
-        // Request fields evaluated against template
         HttpqlField::ReqMethod => {
             if let Some(raw) = raw_template_req {
                 let meta = crate::ares_utils::parse::parse_request_line(raw.as_bytes());
-                if eval_str_cmp(&meta.method, cond.op, &cond.value, true) {
-                    builder.push("1=1");
-                } else {
-                    builder.push("1=0");
-                }
+                let matches = eval_str_cmp(&meta.method, cond.op, &cond.value, true, re_ref);
+                let ok = if negated { !matches } else { matches };
+                builder.push(if ok { "1=1" } else { "1=0" });
             } else {
                 builder.push("1=1");
             }
@@ -1131,11 +1478,9 @@ fn compile_fuzzer_condition_to_sql(
         HttpqlField::ReqHost => {
             if let Some(u) = target_url {
                 let host = url::Url::parse(u).ok().and_then(|url| url.host_str().map(String::from)).unwrap_or_default();
-                if eval_str_cmp(&host, cond.op, &cond.value, false) {
-                    builder.push("1=1");
-                } else {
-                    builder.push("1=0");
-                }
+                let matches = eval_str_cmp(&host, cond.op, &cond.value, false, re_ref);
+                let ok = if negated { !matches } else { matches };
+                builder.push(if ok { "1=1" } else { "1=0" });
             } else {
                 builder.push("1=1");
             }
@@ -1143,11 +1488,9 @@ fn compile_fuzzer_condition_to_sql(
         HttpqlField::ReqPath => {
             if let Some(raw) = raw_template_req {
                 let meta = crate::ares_utils::parse::parse_request_line(raw.as_bytes());
-                if eval_str_cmp(&meta.path, cond.op, &cond.value, false) {
-                    builder.push("1=1");
-                } else {
-                    builder.push("1=0");
-                }
+                let matches = eval_str_cmp(&meta.path, cond.op, &cond.value, false, re_ref);
+                let ok = if negated { !matches } else { matches };
+                builder.push(if ok { "1=1" } else { "1=0" });
             } else {
                 builder.push("1=1");
             }
@@ -1156,11 +1499,9 @@ fn compile_fuzzer_condition_to_sql(
             if let Some(raw) = raw_template_req {
                 let meta = crate::ares_utils::parse::parse_request_line(raw.as_bytes());
                 let query = meta.query.unwrap_or_default();
-                if eval_str_cmp(&query, cond.op, &cond.value, false) {
-                    builder.push("1=1");
-                } else {
-                    builder.push("1=0");
-                }
+                let matches = eval_str_cmp(&query, cond.op, &cond.value, false, re_ref);
+                let ok = if negated { !matches } else { matches };
+                builder.push(if ok { "1=1" } else { "1=0" });
             } else {
                 builder.push("1=1");
             }
@@ -1173,22 +1514,14 @@ fn compile_fuzzer_condition_to_sql(
                     HttpqlValue::String(s) => s.eq_ignore_ascii_case("https") || s.eq_ignore_ascii_case("true"),
                     _ => true,
                 };
-                if (is_https == target_bool) == (cond.op == HttpqlOperator::Eq) {
-                    builder.push("1=1");
-                } else {
-                    builder.push("1=0");
-                }
+                let matches = (is_https == target_bool) == (cond.op == HttpqlOperator::Eq);
+                let ok = if negated { !matches } else { matches };
+                builder.push(if ok { "1=1" } else { "1=0" });
             } else {
                 builder.push("1=1");
             }
         }
-        HttpqlField::ReqPort
-        | HttpqlField::ReqExt
-        | HttpqlField::ReqRaw
-        | HttpqlField::ReqBody
-        | HttpqlField::ReqHeader(_)
-        | HttpqlField::ReqLen
-        | HttpqlField::Bare => {
+        _ => {
             builder.push("1=1");
         }
     }
@@ -2180,6 +2513,7 @@ impl HttpqlExpr {
 }
 
 fn eval_condition<T: HttpTransactionEvaluable>(cond: &HttpqlCondition, item: &T) -> bool {
+    let re_ref = cond.compiled_regex.as_deref();
     match &cond.field {
         HttpqlField::ReqId => eval_num_cmp(item.eval_id() as i64, cond.op, &cond.value),
         HttpqlField::ReqCreatedAt => {
@@ -2187,25 +2521,25 @@ fn eval_condition<T: HttpTransactionEvaluable>(cond: &HttpqlCondition, item: &T)
             let ms = parse_datetime_to_ms(&s).unwrap_or(0);
             eval_num_cmp(item.eval_sent_at_ms(), cond.op, &HttpqlValue::Number(ms))
         }
-        HttpqlField::ReqMethod => eval_str_cmp(item.eval_method(), cond.op, &cond.value, true),
-        HttpqlField::ReqHost => eval_str_cmp(item.eval_host(), cond.op, &cond.value, false),
-        HttpqlField::ReqPath => eval_str_cmp(item.eval_path(), cond.op, &cond.value, false),
+        HttpqlField::ReqMethod => eval_str_cmp(item.eval_method(), cond.op, &cond.value, true, re_ref),
+        HttpqlField::ReqHost => eval_str_cmp(item.eval_host(), cond.op, &cond.value, false, re_ref),
+        HttpqlField::ReqPath => eval_str_cmp(item.eval_path(), cond.op, &cond.value, false, re_ref),
         HttpqlField::ReqQuery => {
             let q = item.eval_query().unwrap_or("");
-            eval_str_cmp(q, cond.op, &cond.value, false)
+            eval_str_cmp(q, cond.op, &cond.value, false, re_ref)
         }
         HttpqlField::ReqExt => {
             let ext = item.eval_ext().unwrap_or("").trim_start_matches('.');
             match &cond.value {
                 HttpqlValue::String(s) => {
                     let clean = s.trim_start_matches('.');
-                    eval_str_cmp(ext, cond.op, &HttpqlValue::String(clean.to_string()), true)
+                    eval_str_cmp(ext, cond.op, &HttpqlValue::String(clean.to_string()), true, re_ref)
                 }
                 HttpqlValue::List(list) => {
                     let clean_list: Vec<String> = list.iter().map(|s| s.trim_start_matches('.').to_string()).collect();
-                    eval_str_cmp(ext, cond.op, &HttpqlValue::List(clean_list), true)
+                    eval_str_cmp(ext, cond.op, &HttpqlValue::List(clean_list), true, re_ref)
                 }
-                _ => eval_str_cmp(ext, cond.op, &cond.value, true),
+                _ => eval_str_cmp(ext, cond.op, &cond.value, true, re_ref),
             }
         }
         HttpqlField::ReqPort => {
@@ -2232,11 +2566,11 @@ fn eval_condition<T: HttpTransactionEvaluable>(cond: &HttpqlCondition, item: &T)
         }
         HttpqlField::ReqRaw | HttpqlField::ReqBody => {
             let raw = item.eval_raw_request().unwrap_or("");
-            eval_str_cmp(raw, cond.op, &cond.value, false)
+            eval_str_cmp(raw, cond.op, &cond.value, false, re_ref)
         }
         HttpqlField::ReqHeader(hname) => {
             let raw = item.eval_raw_request().unwrap_or("");
-            eval_header_cmp(raw, hname.as_deref(), cond.op, &cond.value)
+            eval_header_cmp(raw, hname.as_deref(), cond.op, &cond.value, re_ref)
         }
         HttpqlField::ReqLen => {
             let len = item.eval_raw_request().map(|s| s.len() as i64).unwrap_or(0);
@@ -2248,22 +2582,22 @@ fn eval_condition<T: HttpTransactionEvaluable>(cond: &HttpqlCondition, item: &T)
         HttpqlField::RespLen => eval_num_cmp(item.eval_response_length(), cond.op, &cond.value),
         HttpqlField::RespRaw => {
             let raw = item.eval_raw_response().unwrap_or("");
-            eval_str_cmp(raw, cond.op, &cond.value, false)
+            eval_str_cmp(raw, cond.op, &cond.value, false, re_ref)
         }
         HttpqlField::RespBody => {
             let raw = item.eval_raw_response().unwrap_or("");
             let (_, body) = crate::ares_utils::parse::split_message(raw);
-            eval_str_cmp(body, cond.op, &cond.value, false)
+            eval_str_cmp(body, cond.op, &cond.value, false, re_ref)
         }
         HttpqlField::RespHeader(hname) => {
             let raw = item.eval_raw_response().unwrap_or("");
-            eval_header_cmp(raw, hname.as_deref(), cond.op, &cond.value)
+            eval_header_cmp(raw, hname.as_deref(), cond.op, &cond.value, re_ref)
         }
         HttpqlField::RespExt => {
             let ext = item.eval_ext().unwrap_or("").trim_start_matches('.');
-            eval_str_cmp(ext, cond.op, &cond.value, true)
+            eval_str_cmp(ext, cond.op, &cond.value, true, re_ref)
         }
-        HttpqlField::RespState => eval_str_cmp(item.eval_state(), cond.op, &cond.value, false),
+        HttpqlField::RespState => eval_str_cmp(item.eval_state(), cond.op, &cond.value, false, re_ref),
         HttpqlField::Preset => {
             let val_str = val_as_string(&cond.value).to_lowercase();
             let preset_name = val_str.replace('_', "-");
@@ -2314,12 +2648,18 @@ fn eval_condition<T: HttpTransactionEvaluable>(cond: &HttpqlCondition, item: &T)
         }
         HttpqlField::Payload => {
             let p = item.eval_payload().unwrap_or("");
-            eval_str_cmp(p, cond.op, &cond.value, false)
+            eval_str_cmp(p, cond.op, &cond.value, false, re_ref)
         }
     }
 }
 
-fn eval_str_cmp(val: &str, op: HttpqlOperator, expected: &HttpqlValue, case_insensitive: bool) -> bool {
+fn eval_str_cmp(
+    val: &str,
+    op: HttpqlOperator,
+    expected: &HttpqlValue,
+    case_insensitive: bool,
+    compiled_regex: Option<&Regex>,
+) -> bool {
     let val_cmp = if case_insensitive {
         val.to_lowercase()
     } else {
@@ -2456,35 +2796,51 @@ fn eval_str_cmp(val: &str, op: HttpqlOperator, expected: &HttpqlValue, case_inse
             }
         },
         HttpqlOperator::Like => {
-            let pattern = val_as_string(expected);
-            if let Ok(re) = sql_like_to_regex(&pattern) {
+            if let Some(re) = compiled_regex {
                 re.is_match(val)
             } else {
-                val.to_lowercase().contains(&pattern.to_lowercase())
+                let pattern = val_as_string(expected);
+                if let Ok(re) = sql_like_to_regex(&pattern) {
+                    re.is_match(val)
+                } else {
+                    val.to_lowercase().contains(&pattern.to_lowercase())
+                }
             }
         }
         HttpqlOperator::Nlike => {
-            let pattern = val_as_string(expected);
-            if let Ok(re) = sql_like_to_regex(&pattern) {
+            if let Some(re) = compiled_regex {
                 !re.is_match(val)
             } else {
-                !val.to_lowercase().contains(&pattern.to_lowercase())
+                let pattern = val_as_string(expected);
+                if let Ok(re) = sql_like_to_regex(&pattern) {
+                    !re.is_match(val)
+                } else {
+                    !val.to_lowercase().contains(&pattern.to_lowercase())
+                }
             }
         }
         HttpqlOperator::Regex => {
-            let exp_str = val_as_string(expected);
-            if let Ok(re) = Regex::new(&exp_str) {
+            if let Some(re) = compiled_regex {
                 re.is_match(val)
             } else {
-                val.contains(&exp_str)
+                let exp_str = val_as_string(expected);
+                if let Ok(re) = Regex::new(&exp_str) {
+                    re.is_match(val)
+                } else {
+                    val.contains(&exp_str)
+                }
             }
         }
         HttpqlOperator::Nregex => {
-            let exp_str = val_as_string(expected);
-            if let Ok(re) = Regex::new(&exp_str) {
+            if let Some(re) = compiled_regex {
                 !re.is_match(val)
             } else {
-                !val.contains(&exp_str)
+                let exp_str = val_as_string(expected);
+                if let Ok(re) = Regex::new(&exp_str) {
+                    !re.is_match(val)
+                } else {
+                    !val.contains(&exp_str)
+                }
             }
         }
         HttpqlOperator::Gt => val_cmp > val_as_string(expected).to_lowercase(),
@@ -2522,7 +2878,13 @@ fn eval_num_cmp(val: i64, op: HttpqlOperator, expected: &HttpqlValue) -> bool {
     }
 }
 
-fn eval_header_cmp(raw: &str, header_name: Option<&str>, op: HttpqlOperator, expected: &HttpqlValue) -> bool {
+fn eval_header_cmp(
+    raw: &str,
+    header_name: Option<&str>,
+    op: HttpqlOperator,
+    expected: &HttpqlValue,
+    compiled_regex: Option<&Regex>,
+) -> bool {
     let (head, _) = split_message(raw);
     let hname = match header_name {
         Some(name) => name.to_lowercase(),
@@ -2530,13 +2892,13 @@ fn eval_header_cmp(raw: &str, header_name: Option<&str>, op: HttpqlOperator, exp
     };
 
     if hname.is_empty() {
-        return eval_str_cmp(head, op, expected, true);
+        return eval_str_cmp(head, op, expected, true, compiled_regex);
     }
 
     for line in head.lines().skip(1) {
         if let Some((k, v)) = line.split_once(':') {
             if k.trim().eq_ignore_ascii_case(&hname) {
-                if eval_str_cmp(v.trim(), op, expected, true) {
+                if eval_str_cmp(v.trim(), op, expected, true, compiled_regex) {
                     return true;
                 }
             }
@@ -2641,6 +3003,7 @@ mod tests {
                 field: HttpqlField::ReqMethod,
                 op: HttpqlOperator::Eq,
                 value: HttpqlValue::String("POST".to_string()),
+                compiled_regex: None,
             })
         );
     }
@@ -2657,6 +3020,7 @@ mod tests {
                         field: HttpqlField::RespCode,
                         op: HttpqlOperator::Ge,
                         value: HttpqlValue::Number(400),
+                        compiled_regex: None,
                     })
                 );
                 assert_eq!(
@@ -2665,6 +3029,7 @@ mod tests {
                         field: HttpqlField::ReqExt,
                         op: HttpqlOperator::Nin,
                         value: HttpqlValue::List(vec!["png".to_string(), "jpg".to_string()]),
+                        compiled_regex: None,
                     })
                 );
             }
@@ -2681,6 +3046,7 @@ mod tests {
                 field: HttpqlField::ReqHeader(Some("content-type".to_string())),
                 op: HttpqlOperator::Cont,
                 value: HttpqlValue::String("json".to_string()),
+                compiled_regex: None,
             })
         );
     }
@@ -2801,6 +3167,7 @@ mod tests {
                 field: HttpqlField::RespCode,
                 op: HttpqlOperator::Eq,
                 value: HttpqlValue::Number(200),
+                compiled_regex: None,
             })
         );
 
@@ -2811,6 +3178,7 @@ mod tests {
                 field: HttpqlField::ReqMethod,
                 op: HttpqlOperator::Eq,
                 value: HttpqlValue::String("POST".to_string()),
+                compiled_regex: None,
             })
         );
     }
@@ -2929,5 +3297,107 @@ mod tests {
 
         let q_eval = parse_httpql("resp.code:200 and resp.header[\"server\"].cont:\"nginx\" and resp.body.cont:\"secret_123\" and payload:\"fuzz_target\"").unwrap().unwrap();
         assert!(q_eval.evaluate(&item));
+    }
+
+    #[test]
+    fn test_ast_simplification() {
+        // Double negation
+        let expr1 = parse_httpql("not not resp.code:200").unwrap().unwrap();
+        assert_eq!(
+            expr1,
+            HttpqlExpr::Condition(HttpqlCondition {
+                field: HttpqlField::RespCode,
+                op: HttpqlOperator::Eq,
+                value: HttpqlValue::Number(200),
+                compiled_regex: None,
+            })
+        );
+
+        // Same-operator flattening: A and (B and C) -> A and B and C
+        let expr2 = parse_httpql("resp.code:200 and (resp.len:100 and resp.time:50)").unwrap().unwrap();
+        match expr2 {
+            HttpqlExpr::And(items) => {
+                assert_eq!(items.len(), 3);
+            }
+            _ => panic!("Expected flattened AND with 3 items"),
+        }
+
+        // Same-operator flattening: A or (B or C) -> A or B or C
+        let expr3 = parse_httpql("resp.code:200 or (resp.code:404 or resp.code:500)").unwrap().unwrap();
+        match expr3 {
+            HttpqlExpr::Or(items) => {
+                assert_eq!(items.len(), 3);
+            }
+            _ => panic!("Expected flattened OR with 3 items"),
+        }
+    }
+
+    #[test]
+    fn test_cost_ordering_and_precompiled_regex() {
+        let mut expr = parse_httpql("resp.body.regex:\"error.*\" and resp.code:200 and req.header[\"user-agent\"]:\"Mozilla\"").unwrap().unwrap();
+        // Verify precompiled regex exists
+        match &expr {
+            HttpqlExpr::And(items) => {
+                match &items[0] {
+                    HttpqlExpr::Condition(c) => assert!(c.compiled_regex.is_some(), "Regex must be precompiled"),
+                    _ => panic!("Expected condition"),
+                }
+            }
+            _ => panic!("Expected AND"),
+        }
+
+        // Optimize evaluation order: cheapest first (resp.code: 1, req.header: 15, regex: 500)
+        expr.optimize_evaluation_order();
+        match &expr {
+            HttpqlExpr::And(items) => {
+                assert_eq!(items.len(), 3);
+                match &items[0] {
+                    HttpqlExpr::Condition(c) => assert_eq!(c.field, HttpqlField::RespCode),
+                    _ => panic!("First item should be RespCode"),
+                }
+                match &items[1] {
+                    HttpqlExpr::Condition(c) => assert!(matches!(c.field, HttpqlField::ReqHeader(_))),
+                    _ => panic!("Second item should be ReqHeader"),
+                }
+                match &items[2] {
+                    HttpqlExpr::Condition(c) => assert_eq!(c.field, HttpqlField::RespBody),
+                    _ => panic!("Third item should be RespBody regex"),
+                }
+            }
+            _ => panic!("Expected AND"),
+        }
+    }
+
+    #[test]
+    fn test_fuzzer_sql_pushdown_soundness() {
+        // 1. Negated FTS: must emit 1=1 instead of dropping chunks
+        let q_neg_fts = parse_httpql("not resp.raw.cont:\"error\"").unwrap().unwrap();
+        let mut b1 = sqlx::QueryBuilder::<sqlx::Sqlite>::new("SELECT * FROM fuzzer_requests WHERE ");
+        compile_fuzzer_httpql_to_sql(&mut b1, &q_neg_fts, None, None);
+        assert_eq!(b1.sql(), "SELECT * FROM fuzzer_requests WHERE 1=1");
+
+        // 2. Negated exact column: must emit NOT (status_code = ?)
+        let q_neg_exact = parse_httpql("not resp.code:404").unwrap().unwrap();
+        let mut b2 = sqlx::QueryBuilder::<sqlx::Sqlite>::new("SELECT * FROM fuzzer_requests WHERE ");
+        compile_fuzzer_httpql_to_sql(&mut b2, &q_neg_exact, None, None);
+        assert!(b2.sql().as_str().contains("NOT (status_code = ?)"));
+
+        // 3. OR pushdown with unconstrained branch: must emit 1=1
+        let q_or_unconstrained = parse_httpql("resp.code:200 or resp.header[\"server\"].regex:\"nginx.*\"").unwrap().unwrap();
+        let mut b3 = sqlx::QueryBuilder::<sqlx::Sqlite>::new("SELECT * FROM fuzzer_requests WHERE ");
+        compile_fuzzer_httpql_to_sql(&mut b3, &q_or_unconstrained, None, None);
+        assert_eq!(b3.sql(), "SELECT * FROM fuzzer_requests WHERE 1=1");
+
+        // 4. OR pushdown with exact branches: must emit (status_code = ? OR status_code = ?)
+        let q_or_exact = parse_httpql("resp.code:200 or resp.code:404").unwrap().unwrap();
+        let mut b4 = sqlx::QueryBuilder::<sqlx::Sqlite>::new("SELECT * FROM fuzzer_requests WHERE ");
+        compile_fuzzer_httpql_to_sql(&mut b4, &q_or_exact, None, None);
+        assert!(b4.sql().as_str().contains("status_code = ? OR status_code = ?"));
+
+        // 5. AND with exact column and negated FTS: exact column pushes down, negated FTS emits 1=1
+        let q_and_mixed = parse_httpql("resp.code:200 and not resp.body.cont:\"secret\"").unwrap().unwrap();
+        let mut b5 = sqlx::QueryBuilder::<sqlx::Sqlite>::new("SELECT * FROM fuzzer_requests WHERE ");
+        compile_fuzzer_httpql_to_sql(&mut b5, &q_and_mixed, None, None);
+        assert!(b5.sql().as_str().contains("status_code = ? AND 1=1"));
     }
 }
