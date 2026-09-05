@@ -1383,15 +1383,34 @@ fn compile_fuzzer_httpql_to_sql_inner(
 }
 
 pub fn has_response_content_checks(expr: &HttpqlExpr) -> bool {
+    has_in_memory_checks(expr, None, None)
+}
+
+pub fn has_in_memory_checks(
+    expr: &HttpqlExpr,
+    raw_template_req: Option<&str>,
+    target_url: Option<&str>,
+) -> bool {
     match expr {
         HttpqlExpr::Condition(cond) => match &cond.field {
-            HttpqlField::RespRaw | HttpqlField::RespBody | HttpqlField::RespHeader(_) => true,
-            _ => false,
+            HttpqlField::RespRaw
+            | HttpqlField::RespBody
+            | HttpqlField::RespHeader(_)
+            | HttpqlField::ReqRaw
+            | HttpqlField::ReqBody
+            | HttpqlField::ReqHeader(_) => true,
+            _ => matches!(cond.op, HttpqlOperator::Regex | HttpqlOperator::Nregex),
         },
         HttpqlExpr::Bare(_) => true,
-        HttpqlExpr::Not(inner) => has_response_content_checks(inner),
-        HttpqlExpr::And(list) | HttpqlExpr::Or(list) => {
-            list.iter().any(has_response_content_checks)
+        HttpqlExpr::Not(inner) => has_in_memory_checks(inner, raw_template_req, target_url),
+        HttpqlExpr::And(list) => {
+            list.iter().any(|item| has_in_memory_checks(item, raw_template_req, target_url))
+        }
+        HttpqlExpr::Or(list) => {
+            list.iter().any(|item| {
+                has_in_memory_checks(item, raw_template_req, target_url)
+                    || item.is_pushdown_unconstrained(raw_template_req, target_url, false)
+            })
         }
     }
 }
@@ -1421,7 +1440,29 @@ fn compile_fuzzer_condition_to_sql_inner(
                 compile_num_field(builder, "sort_order", cond.op, &cond.value);
             }
             HttpqlField::Payload => {
-                compile_str_field(builder, "COALESCE(payload, '')", cond.op, &cond.value, false);
+                match cond.op {
+                    HttpqlOperator::Eq => {
+                        let val = val_as_string(&cond.value);
+                        let json_pattern = format!("%\"{}\"%", val.replace('"', "\"\""));
+                        builder.push("(payload = ");
+                        builder.push_bind(val);
+                        builder.push(" OR payload LIKE ");
+                        builder.push_bind(json_pattern);
+                        builder.push(")");
+                    }
+                    HttpqlOperator::Ne => {
+                        let val = val_as_string(&cond.value);
+                        let json_pattern = format!("%\"{}\"%", val.replace('"', "\"\""));
+                        builder.push("(COALESCE(payload, '') != ");
+                        builder.push_bind(val);
+                        builder.push(" AND COALESCE(payload, '') NOT LIKE ");
+                        builder.push_bind(json_pattern);
+                        builder.push(")");
+                    }
+                    _ => {
+                        compile_str_field(builder, "COALESCE(payload, '')", cond.op, &cond.value, false);
+                    }
+                }
             }
             HttpqlField::ReqCreatedAt => {
                 let s = val_as_string(&cond.value);
@@ -2648,6 +2689,18 @@ fn eval_condition<T: HttpTransactionEvaluable>(cond: &HttpqlCondition, item: &T)
         }
         HttpqlField::Payload => {
             let p = item.eval_payload().unwrap_or("");
+            if p.starts_with('[') && p.ends_with(']') {
+                if let Ok(arr) = serde_json::from_str::<Vec<String>>(p) {
+                    let exp_str = val_as_string(&cond.value);
+                    match cond.op {
+                        HttpqlOperator::Eq => return arr.iter().any(|v| v == &exp_str),
+                        HttpqlOperator::Ne => return !arr.iter().any(|v| v == &exp_str),
+                        HttpqlOperator::Cont => return arr.iter().any(|v| v.contains(&exp_str)),
+                        HttpqlOperator::Ncont => return !arr.iter().any(|v| v.contains(&exp_str)),
+                        _ => {}
+                    }
+                }
+            }
             eval_str_cmp(p, cond.op, &cond.value, false, re_ref)
         }
     }

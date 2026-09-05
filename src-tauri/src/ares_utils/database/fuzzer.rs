@@ -781,6 +781,187 @@ pub async fn fetch_fuzzer_chunk_responses(
     Ok(arc)
 }
 
+pub fn sort_fuzzer_db_rows_in_place(rows: &mut [FuzzerRequestDb], sort_by: Option<&str>, is_desc: bool) {
+    match sort_by {
+        Some("statusCode") | Some("responseCode") => {
+            rows.sort_by(|a, b| {
+                let cmp = match (a.status_code, b.status_code) {
+                    (Some(x), Some(y)) => x.cmp(&y),
+                    (Some(_), None) => std::cmp::Ordering::Less,
+                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                    (None, None) => a.sort_order.cmp(&b.sort_order),
+                };
+                if is_desc { cmp.reverse() } else { cmp }
+            });
+        }
+        Some("duration") => {
+            rows.sort_by(|a, b| {
+                let cmp = match (a.response_time_ms, b.response_time_ms) {
+                    (Some(x), Some(y)) => x.cmp(&y),
+                    (Some(_), None) => std::cmp::Ordering::Less,
+                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                    (None, None) => a.sort_order.cmp(&b.sort_order),
+                };
+                if is_desc { cmp.reverse() } else { cmp }
+            });
+        }
+        Some("length") => {
+            rows.sort_by(|a, b| {
+                let cmp = match (a.response_length, b.response_length) {
+                    (Some(x), Some(y)) => x.cmp(&y),
+                    (Some(_), None) => std::cmp::Ordering::Less,
+                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                    (None, None) => a.sort_order.cmp(&b.sort_order),
+                };
+                if is_desc { cmp.reverse() } else { cmp }
+            });
+        }
+        Some("status") => {
+            rows.sort_by(|a, b| {
+                let err_a = a.error_message.is_some() || a.connection_dropped;
+                let err_b = b.error_message.is_some() || b.connection_dropped;
+                let cmp = err_a.cmp(&err_b).then_with(|| a.sort_order.cmp(&b.sort_order));
+                if is_desc { cmp.reverse() } else { cmp }
+            });
+        }
+        Some("payload") | Some("payloadPreview") => {
+            rows.sort_by(|a, b| {
+                let p_a = a.payload.as_deref().unwrap_or("");
+                let p_b = b.payload.as_deref().unwrap_or("");
+                let cmp = p_a.cmp(p_b).then_with(|| a.sort_order.cmp(&b.sort_order));
+                if is_desc { cmp.reverse() } else { cmp }
+            });
+        }
+        Some("requestDate") => {
+            rows.sort_by(|a, b| {
+                let cmp = a.request_date.cmp(&b.request_date).then_with(|| a.sort_order.cmp(&b.sort_order));
+                if is_desc { cmp.reverse() } else { cmp }
+            });
+        }
+        Some("id") => {
+            rows.sort_by(|a, b| {
+                let cmp = a.sort_order.cmp(&b.sort_order);
+                if is_desc { cmp.reverse() } else { cmp }
+            });
+        }
+        _ => {
+            rows.sort_by_key(|r| r.sort_order);
+            if is_desc {
+                rows.reverse();
+            }
+        }
+    }
+}
+
+pub async fn query_fuzzer_requests_all_matching(
+    pool: &SqlitePool,
+    run_id: &str,
+    httpql_expr: Option<&crate::ares_utils::httpql::HttpqlExpr>,
+    raw_template_req: Option<&str>,
+    target_url: Option<&str>,
+) -> Result<Vec<FuzzerRequestDb>, String> {
+    let mut builder =
+        sqlx::QueryBuilder::<sqlx::Sqlite>::new("SELECT * FROM fuzzer_requests WHERE run_id = ");
+    builder.push_bind(run_id);
+    if let Some(expr) = httpql_expr {
+        builder.push(" AND ");
+        crate::ares_utils::httpql::compile_fuzzer_httpql_to_sql(&mut builder, expr, raw_template_req, target_url);
+    }
+    builder.push(" ORDER BY sort_order ASC");
+
+    let candidates = builder
+        .build_query_as::<FuzzerRequestDb>()
+        .fetch_all(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let (tmpl_method, tmpl_path) = raw_template_req
+        .map(|r| {
+            let meta = crate::ares_utils::parse::parse_request_line(r.as_bytes());
+            (meta.method, meta.path)
+        })
+        .unwrap_or((String::new(), String::new()));
+
+    let tmpl_host = target_url
+        .and_then(|u| url::Url::parse(u).ok())
+        .and_then(|url| url.host_str().map(String::from))
+        .unwrap_or_default();
+
+    let is_https = target_url.map_or(false, |u| u.starts_with("https://"));
+
+    let mut chunk_groups: std::collections::BTreeMap<i64, Vec<FuzzerRequestDb>> = std::collections::BTreeMap::new();
+    let mut no_chunk_rows: Vec<FuzzerRequestDb> = Vec::new();
+
+    for row in candidates {
+        match row.chunk_id {
+            Some(cid) => chunk_groups.entry(cid).or_default().push(row),
+            None => no_chunk_rows.push(row),
+        }
+    }
+
+    let mut filtered = Vec::new();
+
+    for row in no_chunk_rows {
+        let item = crate::ares_utils::httpql::FuzzerEvaluableItem {
+            id: row.sort_order as u32,
+            method: &tmpl_method,
+            host: &tmpl_host,
+            path: &tmpl_path,
+            query: None,
+            ext: None,
+            status_code: row.status_code.unwrap_or(0),
+            response_length: row.response_length.unwrap_or(0),
+            response_time_ms: row.response_time_ms.unwrap_or(0),
+            sent_at_ms: row.request_date,
+            state: if row.error_message.is_some() || row.connection_dropped { "error" } else { "pending" },
+            is_https,
+            raw_request: raw_template_req,
+            raw_response: None,
+            payload: row.payload.as_deref(),
+        };
+        if let Some(expr) = httpql_expr {
+            if expr.evaluate(&item) {
+                filtered.push(row);
+            }
+        }
+    }
+
+    for (cid, rows) in chunk_groups {
+        if let Ok(resps) = fetch_fuzzer_chunk_responses(pool, cid).await {
+            for row in rows {
+                if let Some(cidx) = row.chunk_index {
+                    if let Some(raw_resp) = resps.get(cidx as usize) {
+                        let item = crate::ares_utils::httpql::FuzzerEvaluableItem {
+                            id: row.sort_order as u32,
+                            method: &tmpl_method,
+                            host: &tmpl_host,
+                            path: &tmpl_path,
+                            query: None,
+                            ext: None,
+                            status_code: row.status_code.unwrap_or(0),
+                            response_length: row.response_length.unwrap_or(0),
+                            response_time_ms: row.response_time_ms.unwrap_or(0),
+                            sent_at_ms: row.request_date,
+                            state: "completed",
+                            is_https,
+                            raw_request: raw_template_req,
+                            raw_response: Some(raw_resp.as_str()),
+                            payload: row.payload.as_deref(),
+                        };
+                        if let Some(expr) = httpql_expr {
+                            if expr.evaluate(&item) {
+                                filtered.push(row);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(filtered)
+}
+
 /// Query window of fuzzer requests directly from SQLite with server-side sorting and two-stage HTTPQL filtering
 pub async fn query_fuzzer_requests_window(
     pool: &SqlitePool,
@@ -816,108 +997,15 @@ pub async fn query_fuzzer_requests_window(
     };
 
     if needs_memory_filter {
-        let mut builder =
-            sqlx::QueryBuilder::<sqlx::Sqlite>::new("SELECT * FROM fuzzer_requests WHERE run_id = ");
-        builder.push_bind(run_id);
-        if let Some(expr) = httpql_expr {
-            builder.push(" AND ");
-            crate::ares_utils::httpql::compile_fuzzer_httpql_to_sql(&mut builder, expr, raw_template_req, target_url);
-        }
-        builder.push(" ORDER BY ");
-        builder.push(order_clause);
+        let mut filtered = query_fuzzer_requests_all_matching(
+            pool,
+            run_id,
+            httpql_expr,
+            raw_template_req,
+            target_url,
+        ).await?;
 
-        let candidates = builder
-            .build_query_as::<FuzzerRequestDb>()
-            .fetch_all(pool)
-            .await
-            .map_err(|e| e.to_string())?;
-
-        let (tmpl_method, tmpl_path) = raw_template_req
-            .map(|r| {
-                let meta = crate::ares_utils::parse::parse_request_line(r.as_bytes());
-                (meta.method, meta.path)
-            })
-            .unwrap_or((String::new(), String::new()));
-
-        let tmpl_host = target_url
-            .and_then(|u| url::Url::parse(u).ok())
-            .and_then(|url| url.host_str().map(String::from))
-            .unwrap_or_default();
-
-        let is_https = target_url.map_or(false, |u| u.starts_with("https://"));
-
-        let mut local_chunk_map: std::collections::HashMap<i64, std::sync::Arc<Vec<String>>> = std::collections::HashMap::new();
-        let mut filtered = Vec::new();
-
-        for row in candidates {
-            let mut match_found = false;
-            if let (Some(cid), Some(cidx)) = (row.chunk_id, row.chunk_index) {
-                let responses = if let Some(resps) = local_chunk_map.get(&cid) {
-                    Some(resps)
-                } else {
-                    if let Ok(resps) = fetch_fuzzer_chunk_responses(pool, cid).await {
-                        local_chunk_map.insert(cid, resps);
-                        local_chunk_map.get(&cid)
-                    } else {
-                        None
-                    }
-                };
-
-                if let Some(resps) = responses {
-                    if let Some(raw_resp) = resps.get(cidx as usize) {
-                        let item = crate::ares_utils::httpql::FuzzerEvaluableItem {
-                            id: row.sort_order as u32,
-                            method: &tmpl_method,
-                            host: &tmpl_host,
-                            path: &tmpl_path,
-                            query: None,
-                            ext: None,
-                            status_code: row.status_code.unwrap_or(0),
-                            response_length: row.response_length.unwrap_or(0),
-                            response_time_ms: row.response_time_ms.unwrap_or(0),
-                            sent_at_ms: row.request_date,
-                            state: "completed",
-                            is_https,
-                            raw_request: raw_template_req,
-                            raw_response: Some(raw_resp.as_str()),
-                            payload: row.payload.as_deref(),
-                        };
-                        if let Some(expr) = httpql_expr {
-                            if expr.evaluate(&item) {
-                                match_found = true;
-                            }
-                        }
-                    }
-                }
-            } else {
-                let item = crate::ares_utils::httpql::FuzzerEvaluableItem {
-                    id: row.sort_order as u32,
-                    method: &tmpl_method,
-                    host: &tmpl_host,
-                    path: &tmpl_path,
-                    query: None,
-                    ext: None,
-                    status_code: row.status_code.unwrap_or(0),
-                    response_length: row.response_length.unwrap_or(0),
-                    response_time_ms: row.response_time_ms.unwrap_or(0),
-                    sent_at_ms: row.request_date,
-                    state: if row.error_message.is_some() || row.connection_dropped { "error" } else { "pending" },
-                    is_https,
-                    raw_request: raw_template_req,
-                    raw_response: None,
-                    payload: row.payload.as_deref(),
-                };
-                if let Some(expr) = httpql_expr {
-                    if expr.evaluate(&item) {
-                        match_found = true;
-                    }
-                }
-            }
-
-            if match_found {
-                filtered.push(row);
-            }
-        }
+        sort_fuzzer_db_rows_in_place(&mut filtered, sort_by, is_desc);
 
         let total = filtered.len();
         let window_rows = filtered.into_iter().skip(offset).take(limit).collect();

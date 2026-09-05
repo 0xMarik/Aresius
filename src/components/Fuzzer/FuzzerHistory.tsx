@@ -293,10 +293,6 @@ export const fuzzerColumns: ColumnDef<EnrichedFuzzerRow, any>[] = [
 
 
 
-export const fuzzerSearchFn = (row: EnrichedFuzzerRow, q: string) =>
-    row.status.toLowerCase().includes(q) ||
-    row.payloadPreview.toLowerCase().includes(q) ||
-    String(row.statusCode ?? '').includes(q);
 
 interface ParamsType {
     isLoading: boolean;
@@ -379,6 +375,7 @@ function FuzzerHistoryBody({
 
     const handleHttpqlChange = useCallback((query: string) => {
         setHttpqlQuery(query);
+        setIsSearching(true);
         setWindowState((prev) => ({ ...prev, offset: 0 }));
     }, []);
 
@@ -441,7 +438,14 @@ function FuzzerHistoryBody({
                 }
             })
             .catch(() => {
-                if (!canceled) setIsSearching(false);
+                if (!canceled) {
+                    setIsSearching(false);
+                    setWindowState((prev) => ({
+                        ...prev,
+                        items: [],
+                        totalFromBackend: 0,
+                    }));
+                }
             });
 
         return () => {

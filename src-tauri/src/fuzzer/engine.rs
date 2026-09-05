@@ -53,6 +53,96 @@ fn fuzz_store() -> &'static Mutex<HashMap<String, FuzzerRunData>> {
     FUZZ_STORE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+#[derive(Clone)]
+struct CachedSearch {
+    key: String,
+    rows: Vec<FuzzerRequestRow>,
+    #[allow(dead_code)]
+    last_accessed: std::time::Instant,
+}
+
+static SEARCH_CACHE: OnceLock<Mutex<VecDeque<CachedSearch>>> = OnceLock::new();
+
+fn search_cache() -> &'static Mutex<VecDeque<CachedSearch>> {
+    SEARCH_CACHE.get_or_init(|| Mutex::new(VecDeque::with_capacity(10)))
+}
+
+pub async fn invalidate_fuzzer_search_cache(session: u32, history: u32) {
+    let prefix = format!("{}:{}:", session, history);
+    let mut cache = search_cache().lock().await;
+    cache.retain(|item| !item.key.starts_with(&prefix));
+}
+
+pub fn sort_fuzzer_rows_in_place(rows: &mut [FuzzerRequestRow], sort_by: Option<&str>, is_desc: bool) {
+    match sort_by {
+        Some("statusCode") | Some("responseCode") => {
+            rows.sort_by(|a, b| {
+                let cmp = match (a.status_code, b.status_code) {
+                    (Some(x), Some(y)) => x.cmp(&y),
+                    (Some(_), None) => std::cmp::Ordering::Less,
+                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                    (None, None) => a.id.cmp(&b.id),
+                };
+                if is_desc { cmp.reverse() } else { cmp }
+            });
+        }
+        Some("duration") => {
+            rows.sort_by(|a, b| {
+                let cmp = match (a.response_time_ms, b.response_time_ms) {
+                    (Some(x), Some(y)) => x.cmp(&y),
+                    (Some(_), None) => std::cmp::Ordering::Less,
+                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                    (None, None) => a.id.cmp(&b.id),
+                };
+                if is_desc { cmp.reverse() } else { cmp }
+            });
+        }
+        Some("length") => {
+            rows.sort_by(|a, b| {
+                let cmp = match (a.response_length, b.response_length) {
+                    (Some(x), Some(y)) => x.cmp(&y),
+                    (Some(_), None) => std::cmp::Ordering::Less,
+                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                    (None, None) => a.id.cmp(&b.id),
+                };
+                if is_desc { cmp.reverse() } else { cmp }
+            });
+        }
+        Some("status") => {
+            rows.sort_by(|a, b| {
+                let cmp = a.status.cmp(&b.status).then_with(|| a.id.cmp(&b.id));
+                if is_desc { cmp.reverse() } else { cmp }
+            });
+        }
+        Some("payload") | Some("payloadPreview") => {
+            rows.sort_by(|a, b| {
+                let p_a = a.payload.as_deref().unwrap_or("");
+                let p_b = b.payload.as_deref().unwrap_or("");
+                let cmp = p_a.cmp(p_b).then_with(|| a.id.cmp(&b.id));
+                if is_desc { cmp.reverse() } else { cmp }
+            });
+        }
+        Some("requestDate") => {
+            rows.sort_by(|a, b| {
+                let cmp = a.request_date.cmp(&b.request_date).then_with(|| a.id.cmp(&b.id));
+                if is_desc { cmp.reverse() } else { cmp }
+            });
+        }
+        Some("id") => {
+            rows.sort_by(|a, b| {
+                let cmp = a.id.cmp(&b.id);
+                if is_desc { cmp.reverse() } else { cmp }
+            });
+        }
+        _ => {
+            rows.sort_by_key(|r| r.id);
+            if is_desc {
+                rows.reverse();
+            }
+        }
+    }
+}
+
 pub async fn init_fuzz_store(
     session: u32,
     history: u32,
@@ -60,6 +150,7 @@ pub async fn init_fuzz_store(
     config_snapshot: Option<crate::types::SessionPayload>,
 ) {
     let key = run_key(session, history);
+    invalidate_fuzzer_search_cache(session, history).await;
     let mut id_map = HashMap::with_capacity(targets.len());
     let mut rows = Vec::with_capacity(targets.len());
 
@@ -209,14 +300,52 @@ pub async fn get_fuzzer_history_window(
     show_uncompleted: Option<bool>,
 ) -> Result<FuzzerWindowResult, String> {
     let show_uncompleted_val = show_uncompleted.unwrap_or(false);
-    let parsed_httpql = search_query
+    let is_desc = sort_order
         .as_deref()
-        .and_then(|q| if q.trim().is_empty() { None } else { Some(q) })
-        .and_then(|q| crate::ares_utils::httpql::parse_httpql(q).ok().flatten());
+        .map(|s| s.eq_ignore_ascii_case("desc"))
+        .unwrap_or(false);
+
+    let has_query = search_query
+        .as_deref()
+        .map(|q| !q.trim().is_empty())
+        .unwrap_or(false);
+
+    let parsed_httpql = if has_query {
+        let q_str = search_query.as_deref().unwrap().trim();
+
+        // Load project presets if db available
+        let preset_map: HashMap<String, String> = if let Some(db_state) = app.try_state::<crate::ares_utils::database::DbState>() {
+            if let Ok(pool) = db_state.pool().await {
+                sqlx::query_as::<_, (String, String)>("SELECT alias, expression FROM preset_filters")
+                    .fetch_all(&pool)
+                    .await
+                    .unwrap_or_default()
+                    .into_iter()
+                    .collect()
+            } else {
+                HashMap::new()
+            }
+        } else {
+            HashMap::new()
+        };
+
+        match crate::ares_utils::httpql::parse_httpql_with_presets(q_str, &preset_map) {
+            Ok(Some(expr)) => Some(expr),
+            Ok(None) => None,
+            Err(_) => {
+                // Return 0 results for malformed queries instead of silently falling back to unfiltered
+                return Ok(FuzzerWindowResult { total: 0, items: vec![] });
+            }
+        }
+    } else {
+        None
+    };
 
     let key = run_key(selected_session, fuzz_history);
     let store = fuzz_store().lock().await;
-    if parsed_httpql.is_none() && store.contains_key(&key) {
+
+    // ─── 1. In-Memory Store for Live / Active Runs ─────────────────────────
+    if store.contains_key(&key) {
         let run_data = store.get(&key).unwrap();
         let target_rows: Vec<&FuzzerRequestRow> = if show_uncompleted_val {
             run_data.rows.iter().collect()
@@ -224,160 +353,217 @@ pub async fn get_fuzzer_history_window(
             run_data.rows.iter().filter(|r| r.status == "completed" || r.status == "error").collect()
         };
 
-        let total = target_rows.len();
-        let start = offset.min(total);
-        let end = (offset + limit).min(total);
+        let mut filtered_rows: Vec<FuzzerRequestRow> = if let Some(ref expr) = parsed_httpql {
+            let (tmpl_method, tmpl_path) = run_data.config_snapshot
+                .as_ref()
+                .map(|cfg| {
+                    let meta = crate::ares_utils::parse::parse_request_line(cfg.raw_request.as_bytes());
+                    (meta.method, meta.path)
+                })
+                .unwrap_or((String::new(), String::new()));
 
-        let is_desc = sort_order
-            .as_deref()
-            .map(|s| s.eq_ignore_ascii_case("desc"))
-            .unwrap_or(false);
+            let tmpl_host = run_data.config_snapshot
+                .as_ref()
+                .and_then(|cfg| url::Url::parse(&cfg.metadata.target_url).ok())
+                .and_then(|url| url.host_str().map(String::from))
+                .unwrap_or_default();
 
-        let items: Vec<FuzzerRequestRow> = match sort_by.as_deref() {
-            Some("statusCode") | Some("responseCode") => {
-                let mut indices: Vec<usize> = (0..total).collect();
-                indices.sort_by(|&a, &b| {
-                    let code_a = target_rows[a]
-                        .response
-                        .as_ref()
-                        .and_then(|r| crate::ares_utils::database::fuzzer::parse_status_code(&r.response));
-                    let code_b = target_rows[b]
-                        .response
-                        .as_ref()
-                        .and_then(|r| crate::ares_utils::database::fuzzer::parse_status_code(&r.response));
-                    let cmp = match (code_a, code_b) {
-                        (Some(x), Some(y)) => x.cmp(&y),
-                        (Some(_), None) => std::cmp::Ordering::Less,
-                        (None, Some(_)) => std::cmp::Ordering::Greater,
-                        (None, None) => a.cmp(&b),
-                    };
-                    if is_desc { cmp.reverse() } else { cmp }
-                });
-                indices[start..end].iter().map(|&i| (*target_rows[i]).clone()).collect()
-            }
-            Some("duration") => {
-                let mut indices: Vec<usize> = (0..total).collect();
-                indices.sort_by(|&a, &b| {
-                    let dur_a = target_rows[a].response.as_ref().map(|r| r.response_time);
-                    let dur_b = target_rows[b].response.as_ref().map(|r| r.response_time);
-                    let cmp = match (dur_a, dur_b) {
-                        (Some(x), Some(y)) => x.cmp(&y),
-                        (Some(_), None) => std::cmp::Ordering::Less,
-                        (None, Some(_)) => std::cmp::Ordering::Greater,
-                        (None, None) => a.cmp(&b),
-                    };
-                    if is_desc { cmp.reverse() } else { cmp }
-                });
-                indices[start..end].iter().map(|&i| (*target_rows[i]).clone()).collect()
-            }
-            Some("length") => {
-                let mut indices: Vec<usize> = (0..total).collect();
-                indices.sort_by(|&a, &b| {
-                    let len_a = target_rows[a].response.as_ref().map(|r| r.response.len());
-                    let len_b = target_rows[b].response.as_ref().map(|r| r.response.len());
-                    let cmp = match (len_a, len_b) {
-                        (Some(x), Some(y)) => x.cmp(&y),
-                        (Some(_), None) => std::cmp::Ordering::Less,
-                        (None, Some(_)) => std::cmp::Ordering::Greater,
-                        (None, None) => a.cmp(&b),
-                    };
-                    if is_desc { cmp.reverse() } else { cmp }
-                });
-                indices[start..end].iter().map(|&i| (*target_rows[i]).clone()).collect()
-            }
-            Some("status") => {
-                let mut indices: Vec<usize> = (0..total).collect();
-                indices.sort_by(|&a, &b| {
-                    let st_a = &target_rows[a].status;
-                    let st_b = &target_rows[b].status;
-                    let cmp = st_a.cmp(st_b);
-                    if is_desc { cmp.reverse() } else { cmp }
-                });
-                indices[start..end].iter().map(|&i| (*target_rows[i]).clone()).collect()
-            }
-            Some("payload") | Some("payloadPreview") => {
-                let mut indices: Vec<usize> = (0..total).collect();
-                indices.sort_by(|&a, &b| {
-                    let p_a = target_rows[a].payload.as_deref().unwrap_or("");
-                    let p_b = target_rows[b].payload.as_deref().unwrap_or("");
-                    let cmp = p_a.cmp(p_b);
-                    if is_desc { cmp.reverse() } else { cmp }
-                });
-                indices[start..end].iter().map(|&i| (*target_rows[i]).clone()).collect()
-            }
-            Some("requestDate") => {
-                let mut indices: Vec<usize> = (0..total).collect();
-                indices.sort_by(|&a, &b| {
-                    let d_a = &target_rows[a].request_date;
-                    let d_b = &target_rows[b].request_date;
-                    let cmp = d_a.cmp(d_b);
-                    if is_desc { cmp.reverse() } else { cmp }
-                });
-                indices[start..end].iter().map(|&i| (*target_rows[i]).clone()).collect()
-            }
-            Some("id") => {
-                let mut indices: Vec<usize> = (0..total).collect();
-                if is_desc {
-                    indices.reverse();
-                }
-                indices[start..end].iter().map(|&i| (*target_rows[i]).clone()).collect()
-            }
-            _ => target_rows[start..end].iter().map(|&r| r.clone()).collect(),
+            let is_https = run_data.config_snapshot
+                .as_ref()
+                .map_or(false, |cfg| cfg.metadata.target_url.starts_with("https://"));
+
+            let raw_tmpl = run_data.config_snapshot
+                .as_ref()
+                .map(|cfg| cfg.raw_request.as_str());
+
+            target_rows.into_iter().filter(|r| {
+                let raw_resp_str = r.response.as_ref().map(|resp| resp.response.as_str());
+                let item = crate::ares_utils::httpql::FuzzerEvaluableItem {
+                    id: r.id as u32,
+                    method: &tmpl_method,
+                    host: &tmpl_host,
+                    path: &tmpl_path,
+                    query: None,
+                    ext: None,
+                    status_code: r.status_code.map(|c| c as i64).unwrap_or(0),
+                    response_length: r.response_length.map(|l| l as i64).unwrap_or(0),
+                    response_time_ms: r.response_time_ms.map(|t| t as i64).unwrap_or(0),
+                    sent_at_ms: chrono::DateTime::parse_from_rfc3339(&r.request_date)
+                        .map(|dt| dt.timestamp_millis())
+                        .unwrap_or(0),
+                    state: &r.status,
+                    is_https,
+                    raw_request: raw_tmpl,
+                    raw_response: raw_resp_str,
+                    payload: r.payload.as_deref(),
+                };
+                expr.evaluate(&item)
+            }).cloned().collect()
+        } else {
+            target_rows.into_iter().cloned().collect()
         };
 
+        let total = filtered_rows.len();
+        sort_fuzzer_rows_in_place(&mut filtered_rows, sort_by.as_deref(), is_desc);
+        let start = offset.min(total);
+        let end = (offset + limit).min(total);
+        let items = filtered_rows[start..end].to_vec();
+
         return Ok(FuzzerWindowResult { total, items });
-    } else {
-        // Fallback to SQLite DB
-        if let Some(db_state) = app.try_state::<crate::ares_utils::database::DbState>() {
-            if let Ok(pool) = db_state.pool().await {
-                let run_id = crate::ares_utils::database::fuzzer::resolve_fuzzer_run_id(
-                    &pool,
-                    selected_session as usize,
-                    fuzz_history as usize,
-                )
-                .await;
+    }
 
-                let run_info: Option<(i64, String, Option<String>)> = sqlx::query_as(
-                    "SELECT total, status, config_snapshot FROM fuzzer_runs WHERE id = ?"
-                )
-                .bind(&run_id)
-                .fetch_optional(&pool)
-                .await
-                .unwrap_or(None);
+    drop(store);
 
-                if let Some((total_i64, run_status, config_snapshot_str)) = run_info {
-                    let total = total_i64 as usize;
-                    let config_snapshot: Option<crate::types::SessionPayload> = config_snapshot_str
-                        .and_then(|s| serde_json::from_str(&s).ok());
+    // ─── 2. SQLite Fallback for Persisted History Runs ─────────────────────
+    if let Some(db_state) = app.try_state::<crate::ares_utils::database::DbState>() {
+        if let Ok(pool) = db_state.pool().await {
+            let run_id = crate::ares_utils::database::fuzzer::resolve_fuzzer_run_id(
+                &pool,
+                selected_session as usize,
+                fuzz_history as usize,
+            )
+            .await;
 
-                    let is_default_sort = (sort_by.is_none() || sort_by.as_deref() == Some("id") || sort_by.as_deref() == Some("sortOrder")) && parsed_httpql.is_none();
+            let run_info: Option<(i64, String, Option<String>)> = sqlx::query_as(
+                "SELECT total, status, config_snapshot FROM fuzzer_runs WHERE id = ?"
+            )
+            .bind(&run_id)
+            .fetch_optional(&pool)
+            .await
+            .unwrap_or(None);
 
-                    if show_uncompleted_val && is_default_sort && sort_order.as_deref() != Some("desc") && sort_order.as_deref() != Some("DESC") {
-                        let start = offset.min(total);
-                        let end = (offset + limit).min(total);
-                        let existing_rows = crate::ares_utils::database::fuzzer::fetch_fuzzer_requests_in_range(
-                            &pool,
-                            &run_id,
-                            start as i64,
-                            end as i64,
-                        )
-                        .await
-                        .unwrap_or_default();
+            if let Some((total_i64, run_status, config_snapshot_str)) = run_info {
+                let total = total_i64 as usize;
+                let config_snapshot: Option<crate::types::SessionPayload> = config_snapshot_str
+                    .and_then(|s| serde_json::from_str(&s).ok());
 
-                        let mut existing_map = HashMap::with_capacity(existing_rows.len());
-                        for r in existing_rows {
-                            existing_map.insert(r.sort_order as usize, r);
+                let is_default_sort = (sort_by.is_none() || sort_by.as_deref() == Some("id") || sort_by.as_deref() == Some("sortOrder")) && parsed_httpql.is_none();
+
+                if show_uncompleted_val && is_default_sort && !is_desc {
+                    let start = offset.min(total);
+                    let end = (offset + limit).min(total);
+                    let existing_rows = crate::ares_utils::database::fuzzer::fetch_fuzzer_requests_in_range(
+                        &pool,
+                        &run_id,
+                        start as i64,
+                        end as i64,
+                    )
+                    .await
+                    .unwrap_or_default();
+
+                    let mut existing_map = HashMap::with_capacity(existing_rows.len());
+                    for r in existing_rows {
+                        existing_map.insert(r.sort_order as usize, r);
+                    }
+
+                    let mut items = Vec::with_capacity(end - start);
+                    for idx in start..end {
+                        if let Some(r) = existing_map.remove(&idx) {
+                            let status = if r.error_message.is_some() || r.connection_dropped {
+                                "error".to_string()
+                            } else {
+                                "completed".to_string()
+                            };
+                            items.push(FuzzerRequestRow {
+                                id: r.sort_order as usize,
+                                fuzz_request_id: r.id,
+                                raw_request: None,
+                                payload: r.payload,
+                                response: None,
+                                request_date: chrono::DateTime::from_timestamp_millis(r.request_date)
+                                    .map(|dt| dt.to_rfc3339())
+                                    .unwrap_or_default(),
+                                status,
+                                error_message: r.error_message,
+                                connection_dropped: r.connection_dropped,
+                                worker_id: r.worker_id.map(|w| w as u32),
+                                status_code: r.status_code.map(|c| c as u16),
+                                response_length: r.response_length.map(|l| l as usize),
+                                response_time_ms: r.response_time_ms.map(|t| t as u128),
+                                chunk_id: r.chunk_id,
+                                chunk_index: r.chunk_index,
+                            });
+                        } else {
+                            let (target_id, payload) = if let Some(ref cfg) = config_snapshot {
+                                crate::fuzzer::utils::generate_payload_for_sort_order(cfg, idx)
+                            } else {
+                                (format!("{idx}"), None)
+                            };
+                            let status = if run_status == "running" {
+                                "pending"
+                            } else {
+                                "cancelled"
+                            };
+                            items.push(FuzzerRequestRow {
+                                id: idx,
+                                fuzz_request_id: target_id,
+                                raw_request: None,
+                                payload,
+                                response: None,
+                                request_date: String::new(),
+                                status: status.to_string(),
+                                error_message: None,
+                                connection_dropped: false,
+                                worker_id: None,
+                                status_code: None,
+                                response_length: None,
+                                response_time_ms: None,
+                                chunk_id: None,
+                                chunk_index: None,
+                            });
                         }
+                    }
 
-                        let mut items = Vec::with_capacity(end - start);
-                        for idx in start..end {
-                            if let Some(r) = existing_map.remove(&idx) {
+                    return Ok(FuzzerWindowResult { total, items });
+                } else {
+                    let (raw_template_req, target_url) = config_snapshot
+                        .as_ref()
+                        .map(|cfg| (
+                            Some(cfg.raw_request.as_str()),
+                            Some(cfg.metadata.target_url.as_str()),
+                        ))
+                        .unwrap_or((None, None));
+
+                    let needs_memory_filter = parsed_httpql
+                        .as_ref()
+                        .map_or(false, |expr| crate::ares_utils::httpql::has_in_memory_checks(expr, raw_template_req, target_url));
+
+                    if needs_memory_filter {
+                        // ─── Path B: Content-heavy search using FuzzerSearchCache ────
+                        let query_str = search_query.as_deref().unwrap_or("").trim();
+                        let cache_key = format!("{}:{}:{}", selected_session, fuzz_history, query_str);
+
+                        let cached = {
+                            let mut cache = search_cache().lock().await;
+                            if let Some(pos) = cache.iter().position(|c| c.key == cache_key) {
+                                let mut item = cache.remove(pos).unwrap();
+                                item.last_accessed = std::time::Instant::now();
+                                let rows = item.rows.clone();
+                                cache.push_back(item);
+                                Some(rows)
+                            } else {
+                                None
+                            }
+                        };
+
+                        let mut all_rows = if let Some(rows) = cached {
+                            rows
+                        } else {
+                            let db_rows = crate::ares_utils::database::fuzzer::query_fuzzer_requests_all_matching(
+                                &pool,
+                                &run_id,
+                                parsed_httpql.as_ref(),
+                                raw_template_req,
+                                target_url,
+                            ).await.unwrap_or_default();
+
+                            let converted: Vec<FuzzerRequestRow> = db_rows.into_iter().map(|r| {
                                 let status = if r.error_message.is_some() || r.connection_dropped {
                                     "error".to_string()
                                 } else {
                                     "completed".to_string()
                                 };
-                                items.push(FuzzerRequestRow {
+                                FuzzerRequestRow {
                                     id: r.sort_order as usize,
                                     fuzz_request_id: r.id,
                                     raw_request: None,
@@ -395,49 +581,29 @@ pub async fn get_fuzzer_history_window(
                                     response_time_ms: r.response_time_ms.map(|t| t as u128),
                                     chunk_id: r.chunk_id,
                                     chunk_index: r.chunk_index,
-                                });
-                            } else {
-                                let (target_id, payload) = if let Some(ref cfg) = config_snapshot {
-                                    crate::fuzzer::utils::generate_payload_for_sort_order(cfg, idx)
-                                } else {
-                                    (format!("{idx}"), None)
-                                };
-                                let status = if run_status == "running" {
-                                    "pending"
-                                } else {
-                                    "cancelled"
-                                };
-                                items.push(FuzzerRequestRow {
-                                    id: idx,
-                                    fuzz_request_id: target_id,
-                                    raw_request: None,
-                                    payload,
-                                    response: None,
-                                    request_date: String::new(),
-                                    status: status.to_string(),
-                                    error_message: None,
-                                    connection_dropped: false,
-                                    worker_id: None,
-                                    status_code: None,
-                                    response_length: None,
-                                    response_time_ms: None,
-                                    chunk_id: None,
-                                    chunk_index: None,
-                                });
-                            }
-                        }
+                                }
+                            }).collect();
 
+                            let mut cache = search_cache().lock().await;
+                            if cache.len() >= 10 {
+                                cache.pop_front();
+                            }
+                            cache.push_back(CachedSearch {
+                                key: cache_key,
+                                rows: converted.clone(),
+                                last_accessed: std::time::Instant::now(),
+                            });
+                            converted
+                        };
+
+                        let total = all_rows.len();
+                        sort_fuzzer_rows_in_place(&mut all_rows, sort_by.as_deref(), is_desc);
+                        let start = offset.min(total);
+                        let end = (offset + limit).min(total);
+                        let items = all_rows[start..end].to_vec();
                         return Ok(FuzzerWindowResult { total, items });
                     } else {
-                        let (raw_template_req, target_url) = config_snapshot
-                            .as_ref()
-                            .map(|cfg| (
-                                Some(cfg.raw_request.as_str()),
-                                Some(cfg.metadata.target_url.as_str()),
-                            ))
-                            .unwrap_or((None, None));
-
-                        // Metric sort or HTTPQL query on completed items
+                        // ─── Path A: Pure SQL fast path for metadata queries & sorting ───
                         if let Ok((total, db_rows)) = crate::ares_utils::database::fuzzer::query_fuzzer_requests_window(
                             &pool,
                             &run_id,
@@ -481,8 +647,8 @@ pub async fn get_fuzzer_history_window(
                 }
             }
         }
-        Ok(FuzzerWindowResult { total: 0, items: vec![] })
     }
+    Ok(FuzzerWindowResult { total: 0, items: vec![] })
 }
 
 // ---------------------------------------------------------------------------
@@ -2087,6 +2253,8 @@ pub async fn resend_fuzz_request(
                 status,
                 false,
             );
+
+            invalidate_fuzzer_search_cache(selected_session, fuzz_history).await;
         }
     });
 
