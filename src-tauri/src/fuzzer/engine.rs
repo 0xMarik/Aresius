@@ -303,6 +303,69 @@ pub struct FuzzerWindowResult {
     pub items: Vec<FuzzerRequestRow>,
 }
 
+/// Convert a `FuzzerRequestDb` row into the serialisable `FuzzerRequestRow`
+/// without loading the raw response body (that is handled by the viewer on demand).
+fn db_row_to_request_row(r: &crate::ares_utils::database::fuzzer::FuzzerRequestDb) -> FuzzerRequestRow {
+    let status = if r.error_message.is_some() || r.connection_dropped {
+        "error".to_string()
+    } else {
+        "completed".to_string()
+    };
+    FuzzerRequestRow {
+        id: r.sort_order as usize,
+        fuzz_request_id: r.id.clone(),
+        raw_request: None,
+        payload: r.payload.clone(),
+        response: None,
+        request_date: chrono::DateTime::from_timestamp_millis(r.request_date)
+            .map(|dt| dt.to_rfc3339())
+            .unwrap_or_default(),
+        status,
+        error_message: r.error_message.clone(),
+        connection_dropped: r.connection_dropped,
+        worker_id: r.worker_id.map(|w| w as u32),
+        status_code: r.status_code.map(|c| c as u16),
+        response_length: r.response_length.map(|l| l as usize),
+        response_time_ms: r.response_time_ms.map(|t| t as u128),
+        chunk_id: r.chunk_id,
+        chunk_index: r.chunk_index,
+    }
+}
+
+fn make_uncompleted_request_row(
+    idx: usize,
+    config_snapshot: Option<&crate::types::SessionPayload>,
+    run_status: &str,
+) -> FuzzerRequestRow {
+    let (target_id, payload) = if let Some(cfg) = config_snapshot {
+        crate::fuzzer::utils::generate_payload_for_sort_order(cfg, idx)
+    } else {
+        (format!("{idx}"), None)
+    };
+    let status = if run_status == "running" {
+        "pending"
+    } else {
+        "cancelled"
+    };
+    FuzzerRequestRow {
+        id: idx,
+        fuzz_request_id: target_id,
+        raw_request: None,
+        payload,
+        response: None,
+        request_date: String::new(),
+        status: status.to_string(),
+        error_message: None,
+        connection_dropped: false,
+        worker_id: None,
+        status_code: None,
+        response_length: None,
+        response_time_ms: None,
+        chunk_id: None,
+        chunk_index: None,
+    }
+}
+
 #[tauri::command]
 pub async fn get_fuzzer_history_window(
     app: tauri::AppHandle,
@@ -461,82 +524,133 @@ pub async fn get_fuzzer_history_window(
 
                 let is_default_sort = (sort_by.is_none() || sort_by.as_deref() == Some("id") || sort_by.as_deref() == Some("sortOrder")) && parsed_httpql.is_none();
 
-                if show_uncompleted_val && is_default_sort && !is_desc {
-                    let start = offset.min(total);
-                    let end = (offset + limit).min(total);
-                    let existing_rows = crate::ares_utils::database::fuzzer::fetch_fuzzer_requests_in_range(
-                        &pool,
-                        &run_id,
-                        start as i64,
-                        end as i64,
-                    )
-                    .await
-                    .unwrap_or_default();
+                if show_uncompleted_val {
+                    if is_default_sort {
+                        let start = offset.min(total);
+                        let end = (offset + limit).min(total);
 
-                    let mut existing_map = HashMap::with_capacity(existing_rows.len());
-                    for r in existing_rows {
-                        existing_map.insert(r.sort_order as usize, r);
-                    }
-
-                    let mut items = Vec::with_capacity(end - start);
-                    for idx in start..end {
-                        if let Some(r) = existing_map.remove(&idx) {
-                            let status = if r.error_message.is_some() || r.connection_dropped {
-                                "error".to_string()
-                            } else {
-                                "completed".to_string()
-                            };
-                            items.push(FuzzerRequestRow {
-                                id: r.sort_order as usize,
-                                fuzz_request_id: r.id,
-                                raw_request: None,
-                                payload: r.payload,
-                                response: None,
-                                request_date: chrono::DateTime::from_timestamp_millis(r.request_date)
-                                    .map(|dt| dt.to_rfc3339())
-                                    .unwrap_or_default(),
-                                status,
-                                error_message: r.error_message,
-                                connection_dropped: r.connection_dropped,
-                                worker_id: r.worker_id.map(|w| w as u32),
-                                status_code: r.status_code.map(|c| c as u16),
-                                response_length: r.response_length.map(|l| l as usize),
-                                response_time_ms: r.response_time_ms.map(|t| t as u128),
-                                chunk_id: r.chunk_id,
-                                chunk_index: r.chunk_index,
-                            });
+                        let (min_sort, max_sort) = if !is_desc {
+                            (start as i64, end as i64)
                         } else {
-                            let (target_id, payload) = if let Some(ref cfg) = config_snapshot {
-                                crate::fuzzer::utils::generate_payload_for_sort_order(cfg, idx)
-                            } else {
-                                (format!("{idx}"), None)
-                            };
-                            let status = if run_status == "running" {
-                                "pending"
-                            } else {
-                                "cancelled"
-                            };
-                            items.push(FuzzerRequestRow {
-                                id: idx,
-                                fuzz_request_id: target_id,
-                                raw_request: None,
-                                payload,
-                                response: None,
-                                request_date: String::new(),
-                                status: status.to_string(),
-                                error_message: None,
-                                connection_dropped: false,
-                                worker_id: None,
-                                status_code: None,
-                                response_length: None,
-                                response_time_ms: None,
-                                chunk_id: None,
-                                chunk_index: None,
-                            });
-                        }
-                    }
+                            (
+                                total.saturating_sub(end) as i64,
+                                total.saturating_sub(start) as i64,
+                            )
+                        };
 
-                    return Ok(FuzzerWindowResult { total, items });
+                        let existing_rows = crate::ares_utils::database::fuzzer::fetch_fuzzer_requests_in_range(
+                            &pool,
+                            &run_id,
+                            min_sort,
+                            max_sort,
+                        )
+                        .await
+                        .unwrap_or_default();
+
+                        let mut existing_map = HashMap::with_capacity(existing_rows.len());
+                        for r in existing_rows {
+                            existing_map.insert(r.sort_order as usize, r);
+                        }
+
+                        let mut items = Vec::with_capacity(end - start);
+                        for i in start..end {
+                            let idx = if !is_desc { i } else { total - 1 - i };
+                            if let Some(r) = existing_map.remove(&idx) {
+                                items.push(db_row_to_request_row(&r));
+                            } else {
+                                items.push(make_uncompleted_request_row(
+                                    idx,
+                                    config_snapshot.as_ref(),
+                                    &run_status,
+                                ));
+                            }
+                        }
+
+                        return Ok(FuzzerWindowResult { total, items });
+                    } else {
+                        // Non-default sort or HTTPQL query with show_uncompleted:
+                        let db_rows: Vec<crate::ares_utils::database::fuzzer::FuzzerRequestDb> = sqlx::query_as(
+                            "SELECT * FROM fuzzer_requests WHERE run_id = ? ORDER BY sort_order ASC"
+                        )
+                        .bind(&run_id)
+                        .fetch_all(&pool)
+                        .await
+                        .unwrap_or_default();
+
+                        let mut existing_map = HashMap::with_capacity(db_rows.len());
+                        for r in db_rows {
+                            existing_map.insert(r.sort_order as usize, r);
+                        }
+
+                        let mut all_rows = Vec::with_capacity(total);
+                        for idx in 0..total {
+                            if let Some(r) = existing_map.remove(&idx) {
+                                all_rows.push(db_row_to_request_row(&r));
+                            } else {
+                                all_rows.push(make_uncompleted_request_row(
+                                    idx,
+                                    config_snapshot.as_ref(),
+                                    &run_status,
+                                ));
+                            }
+                        }
+
+                        let mut filtered_rows = if let Some(ref expr) = parsed_httpql {
+                            let (tmpl_method, tmpl_path) = config_snapshot
+                                .as_ref()
+                                .map(|cfg| {
+                                    let meta = crate::ares_utils::parse::parse_request_line(cfg.raw_request.as_bytes());
+                                    (meta.method, meta.path)
+                                })
+                                .unwrap_or((String::new(), String::new()));
+
+                            let tmpl_host = config_snapshot
+                                .as_ref()
+                                .and_then(|cfg| url::Url::parse(&cfg.metadata.target_url).ok())
+                                .and_then(|url| url.host_str().map(String::from))
+                                .unwrap_or_default();
+
+                            let is_https = config_snapshot
+                                .as_ref()
+                                .map_or(false, |cfg| cfg.metadata.target_url.starts_with("https://"));
+
+                            let raw_tmpl = config_snapshot
+                                .as_ref()
+                                .map(|cfg| cfg.raw_request.as_str());
+
+                            all_rows.into_iter().filter(|r| {
+                                let item = crate::ares_utils::httpql::FuzzerEvaluableItem {
+                                    id: r.id as u32,
+                                    method: &tmpl_method,
+                                    host: &tmpl_host,
+                                    path: &tmpl_path,
+                                    query: None,
+                                    ext: None,
+                                    status_code: r.status_code.map(|c| c as i64).unwrap_or(0),
+                                    response_length: r.response_length.map(|l| l as i64).unwrap_or(0),
+                                    response_time_ms: r.response_time_ms.map(|t| t as i64).unwrap_or(0),
+                                    sent_at_ms: chrono::DateTime::parse_from_rfc3339(&r.request_date)
+                                        .map(|dt| dt.timestamp_millis())
+                                        .unwrap_or(0),
+                                    state: &r.status,
+                                    is_https,
+                                    raw_request: raw_tmpl,
+                                    raw_response: None,
+                                    payload: r.payload.as_deref(),
+                                };
+                                expr.evaluate(&item)
+                            }).collect()
+                        } else {
+                            all_rows
+                        };
+
+                        let total = filtered_rows.len();
+                        sort_fuzzer_rows_in_place(&mut filtered_rows, sort_by.as_deref(), is_desc);
+                        let start = offset.min(total);
+                        let end = (offset + limit).min(total);
+                        let items = filtered_rows[start..end].to_vec();
+                        return Ok(FuzzerWindowResult { total, items });
+                    }
                 } else {
                     let (raw_template_req, target_url) = config_snapshot
                         .as_ref()
@@ -737,36 +851,6 @@ pub enum FuzzerSearchEvent {
     /// All chunks have been processed — carries the definitive total.
     Done { total: usize },
 }
-
-/// Convert a `FuzzerRequestDb` row into the serialisable `FuzzerRequestRow`
-/// without loading the raw response body (that is handled by the viewer on demand).
-fn db_row_to_request_row(r: &crate::ares_utils::database::fuzzer::FuzzerRequestDb) -> FuzzerRequestRow {
-    let status = if r.error_message.is_some() || r.connection_dropped {
-        "error".to_string()
-    } else {
-        "completed".to_string()
-    };
-    FuzzerRequestRow {
-        id: r.sort_order as usize,
-        fuzz_request_id: r.id.clone(),
-        raw_request: None,
-        payload: r.payload.clone(),
-        response: None,
-        request_date: chrono::DateTime::from_timestamp_millis(r.request_date)
-            .map(|dt| dt.to_rfc3339())
-            .unwrap_or_default(),
-        status,
-        error_message: r.error_message.clone(),
-        connection_dropped: r.connection_dropped,
-        worker_id: r.worker_id.map(|w| w as u32),
-        status_code: r.status_code.map(|c| c as u16),
-        response_length: r.response_length.map(|l| l as usize),
-        response_time_ms: r.response_time_ms.map(|t| t as u128),
-        chunk_id: r.chunk_id,
-        chunk_index: r.chunk_index,
-    }
-}
-
 
 /// Stream HTTPQL search results chunk-by-chunk.
 ///
@@ -2340,6 +2424,10 @@ pub async fn resend_fuzz_request(
         };
         drop(store);
 
+        if status == "cancelled" {
+            update_store_cancelled(selected_session, fuzz_history).await;
+        }
+
         if let Some(ref pool) = db_pool {
             let now = chrono::Utc::now().timestamp_millis();
             let _ = sqlx::query(
@@ -2589,6 +2677,88 @@ mod tests {
 
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].fuzz_request_id, "0-1");
+    }
+
+    #[tokio::test]
+    async fn test_show_uncompleted_in_store() {
+        let targets = vec![
+            FuzzTarget {
+                id: "10-0".to_string(),
+                sort_order: 0,
+                request: "GET /0 HTTP/1.1\r\n\r\n".to_string(),
+                payload: Some("admin".to_string()),
+            },
+            FuzzTarget {
+                id: "10-1".to_string(),
+                sort_order: 1,
+                request: "GET /1 HTTP/1.1\r\n\r\n".to_string(),
+                payload: Some("guest".to_string()),
+            },
+            FuzzTarget {
+                id: "10-2".to_string(),
+                sort_order: 2,
+                request: "GET /2 HTTP/1.1\r\n\r\n".to_string(),
+                payload: Some("root".to_string()),
+            },
+        ];
+
+        init_fuzz_store(888, 888, &targets, None).await;
+
+        // Complete only the first target
+        update_store_completed(
+            888,
+            888,
+            "10-0",
+            2000,
+            Some(200),
+            Some(120),
+            Some(25),
+            Some("HTTP/1.1 200 OK\r\n\r\n".to_string()),
+            Some(0),
+        ).await;
+
+        let key = run_key(888, 888);
+        let store = fuzz_store().lock().await;
+        let run_data = store.get(&key).unwrap();
+
+        // show_uncompleted = false -> only completed/error
+        let completed_only: Vec<&FuzzerRequestRow> = run_data
+            .rows
+            .iter()
+            .filter(|r| r.status == "completed" || r.status == "error")
+            .collect();
+        assert_eq!(completed_only.len(), 1);
+        assert_eq!(completed_only[0].fuzz_request_id, "10-0");
+
+        // show_uncompleted = true -> all 3
+        let all_rows: Vec<&FuzzerRequestRow> = run_data.rows.iter().collect();
+        assert_eq!(all_rows.len(), 3);
+        assert_eq!(all_rows[0].status, "completed");
+        assert_eq!(all_rows[1].status, "pending");
+        assert_eq!(all_rows[2].status, "pending");
+        drop(store);
+
+        // Cancel the run -> remaining pending become cancelled
+        update_store_cancelled(888, 888).await;
+        let store2 = fuzz_store().lock().await;
+        let run_data2 = store2.get(&key).unwrap();
+        assert_eq!(run_data2.rows[0].status, "completed");
+        assert_eq!(run_data2.rows[1].status, "cancelled");
+        assert_eq!(run_data2.rows[2].status, "cancelled");
+    }
+
+    #[test]
+    fn test_make_uncompleted_request_row() {
+        let row = make_uncompleted_request_row(5, None, "cancelled");
+        assert_eq!(row.id, 5);
+        assert_eq!(row.status, "cancelled");
+        assert_eq!(row.fuzz_request_id, "5");
+        assert_eq!(row.payload, None);
+        assert_eq!(row.status_code, None);
+
+        let row_running = make_uncompleted_request_row(10, None, "running");
+        assert_eq!(row_running.id, 10);
+        assert_eq!(row_running.status, "pending");
     }
 }
 

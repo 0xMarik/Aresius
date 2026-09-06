@@ -378,6 +378,14 @@ function FuzzerHistoryBody({
         return () => clearTimeout(timer);
     }, [httpqlQuery]);
 
+    const prevShowUncompletedRef = useRef(showUncompleted);
+    useEffect(() => {
+        if (prevShowUncompletedRef.current !== showUncompleted) {
+            prevShowUncompletedRef.current = showUncompleted;
+            setWindowState((w) => ({ ...w, offset: 0 }));
+        }
+    }, [showUncompleted]);
+
     const handleHttpqlChange = useCallback((query: string) => {
         setHttpqlQuery((prev) => {
             if (prev === query) return prev;
@@ -499,11 +507,11 @@ function FuzzerHistoryBody({
         if (debouncedHttpqlQuery.trim()) {
             return windowState.totalFromBackend;
         }
-        if (windowState.totalFromBackend > 0) return windowState.totalFromBackend;
-        if (!showUncompleted) {
-            return (runState.completed ?? 0) + (runState.failed ?? 0);
+        if (showUncompleted) {
+            return runState.total > 0 ? runState.total : windowState.totalFromBackend;
         }
-        return runState.total;
+        if (windowState.totalFromBackend > 0) return windowState.totalFromBackend;
+        return (runState.completed ?? 0) + (runState.failed ?? 0);
     }, [debouncedHttpqlQuery, windowState.totalFromBackend, runState.total, runState.completed, runState.failed, showUncompleted]);
 
     const rows = useMemo(

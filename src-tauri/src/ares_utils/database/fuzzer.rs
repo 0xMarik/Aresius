@@ -1281,13 +1281,45 @@ pub async fn resolve_fuzzer_run_id(
     session_index: usize,
     history_index: usize,
 ) -> String {
-    let session_id: Option<String> = sqlx::query_scalar(
-        "SELECT id FROM fuzzer_sessions ORDER BY sort_order ASC, created_at ASC LIMIT 1 OFFSET ?"
+    let direct_id = format!("{}-{}", session_index, history_index);
+
+    // 1. Check if the run exists directly under the standard key format
+    let direct_exists: Option<String> = sqlx::query_scalar(
+        "SELECT id FROM fuzzer_runs WHERE id = ?"
     )
-    .bind(session_index as i64)
+    .bind(&direct_id)
     .fetch_optional(pool)
     .await
     .unwrap_or(None);
+
+    if let Some(r_id) = direct_exists {
+        return r_id;
+    }
+
+    // 2. Project-scoped session resolution fallback
+    let project_id: Option<String> = sqlx::query_scalar("SELECT id FROM projects LIMIT 1")
+        .fetch_optional(pool)
+        .await
+        .unwrap_or(None);
+
+    let session_id: Option<String> = if let Some(ref pid) = project_id {
+        sqlx::query_scalar(
+            "SELECT id FROM fuzzer_sessions WHERE project_id = ? ORDER BY sort_order ASC, created_at ASC LIMIT 1 OFFSET ?"
+        )
+        .bind(pid)
+        .bind(session_index as i64)
+        .fetch_optional(pool)
+        .await
+        .unwrap_or(None)
+    } else {
+        sqlx::query_scalar(
+            "SELECT id FROM fuzzer_sessions ORDER BY sort_order ASC, created_at ASC LIMIT 1 OFFSET ?"
+        )
+        .bind(session_index as i64)
+        .fetch_optional(pool)
+        .await
+        .unwrap_or(None)
+    };
 
     if let Some(s_id) = session_id {
         let run_id: Option<String> = sqlx::query_scalar(
@@ -1304,7 +1336,7 @@ pub async fn resolve_fuzzer_run_id(
         }
     }
 
-    format!("{}-{}", session_index, history_index)
+    direct_id
 }
 
 /// Load all fuzzer requests for a run from SQLite
