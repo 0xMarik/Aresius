@@ -75,6 +75,44 @@ pub async fn invalidate_fuzzer_search_cache(session: u32, history: u32) {
     cache.retain(|item| !item.key.starts_with(&prefix));
 }
 
+static SEARCH_CANCELLATIONS: OnceLock<Mutex<HashMap<String, Arc<AtomicBool>>>> = OnceLock::new();
+
+fn search_cancellations() -> &'static Mutex<HashMap<String, Arc<AtomicBool>>> {
+    SEARCH_CANCELLATIONS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+pub async fn register_search_cancel(session: u32, history: u32) -> Arc<AtomicBool> {
+    let key = run_key(session, history);
+    let mut map = search_cancellations().lock().await;
+    if let Some(old_flag) = map.get(&key) {
+        old_flag.store(true, Ordering::Relaxed);
+    }
+    let new_flag = Arc::new(AtomicBool::new(false));
+    map.insert(key, Arc::clone(&new_flag));
+    new_flag
+}
+
+struct SearchCancelGuard {
+    session: u32,
+    history: u32,
+    flag: Arc<AtomicBool>,
+}
+
+impl Drop for SearchCancelGuard {
+    fn drop(&mut self) {
+        let session = self.session;
+        let history = self.history;
+        let flag = Arc::clone(&self.flag);
+        tokio::spawn(async move {
+            let key = run_key(session, history);
+            let mut map = search_cancellations().lock().await;
+            if map.get(&key).map(|f| Arc::ptr_eq(f, &flag)).unwrap_or(false) {
+                map.remove(&key);
+            }
+        });
+    }
+}
+
 pub fn sort_fuzzer_rows_in_place<T: std::borrow::Borrow<FuzzerRequestRow>>(rows: &mut [T], sort_by: Option<&str>, is_desc: bool) {
     match sort_by {
         Some("statusCode") | Some("responseCode") => {
@@ -378,6 +416,7 @@ pub async fn get_fuzzer_history_window(
     search_query: Option<String>,
     show_uncompleted: Option<bool>,
 ) -> Result<FuzzerWindowResult, String> {
+    let t_window_start = std::time::Instant::now();
     let show_uncompleted_val = show_uncompleted.unwrap_or(false);
     let is_desc = sort_order
         .as_deref()
@@ -388,6 +427,11 @@ pub async fn get_fuzzer_history_window(
         .as_deref()
         .map(|q| !q.trim().is_empty())
         .unwrap_or(false);
+
+    eprintln!(
+        "[FUZZER_SEARCH_BENCH] >>> get_fuzzer_history_window: session={}, history={}, offset={}, limit={}, query={:?}, show_uncompleted={}, sort_by={:?}, sort_order={:?}",
+        selected_session, fuzz_history, offset, limit, search_query, show_uncompleted_val, sort_by, sort_order
+    );
 
     let parsed_httpql = if has_query {
         let q_str = search_query.as_deref().unwrap().trim();
@@ -421,11 +465,21 @@ pub async fn get_fuzzer_history_window(
     };
 
     let key = run_key(selected_session, fuzz_history);
+    let t_store_lock = std::time::Instant::now();
     let store = fuzz_store().lock().await;
+    let store_lock_time = t_store_lock.elapsed();
 
     // ─── 1. In-Memory Store for Live / Active Runs ─────────────────────────
     if store.contains_key(&key) {
+        eprintln!(
+            "[FUZZER_SEARCH_BENCH] PATH: IN-MEMORY FUZZ_STORE (lock wait: {:?})",
+            store_lock_time
+        );
         let run_data = store.get(&key).unwrap();
+        eprintln!(
+            "[FUZZER_SEARCH_BENCH]   fuzz_store has {} rows in memory",
+            run_data.rows.len()
+        );
         let target_rows: Vec<&FuzzerRequestRow> = if show_uncompleted_val {
             run_data.rows.iter().collect()
         } else {
@@ -451,6 +505,7 @@ pub async fn get_fuzzer_history_window(
                 .as_ref()
                 .map_or(false, |cfg| cfg.metadata.target_url.starts_with("https://"));
 
+            let t_mem_filter = std::time::Instant::now();
             let res: Vec<&FuzzerRequestRow> = target_rows.into_iter().filter(|r| {
                 let raw_resp_str = r.response.as_ref().map(|resp| resp.response.as_str());
                 let item = crate::ares_utils::httpql::LazyFuzzerEvaluableItem::new(
@@ -473,12 +528,18 @@ pub async fn get_fuzzer_history_window(
                 );
                 expr.evaluate(&item)
             }).collect();
+            eprintln!(
+                "[FUZZER_SEARCH_BENCH]   In-memory HTTPQL filter finished in {:?}, matched {} of rows",
+                t_mem_filter.elapsed(),
+                res.len()
+            );
             res
         } else {
             target_rows
         };
 
         let total = filtered_refs.len();
+        let t_mem_sort = std::time::Instant::now();
         sort_fuzzer_rows_in_place(&mut filtered_refs, sort_by.as_deref(), is_desc);
         let start = offset.min(total);
         let end = (offset + limit).min(total);
@@ -488,22 +549,41 @@ pub async fn get_fuzzer_history_window(
             row.raw_request = None;
             row
         }).collect();
+        eprintln!(
+            "[FUZZER_SEARCH_BENCH]   In-memory sort & window slice in {:?}",
+            t_mem_sort.elapsed()
+        );
+        eprintln!(
+            "[FUZZER_SEARCH_BENCH] <<< get_fuzzer_history_window (IN-MEMORY) completed in {:?}",
+            t_window_start.elapsed()
+        );
 
         return Ok(FuzzerWindowResult { total, items });
     }
 
     drop(store);
+    eprintln!(
+        "[FUZZER_SEARCH_BENCH] PATH: SQLITE (not in active fuzz_store, elapsed so far: {:?})",
+        t_window_start.elapsed()
+    );
 
     // ─── 2. SQLite Fallback for Persisted History Runs ─────────────────────
     if let Some(db_state) = app.try_state::<crate::ares_utils::database::DbState>() {
         if let Ok(pool) = db_state.pool().await {
+            let t_resolve = std::time::Instant::now();
             let run_id = crate::ares_utils::database::fuzzer::resolve_fuzzer_run_id(
                 &pool,
                 selected_session as usize,
                 fuzz_history as usize,
             )
             .await;
+            eprintln!(
+                "[FUZZER_SEARCH_BENCH]   Resolved run_id={} in {:?}",
+                run_id,
+                t_resolve.elapsed()
+            );
 
+            let t_run_info = std::time::Instant::now();
             let run_info: Option<(i64, String, Option<String>)> = sqlx::query_as(
                 "SELECT total, status, config_snapshot FROM fuzzer_runs WHERE id = ?"
             )
@@ -511,6 +591,10 @@ pub async fn get_fuzzer_history_window(
             .fetch_optional(&pool)
             .await
             .unwrap_or(None);
+            eprintln!(
+                "[FUZZER_SEARCH_BENCH]   Fetched run_info in {:?}",
+                t_run_info.elapsed()
+            );
 
             if let Some((total_i64, run_status, config_snapshot_str)) = run_info {
                 let total = total_i64 as usize;
@@ -564,6 +648,8 @@ pub async fn get_fuzzer_history_window(
                         return Ok(FuzzerWindowResult { total, items });
                     } else {
                         // Non-default sort or HTTPQL query with show_uncompleted:
+                        eprintln!("[FUZZER_SEARCH_BENCH] SQLite Path (show_uncompleted=true, custom sort/HTTPQL)");
+                        let t_fetch_db = std::time::Instant::now();
                         let db_rows: Vec<crate::ares_utils::database::fuzzer::FuzzerRequestDb> = sqlx::query_as(
                             "SELECT * FROM fuzzer_requests WHERE run_id = ? ORDER BY sort_order ASC"
                         )
@@ -571,23 +657,13 @@ pub async fn get_fuzzer_history_window(
                         .fetch_all(&pool)
                         .await
                         .unwrap_or_default();
+                        eprintln!(
+                            "[FUZZER_SEARCH_BENCH]   Fetched {} rows from SQLite in {:?}",
+                            db_rows.len(),
+                            t_fetch_db.elapsed()
+                        );
 
                         let needs_resp = parsed_httpql.as_ref().map_or(false, crate::ares_utils::httpql::has_response_content_checks);
-
-                        let mut chunk_cache: HashMap<i64, std::sync::Arc<Vec<String>>> = HashMap::new();
-                        if needs_resp {
-                            let unique_cids: std::collections::HashSet<i64> = db_rows.iter().filter_map(|r| r.chunk_id).collect();
-                            for cid in unique_cids {
-                                if let Ok(resps) = crate::ares_utils::database::fuzzer::fetch_fuzzer_chunk_responses(&pool, cid).await {
-                                    chunk_cache.insert(cid, resps);
-                                }
-                            }
-                        }
-
-                        let mut existing_map = HashMap::with_capacity(db_rows.len());
-                        for r in db_rows {
-                            existing_map.insert(r.sort_order as usize, r);
-                        }
 
                         let (tmpl_method, tmpl_path) = config_snapshot
                             .as_ref()
@@ -608,22 +684,107 @@ pub async fn get_fuzzer_history_window(
                             .map_or(false, |cfg| cfg.metadata.target_url.starts_with("https://"));
 
                         let mut filtered_rows = Vec::with_capacity(total);
-                        for idx in 0..total {
-                            if let Some(r) = existing_map.remove(&idx) {
-                                if let Some(ref expr) = parsed_httpql {
-                                    let raw_resp_str = if needs_resp {
-                                        r.chunk_id
-                                            .and_then(|cid| chunk_cache.get(&cid))
-                                            .and_then(|resps| {
-                                                r.chunk_index
-                                                    .filter(|&cidx| cidx >= 0 && (cidx as usize) < resps.len())
-                                                    .and_then(|cidx| resps.get(cidx as usize))
-                                            })
-                                            .map(|s| s.as_str())
-                                    } else {
-                                        None
-                                    };
 
+                        if needs_resp {
+                            let mut chunk_groups: std::collections::BTreeMap<i64, Vec<crate::ares_utils::database::fuzzer::FuzzerRequestDb>> = std::collections::BTreeMap::new();
+                            let mut other_completed_rows = Vec::new();
+                            let mut completed_indices = std::collections::HashSet::with_capacity(db_rows.len());
+
+                            for r in db_rows {
+                                completed_indices.insert(r.sort_order as usize);
+                                match r.chunk_id {
+                                    Some(cid) => chunk_groups.entry(cid).or_default().push(r),
+                                    None => other_completed_rows.push(r),
+                                }
+                            }
+
+                            if !chunk_groups.is_empty() {
+                                let total_cand: usize = chunk_groups.values().map(|v| v.len()).sum();
+                                eprintln!(
+                                    "[FUZZER_SEARCH_BENCH]   show_uncompleted: Processing {} chunks ({} candidates)",
+                                    chunk_groups.len(),
+                                    total_cand
+                                );
+                                let chunk_ids: Vec<i64> = chunk_groups.keys().copied().collect();
+                                let t_blobs = std::time::Instant::now();
+                                let mut blobs_map = crate::ares_utils::database::fuzzer::fetch_fuzzer_chunk_blobs_batch(&pool, &chunk_ids, None).await.unwrap_or_default();
+                                eprintln!(
+                                    "[FUZZER_SEARCH_BENCH]   show_uncompleted: Batch fetched {} blobs in {:?}",
+                                    blobs_map.len(),
+                                    t_blobs.elapsed()
+                                );
+
+                                let mut chunk_tasks: Vec<(i64, Vec<crate::ares_utils::database::fuzzer::FuzzerRequestDb>, Option<Vec<u8>>)> =
+                                    Vec::with_capacity(chunk_groups.len());
+                                for (cid, rows) in chunk_groups {
+                                    let blob = blobs_map.remove(&cid);
+                                    chunk_tasks.push((cid, rows, blob));
+                                }
+
+                                let parsed_httpql_clone = parsed_httpql.clone();
+                                let config_snapshot_clone = config_snapshot.clone();
+                                let tmpl_method_clone = tmpl_method.clone();
+                                let tmpl_host_clone = tmpl_host.clone();
+                                let tmpl_path_clone = tmpl_path.clone();
+
+                                let t_rayon = std::time::Instant::now();
+                                let matched_rows: Vec<FuzzerRequestRow> = tokio::task::spawn_blocking(move || {
+                                    use rayon::prelude::*;
+                                    chunk_tasks
+                                        .into_par_iter()
+                                        .flat_map(|(_cid, rows, blob)| {
+                                            let Some(blob) = blob else { return Vec::new(); };
+                                            let Ok(resps) = crate::fuzzer::chunk_manager::decompress_chunk(&blob) else { return Vec::new(); };
+
+                                            let mut matched = Vec::new();
+                                            for r in rows {
+                                                if let Some(cidx) = r.chunk_index {
+                                                    if cidx >= 0 && (cidx as usize) < resps.len() {
+                                                        let raw_resp = &resps[cidx as usize];
+                                                        let item = crate::ares_utils::httpql::LazyFuzzerEvaluableItem::new(
+                                                            r.sort_order as u32,
+                                                            r.status_code.unwrap_or(0),
+                                                            r.response_length.unwrap_or(0),
+                                                            r.response_time_ms.unwrap_or(0),
+                                                            r.request_date,
+                                                            if r.error_message.is_some() || r.connection_dropped { "error" } else { "completed" },
+                                                            Some(raw_resp.as_str()),
+                                                            r.payload.as_deref(),
+                                                            &r.id,
+                                                            config_snapshot_clone.as_ref(),
+                                                            &tmpl_method_clone,
+                                                            &tmpl_host_clone,
+                                                            &tmpl_path_clone,
+                                                            is_https,
+                                                        );
+                                                        if let Some(ref expr) = parsed_httpql_clone {
+                                                            if expr.evaluate(&item) {
+                                                                matched.push(db_row_to_request_row(&r));
+                                                            }
+                                                        } else {
+                                                            matched.push(db_row_to_request_row(&r));
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            matched
+                                        })
+                                        .collect()
+                                })
+                                .await
+                                .unwrap_or_default();
+
+                                eprintln!(
+                                    "[FUZZER_SEARCH_BENCH]   show_uncompleted: Rayon parallel decompress + regex matched {} in {:?}",
+                                    matched_rows.len(),
+                                    t_rayon.elapsed()
+                                );
+
+                                filtered_rows.extend(matched_rows);
+                            }
+
+                            for r in other_completed_rows {
+                                if let Some(ref expr) = parsed_httpql {
                                     let item = crate::ares_utils::httpql::LazyFuzzerEvaluableItem::new(
                                         r.sort_order as u32,
                                         r.status_code.unwrap_or(0),
@@ -631,7 +792,7 @@ pub async fn get_fuzzer_history_window(
                                         r.response_time_ms.unwrap_or(0),
                                         r.request_date,
                                         if r.error_message.is_some() || r.connection_dropped { "error" } else { "completed" },
-                                        raw_resp_str,
+                                        None,
                                         r.payload.as_deref(),
                                         &r.id,
                                         config_snapshot.as_ref(),
@@ -646,34 +807,100 @@ pub async fn get_fuzzer_history_window(
                                 } else {
                                     filtered_rows.push(db_row_to_request_row(&r));
                                 }
-                            } else {
-                                let uncompleted = make_uncompleted_request_row(
-                                    idx,
-                                    config_snapshot.as_ref(),
-                                    &run_status,
-                                );
-                                if let Some(ref expr) = parsed_httpql {
-                                    let item = crate::ares_utils::httpql::LazyFuzzerEvaluableItem::new(
-                                        uncompleted.id as u32,
-                                        uncompleted.status_code.map(|c| c as i64).unwrap_or(0),
-                                        uncompleted.response_length.map(|l| l as i64).unwrap_or(0),
-                                        uncompleted.response_time_ms.map(|t| t as i64).unwrap_or(0),
-                                        0,
-                                        &uncompleted.status,
-                                        None,
-                                        uncompleted.payload.as_deref(),
-                                        &uncompleted.fuzz_request_id,
+                            }
+
+                            for idx in 0..total {
+                                if !completed_indices.contains(&idx) {
+                                    let uncompleted = make_uncompleted_request_row(
+                                        idx,
                                         config_snapshot.as_ref(),
-                                        &tmpl_method,
-                                        &tmpl_host,
-                                        &tmpl_path,
-                                        is_https,
+                                        &run_status,
                                     );
-                                    if expr.evaluate(&item) {
+                                    if let Some(ref expr) = parsed_httpql {
+                                        let item = crate::ares_utils::httpql::LazyFuzzerEvaluableItem::new(
+                                            uncompleted.id as u32,
+                                            uncompleted.status_code.map(|c| c as i64).unwrap_or(0),
+                                            uncompleted.response_length.map(|l| l as i64).unwrap_or(0),
+                                            uncompleted.response_time_ms.map(|t| t as i64).unwrap_or(0),
+                                            0,
+                                            &uncompleted.status,
+                                            None,
+                                            uncompleted.payload.as_deref(),
+                                            &uncompleted.fuzz_request_id,
+                                            config_snapshot.as_ref(),
+                                            &tmpl_method,
+                                            &tmpl_host,
+                                            &tmpl_path,
+                                            is_https,
+                                        );
+                                        if expr.evaluate(&item) {
+                                            filtered_rows.push(uncompleted);
+                                        }
+                                    } else {
                                         filtered_rows.push(uncompleted);
                                     }
+                                }
+                            }
+                        } else {
+                            let mut existing_map = HashMap::with_capacity(db_rows.len());
+                            for r in db_rows {
+                                existing_map.insert(r.sort_order as usize, r);
+                            }
+
+                            for idx in 0..total {
+                                if let Some(r) = existing_map.remove(&idx) {
+                                    if let Some(ref expr) = parsed_httpql {
+                                        let item = crate::ares_utils::httpql::LazyFuzzerEvaluableItem::new(
+                                            r.sort_order as u32,
+                                            r.status_code.unwrap_or(0),
+                                            r.response_length.unwrap_or(0),
+                                            r.response_time_ms.unwrap_or(0),
+                                            r.request_date,
+                                            if r.error_message.is_some() || r.connection_dropped { "error" } else { "completed" },
+                                            None,
+                                            r.payload.as_deref(),
+                                            &r.id,
+                                            config_snapshot.as_ref(),
+                                            &tmpl_method,
+                                            &tmpl_host,
+                                            &tmpl_path,
+                                            is_https,
+                                        );
+                                        if expr.evaluate(&item) {
+                                            filtered_rows.push(db_row_to_request_row(&r));
+                                        }
+                                    } else {
+                                        filtered_rows.push(db_row_to_request_row(&r));
+                                    }
                                 } else {
-                                    filtered_rows.push(uncompleted);
+                                    let uncompleted = make_uncompleted_request_row(
+                                        idx,
+                                        config_snapshot.as_ref(),
+                                        &run_status,
+                                    );
+                                    if let Some(ref expr) = parsed_httpql {
+                                        let item = crate::ares_utils::httpql::LazyFuzzerEvaluableItem::new(
+                                            uncompleted.id as u32,
+                                            uncompleted.status_code.map(|c| c as i64).unwrap_or(0),
+                                            uncompleted.response_length.map(|l| l as i64).unwrap_or(0),
+                                            uncompleted.response_time_ms.map(|t| t as i64).unwrap_or(0),
+                                            0,
+                                            &uncompleted.status,
+                                            None,
+                                            uncompleted.payload.as_deref(),
+                                            &uncompleted.fuzz_request_id,
+                                            config_snapshot.as_ref(),
+                                            &tmpl_method,
+                                            &tmpl_host,
+                                            &tmpl_path,
+                                            is_https,
+                                        );
+                                        if expr.evaluate(&item) {
+                                            filtered_rows.push(uncompleted);
+                                        }
+                                    } else {
+                                        filtered_rows.push(uncompleted);
+                                    }
                                 }
                             }
                         }
@@ -700,72 +927,125 @@ pub async fn get_fuzzer_history_window(
 
                     if needs_memory_filter {
                         // ─── Path B: Content-heavy search using FuzzerSearchCache ────
+                        eprintln!("[FUZZER_SEARCH_BENCH] SQLite Path (show_uncompleted=false, needs_memory_filter=true)");
                         let query_str = search_query.as_deref().unwrap_or("").trim();
                         let cache_key = format!("{}:{}:{}", selected_session, fuzz_history, query_str);
-                        let _is_active = is_run_active(selected_session, fuzz_history).await || run_status == "running";
+                        let is_active = is_run_active(selected_session, fuzz_history).await || run_status == "running";
 
+                        let cancel_flag = register_search_cancel(selected_session, fuzz_history).await;
+                        let _cancel_guard = SearchCancelGuard {
+                            session: selected_session,
+                            history: fuzz_history,
+                            flag: Arc::clone(&cancel_flag),
+                        };
+
+                        let t_lock_cache = std::time::Instant::now();
                         let mut cache = search_cache().lock().await;
                         let existing_pos = cache.iter().position(|c| c.key == cache_key);
+                        eprintln!(
+                            "[FUZZER_SEARCH_BENCH]   search_cache locked in {:?}, hit={}",
+                            t_lock_cache.elapsed(),
+                            existing_pos.is_some()
+                        );
 
                         let mut all_rows = match existing_pos {
                             Some(pos) => {
+                                eprintln!("[FUZZER_SEARCH_BENCH]   Search cache HIT for key={}", cache_key);
                                 let mut cached_item = cache.remove(pos).unwrap();
                                 cached_item.last_accessed = std::time::Instant::now();
 
-                                // Incremental scan: inspect requests completed since last scan
-                                let since_date = cached_item.last_scanned_date.saturating_sub(2000);
-                                if let Ok((new_db_rows, new_max_date)) = crate::ares_utils::database::fuzzer::query_fuzzer_requests_matching_since(
-                                    &pool,
-                                    &run_id,
-                                    since_date,
-                                    parsed_httpql.as_ref(),
-                                    raw_template_req,
-                                    target_url,
-                                ).await {
-                                    for r in new_db_rows {
-                                        if cached_item.seen_ids.insert(r.id.clone()) {
-                                            let status = if r.error_message.is_some() || r.connection_dropped {
-                                                "error".to_string()
-                                            } else {
-                                                "completed".to_string()
-                                            };
-                                            cached_item.rows.push(FuzzerRequestRow {
-                                                id: r.sort_order as usize,
-                                                fuzz_request_id: r.id,
-                                                raw_request: None,
-                                                payload: r.payload,
-                                                response: None,
-                                                request_date: chrono::DateTime::from_timestamp_millis(r.request_date)
-                                                    .map(|dt| dt.to_rfc3339())
-                                                    .unwrap_or_default(),
-                                                status,
-                                                error_message: r.error_message,
-                                                connection_dropped: r.connection_dropped,
-                                                worker_id: r.worker_id.map(|w| w as u32),
-                                                status_code: r.status_code.map(|c| c as u16),
-                                                response_length: r.response_length.map(|l| l as usize),
-                                                response_time_ms: r.response_time_ms.map(|t| t as u128),
-                                                chunk_id: r.chunk_id,
-                                                chunk_index: r.chunk_index,
-                                            });
+                                if is_active {
+                                    // Incremental scan: inspect requests completed since last scan
+                                    let since_date = cached_item.last_scanned_date.saturating_sub(2000);
+                                    let t_inc = std::time::Instant::now();
+                                    if let Ok((new_db_rows, new_max_date)) = crate::ares_utils::database::fuzzer::query_fuzzer_requests_matching_since(
+                                        &pool,
+                                        &run_id,
+                                        since_date,
+                                        parsed_httpql.as_ref(),
+                                        raw_template_req,
+                                        target_url,
+                                        config_snapshot.clone(),
+                                        Some(Arc::clone(&cancel_flag)),
+                                    ).await {
+                                        eprintln!(
+                                            "[FUZZER_SEARCH_BENCH]   Incremental scan found {} new rows in {:?}",
+                                            new_db_rows.len(),
+                                            t_inc.elapsed()
+                                        );
+                                        for r in new_db_rows {
+                                            if cached_item.seen_ids.insert(r.id.clone()) {
+                                                let status = if r.error_message.is_some() || r.connection_dropped {
+                                                    "error".to_string()
+                                                } else {
+                                                    "completed".to_string()
+                                                };
+                                                cached_item.rows.push(FuzzerRequestRow {
+                                                    id: r.sort_order as usize,
+                                                    fuzz_request_id: r.id,
+                                                    raw_request: None,
+                                                    payload: r.payload,
+                                                    response: None,
+                                                    request_date: chrono::DateTime::from_timestamp_millis(r.request_date)
+                                                        .map(|dt| dt.to_rfc3339())
+                                                        .unwrap_or_default(),
+                                                    status,
+                                                    error_message: r.error_message,
+                                                    connection_dropped: r.connection_dropped,
+                                                    worker_id: r.worker_id.map(|w| w as u32),
+                                                    status_code: r.status_code.map(|c| c as u16),
+                                                    response_length: r.response_length.map(|l| l as usize),
+                                                    response_time_ms: r.response_time_ms.map(|t| t as u128),
+                                                    chunk_id: r.chunk_id,
+                                                    chunk_index: r.chunk_index,
+                                                });
+                                            }
                                         }
+                                        cached_item.last_scanned_date = cached_item.last_scanned_date.max(new_max_date);
                                     }
-                                    cached_item.last_scanned_date = cached_item.last_scanned_date.max(new_max_date);
+                                } else {
+                                    eprintln!(
+                                        "[FUZZER_SEARCH_BENCH]   Run is completed/inactive; returning cached {} rows instantly",
+                                        cached_item.rows.len()
+                                    );
                                 }
 
                                 let rows = cached_item.rows.clone();
                                 cache.push_back(cached_item);
+                                drop(cache);
                                 rows
                             }
                             None => {
-                                let (db_rows, max_date) = crate::ares_utils::database::fuzzer::query_fuzzer_requests_matching_since(
+                                drop(cache);
+                                eprintln!("[FUZZER_SEARCH_BENCH]   Search cache MISS for key={}", cache_key);
+                                let t_miss = std::time::Instant::now();
+                                let scan_res = crate::ares_utils::database::fuzzer::query_fuzzer_requests_matching_since(
                                     &pool,
                                     &run_id,
                                     0,
                                     parsed_httpql.as_ref(),
                                     raw_template_req,
                                     target_url,
-                                ).await.unwrap_or_default();
+                                    config_snapshot.clone(),
+                                    Some(Arc::clone(&cancel_flag)),
+                                ).await;
+
+                                let (db_rows, max_date) = match scan_res {
+                                    Ok(res) => res,
+                                    Err(e) if e == "Search cancelled" => {
+                                        eprintln!("[FUZZER_SEARCH_BENCH]   Search was cancelled; aborting window response");
+                                        return Ok(FuzzerWindowResult { total: 0, items: Vec::new() });
+                                    }
+                                    Err(e) => {
+                                        eprintln!("[FUZZER_SEARCH_BENCH]   Search failed: {}", e);
+                                        (Vec::new(), 0)
+                                    }
+                                };
+                                eprintln!(
+                                    "[FUZZER_SEARCH_BENCH]   Full scan via query_fuzzer_requests_matching_since completed in {:?} ({} rows)",
+                                    t_miss.elapsed(),
+                                    db_rows.len()
+                                );
 
                                 let mut seen_ids = std::collections::HashSet::with_capacity(db_rows.len());
                                 let converted: Vec<FuzzerRequestRow> = db_rows.into_iter().map(|r| {
@@ -796,6 +1076,10 @@ pub async fn get_fuzzer_history_window(
                                     }
                                 }).collect();
 
+                                let mut cache = search_cache().lock().await;
+                                if let Some(pos) = cache.iter().position(|c| c.key == cache_key) {
+                                    cache.remove(pos);
+                                }
                                 if cache.len() >= 10 {
                                     cache.pop_front();
                                 }
@@ -806,16 +1090,26 @@ pub async fn get_fuzzer_history_window(
                                     last_scanned_date: max_date,
                                     last_accessed: std::time::Instant::now(),
                                 });
+                                drop(cache);
                                 converted
                             }
                         };
-                        drop(cache);
 
                         let total = all_rows.len();
+                        let t_sort_b = std::time::Instant::now();
                         sort_fuzzer_rows_in_place(&mut all_rows, sort_by.as_deref(), is_desc);
                         let start = offset.min(total);
                         let end = (offset + limit).min(total);
                         let items = all_rows[start..end].to_vec();
+                        eprintln!(
+                            "[FUZZER_SEARCH_BENCH]   Path B sort & slice in {:?}",
+                            t_sort_b.elapsed()
+                        );
+                        eprintln!(
+                            "[FUZZER_SEARCH_BENCH] <<< get_fuzzer_history_window (Path B) completed in {:?} (total_matches={})",
+                            t_window_start.elapsed(),
+                            total
+                        );
                         return Ok(FuzzerWindowResult { total, items });
                     } else {
                         // ─── Path A: Pure SQL fast path for metadata queries & sorting ───
@@ -1006,10 +1300,9 @@ pub async fn stream_fuzzer_search(
         }
     } else {
         // Path B: parallel chunk-by-chunk streaming evaluation up to watermark
-        let concurrency = (std::thread::available_parallelism()
+        let concurrency = std::thread::available_parallelism()
             .map(|n| n.get())
             .unwrap_or(4)
-            / 2)
             .max(1);
 
         let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(concurrency));
@@ -1129,24 +1422,34 @@ pub async fn stream_fuzzer_search(
         let mut join_set =
             tokio::task::JoinSet::<Result<Vec<FuzzerRequestRow>, String>>::new();
 
+        let chunk_ids: Vec<i64> = chunk_groups.keys().copied().collect();
+        let mut blobs_map = crate::ares_utils::database::fuzzer::fetch_fuzzer_chunk_blobs_batch(
+            &pool,
+            &chunk_ids,
+            None,
+        )
+        .await
+        .unwrap_or_default();
+
         for (chunk_id, rows) in chunk_groups {
             let sem = semaphore.clone();
-            let pool = pool.clone();
             let expr = expr.clone();
             let tmpl_method = tmpl_method.clone();
             let tmpl_host = tmpl_host.clone();
             let tmpl_path = tmpl_path.clone();
             let config_snapshot_cg = config_snapshot.clone();
+            let blob = blobs_map.remove(&chunk_id);
 
             join_set.spawn(async move {
                 let _permit = sem.acquire().await.map_err(|e| e.to_string())?;
-                let resps =
-                    crate::ares_utils::database::fuzzer::fetch_fuzzer_chunk_responses(
-                        &pool, chunk_id,
-                    )
-                    .await?;
+                let Some(blob) = blob else {
+                    return Ok(Vec::new());
+                };
 
                 let matches = tokio::task::spawn_blocking(move || {
+                    let Ok(resps) = crate::fuzzer::chunk_manager::decompress_chunk(&blob) else {
+                        return Vec::new();
+                    };
                     let cfg_ref = config_snapshot_cg.as_deref();
                     use rayon::prelude::*;
                     rows.par_iter()

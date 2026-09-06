@@ -2822,12 +2822,6 @@ fn eval_str_cmp(
     case_insensitive: bool,
     compiled_regex: Option<&Regex>,
 ) -> bool {
-    let val_cmp = if case_insensitive {
-        val.to_lowercase()
-    } else {
-        val.to_string()
-    };
-
     match op {
         HttpqlOperator::Eq => match expected {
             HttpqlValue::List(list) => {
@@ -3005,10 +2999,38 @@ fn eval_str_cmp(
                 }
             }
         }
-        HttpqlOperator::Gt => val_cmp > val_as_string(expected).to_lowercase(),
-        HttpqlOperator::Ge => val_cmp >= val_as_string(expected).to_lowercase(),
-        HttpqlOperator::Lt => val_cmp < val_as_string(expected).to_lowercase(),
-        HttpqlOperator::Le => val_cmp <= val_as_string(expected).to_lowercase(),
+        HttpqlOperator::Gt => {
+            let exp = val_as_string(expected);
+            if case_insensitive {
+                val.to_lowercase() > exp.to_lowercase()
+            } else {
+                val > exp.as_str()
+            }
+        }
+        HttpqlOperator::Ge => {
+            let exp = val_as_string(expected);
+            if case_insensitive {
+                val.to_lowercase() >= exp.to_lowercase()
+            } else {
+                val >= exp.as_str()
+            }
+        }
+        HttpqlOperator::Lt => {
+            let exp = val_as_string(expected);
+            if case_insensitive {
+                val.to_lowercase() < exp.to_lowercase()
+            } else {
+                val < exp.as_str()
+            }
+        }
+        HttpqlOperator::Le => {
+            let exp = val_as_string(expected);
+            if case_insensitive {
+                val.to_lowercase() <= exp.to_lowercase()
+            } else {
+                val <= exp.as_str()
+            }
+        }
     }
 }
 

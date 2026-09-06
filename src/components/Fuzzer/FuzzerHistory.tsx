@@ -374,7 +374,7 @@ function FuzzerHistoryBody({
         setIsSearching(true);
         const timer = setTimeout(() => {
             setDebouncedHttpqlQuery(httpqlQuery);
-        }, 150);
+        }, 300);
         return () => clearTimeout(timer);
     }, [httpqlQuery]);
 
@@ -417,6 +417,11 @@ function FuzzerHistoryBody({
             const newOffset = Math.max(0, startIdx - BUFFER);
             const newTargetEnd = startIdx + count + BUFFER;
             const newLimit = newTargetEnd - newOffset;
+
+            // If offset hasn't changed and limit shift is negligible (<= 5 rows jitter), avoid refetching
+            if (newOffset === prev.offset && Math.abs(newLimit - prev.limit) <= 5) {
+                return prev;
+            }
 
             if (newOffset === prev.offset && newLimit === prev.limit && prev.items.length > 0) {
                 return prev;

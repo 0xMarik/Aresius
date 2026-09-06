@@ -759,6 +759,7 @@ pub async fn save_fuzzer_parameters_db(
 }
 
 /// Query window of fuzzer requests directly from SQLite with server-side sorting
+#[allow(dead_code)]
 pub async fn fetch_fuzzer_chunk_responses(
     pool: &SqlitePool,
     chunk_id: i64,
@@ -773,7 +774,11 @@ pub async fn fetch_fuzzer_chunk_responses(
     let blob = fetch_fuzzer_chunk_blob(pool, chunk_id).await?
         .ok_or_else(|| format!("Chunk blob not found for chunk_id: {}", chunk_id))?;
 
-    let responses = crate::fuzzer::chunk_manager::decompress_chunk(&blob)?;
+    let responses = tokio::task::spawn_blocking(move || {
+        crate::fuzzer::chunk_manager::decompress_chunk(&blob)
+    })
+    .await
+    .map_err(|e| e.to_string())??;
 
     let mut cache = crate::fuzzer::chunk_manager::get_chunk_cache().lock().unwrap();
     let arc = cache.insert(chunk_id, responses);
@@ -860,7 +865,15 @@ pub async fn query_fuzzer_requests_matching_since(
     httpql_expr: Option<&crate::ares_utils::httpql::HttpqlExpr>,
     raw_template_req: Option<&str>,
     target_url: Option<&str>,
+    provided_config: Option<crate::types::SessionPayload>,
+    cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<(Vec<FuzzerRequestDb>, i64), String> {
+    let t_fn_start = std::time::Instant::now();
+    eprintln!(
+        "[FUZZER_SEARCH_BENCH] >>> query_fuzzer_requests_matching_since: run_id={}, since_date={}",
+        run_id, since_date
+    );
+
     let mut builder =
         sqlx::QueryBuilder::<sqlx::Sqlite>::new("SELECT * FROM fuzzer_requests WHERE run_id = ");
     builder.push_bind(run_id);
@@ -874,24 +887,51 @@ pub async fn query_fuzzer_requests_matching_since(
     }
     builder.push(" ORDER BY sort_order ASC");
 
+    let t_sql_cand = std::time::Instant::now();
     let candidates = builder
         .build_query_as::<FuzzerRequestDb>()
         .fetch_all(pool)
         .await
         .map_err(|e| e.to_string())?;
+    eprintln!(
+        "[FUZZER_SEARCH_BENCH]   Step 1: SQL candidates fetched {} rows in {:?}",
+        candidates.len(),
+        t_sql_cand.elapsed()
+    );
+
+    if let Some(ref flag) = cancel_flag {
+        if flag.load(std::sync::atomic::Ordering::Relaxed) {
+            eprintln!("[FUZZER_SEARCH_BENCH]   Search cancelled after candidate query");
+            return Err("Search cancelled".to_string());
+        }
+    }
 
     let max_date = candidates.iter().map(|r| r.request_date).max().unwrap_or(since_date);
 
-    let config_snapshot_str: Option<String> = sqlx::query_scalar(
-        "SELECT config_snapshot FROM fuzzer_runs WHERE id = ?"
-    )
-    .bind(run_id)
-    .fetch_optional(pool)
-    .await
-    .unwrap_or(None);
+    let t_cfg = std::time::Instant::now();
+    let config_snapshot = if let Some(cfg) = provided_config {
+        eprintln!(
+            "[FUZZER_SEARCH_BENCH]   Step 2: Config snapshot reused from caller in {:?}",
+            t_cfg.elapsed()
+        );
+        Some(cfg)
+    } else {
+        let config_snapshot_str: Option<String> = sqlx::query_scalar(
+            "SELECT config_snapshot FROM fuzzer_runs WHERE id = ?"
+        )
+        .bind(run_id)
+        .fetch_optional(pool)
+        .await
+        .unwrap_or(None);
 
-    let config_snapshot: Option<crate::types::SessionPayload> = config_snapshot_str
-        .and_then(|s| serde_json::from_str(&s).ok());
+        let cfg = config_snapshot_str
+            .and_then(|s| serde_json::from_str(&s).ok());
+        eprintln!(
+            "[FUZZER_SEARCH_BENCH]   Step 2: Config snapshot retrieved from DB in {:?}",
+            t_cfg.elapsed()
+        );
+        cfg
+    };
 
     let (tmpl_method, tmpl_path) = raw_template_req
         .or_else(|| config_snapshot.as_ref().map(|cfg| cfg.raw_request.as_str()))
@@ -923,6 +963,7 @@ pub async fn query_fuzzer_requests_matching_since(
 
     let mut filtered = Vec::new();
 
+    let t_no_chunk = std::time::Instant::now();
     for row in no_chunk_rows {
         let item = crate::ares_utils::httpql::LazyFuzzerEvaluableItem::new(
             row.sort_order as u32,
@@ -946,38 +987,152 @@ pub async fn query_fuzzer_requests_matching_since(
             }
         }
     }
+    eprintln!(
+        "[FUZZER_SEARCH_BENCH]   Step 3: No-chunk rows evaluated in {:?} (matched {})",
+        t_no_chunk.elapsed(),
+        filtered.len()
+    );
 
-    for (cid, rows) in chunk_groups {
-        if let Ok(resps) = fetch_fuzzer_chunk_responses(pool, cid).await {
-            for row in rows {
-                if let Some(cidx) = row.chunk_index {
-                    if let Some(raw_resp) = resps.get(cidx as usize) {
-                        let item = crate::ares_utils::httpql::LazyFuzzerEvaluableItem::new(
-                            row.sort_order as u32,
-                            row.status_code.unwrap_or(0),
-                            row.response_length.unwrap_or(0),
-                            row.response_time_ms.unwrap_or(0),
-                            row.request_date,
-                            "completed",
-                            Some(raw_resp.as_str()),
-                            row.payload.as_deref(),
-                            &row.id,
-                            config_snapshot.as_ref(),
-                            &tmpl_method,
-                            &tmpl_host,
-                            &tmpl_path,
-                            is_https,
-                        );
-                        if let Some(expr) = httpql_expr {
-                            if expr.evaluate(&item) {
-                                filtered.push(row);
+    if !chunk_groups.is_empty() {
+        if let Some(ref flag) = cancel_flag {
+            if flag.load(std::sync::atomic::Ordering::Relaxed) {
+                eprintln!("[FUZZER_SEARCH_BENCH]   Search cancelled before fetching blobs");
+                return Err("Search cancelled".to_string());
+            }
+        }
+
+        let total_chunk_candidates: usize = chunk_groups.values().map(|v| v.len()).sum();
+        eprintln!(
+            "[FUZZER_SEARCH_BENCH]   Step 4: Beginning batch chunk processing for {} chunks ({} candidates)",
+            chunk_groups.len(),
+            total_chunk_candidates
+        );
+
+        let chunk_ids: Vec<i64> = chunk_groups.keys().copied().collect();
+        let t_blobs = std::time::Instant::now();
+        let mut blobs_map = fetch_fuzzer_chunk_blobs_batch(pool, &chunk_ids, cancel_flag.as_ref()).await?;
+        let total_bytes: usize = blobs_map.values().map(|b| b.len()).sum();
+        eprintln!(
+            "[FUZZER_SEARCH_BENCH]   Step 4a: Batch fetched {} blobs ({} bytes compressed) in {:?}",
+            blobs_map.len(),
+            total_bytes,
+            t_blobs.elapsed()
+        );
+
+        if let Some(ref flag) = cancel_flag {
+            if flag.load(std::sync::atomic::Ordering::Relaxed) {
+                eprintln!("[FUZZER_SEARCH_BENCH]   Search cancelled before Rayon spawn");
+                return Err("Search cancelled".to_string());
+            }
+        }
+
+        let mut chunk_tasks: Vec<(i64, Vec<FuzzerRequestDb>, Option<Vec<u8>>)> =
+            Vec::with_capacity(chunk_groups.len());
+        for (cid, rows) in chunk_groups {
+            let blob = blobs_map.remove(&cid);
+            chunk_tasks.push((cid, rows, blob));
+        }
+
+        let httpql_expr_owned = httpql_expr.cloned();
+        let config_snapshot_owned = config_snapshot.clone();
+        let tmpl_method_owned = tmpl_method.clone();
+        let tmpl_host_owned = tmpl_host.clone();
+        let tmpl_path_owned = tmpl_path.clone();
+        let cancel_flag_owned = cancel_flag.clone();
+
+        let t_rayon = std::time::Instant::now();
+        let matched_chunk_rows: Vec<FuzzerRequestDb> = tokio::task::spawn_blocking(move || {
+            use rayon::prelude::*;
+            chunk_tasks
+                .into_par_iter()
+                .flat_map(|(_cid, rows, blob)| {
+                    if let Some(ref flag) = cancel_flag_owned {
+                        if flag.load(std::sync::atomic::Ordering::Relaxed) {
+                            return Vec::new();
+                        }
+                    }
+                    let Some(blob) = blob else {
+                        return Vec::new();
+                    };
+                    let Ok(resps) = crate::fuzzer::chunk_manager::decompress_chunk(&blob) else {
+                        return Vec::new();
+                    };
+
+                    let mut chunk_matched = Vec::new();
+                    for row in rows {
+                        if let Some(ref flag) = cancel_flag_owned {
+                            if flag.load(std::sync::atomic::Ordering::Relaxed) {
+                                return Vec::new();
+                            }
+                        }
+                        if let Some(cidx) = row.chunk_index {
+                            if cidx >= 0 && (cidx as usize) < resps.len() {
+                                let raw_resp = &resps[cidx as usize];
+                                let item = crate::ares_utils::httpql::LazyFuzzerEvaluableItem::new(
+                                    row.sort_order as u32,
+                                    row.status_code.unwrap_or(0),
+                                    row.response_length.unwrap_or(0),
+                                    row.response_time_ms.unwrap_or(0),
+                                    row.request_date,
+                                    if row.error_message.is_some() || row.connection_dropped {
+                                        "error"
+                                    } else {
+                                        "completed"
+                                    },
+                                    Some(raw_resp.as_str()),
+                                    row.payload.as_deref(),
+                                    &row.id,
+                                    config_snapshot_owned.as_ref(),
+                                    &tmpl_method_owned,
+                                    &tmpl_host_owned,
+                                    &tmpl_path_owned,
+                                    is_https,
+                                );
+                                if let Some(ref expr) = httpql_expr_owned {
+                                    if expr.evaluate(&item) {
+                                        chunk_matched.push(row);
+                                    }
+                                } else {
+                                    chunk_matched.push(row);
+                                }
                             }
                         }
                     }
-                }
+                    chunk_matched
+                })
+                .collect()
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+
+        if let Some(ref flag) = cancel_flag {
+            if flag.load(std::sync::atomic::Ordering::Relaxed) {
+                eprintln!("[FUZZER_SEARCH_BENCH]   Search cancelled after Rayon execution");
+                return Err("Search cancelled".to_string());
             }
         }
+
+        eprintln!(
+            "[FUZZER_SEARCH_BENCH]   Step 4b: Rayon parallel decompress + regex matched {} rows in {:?}",
+            matched_chunk_rows.len(),
+            t_rayon.elapsed()
+        );
+
+        filtered.extend(matched_chunk_rows);
+        let t_sort = std::time::Instant::now();
+        filtered.sort_by_key(|r| r.sort_order);
+        eprintln!(
+            "[FUZZER_SEARCH_BENCH]   Step 4c: Sorted final {} rows in {:?}",
+            filtered.len(),
+            t_sort.elapsed()
+        );
     }
+
+    eprintln!(
+        "[FUZZER_SEARCH_BENCH] <<< query_fuzzer_requests_matching_since FINISHED: total_matched={}, total_duration={:?}",
+        filtered.len(),
+        t_fn_start.elapsed()
+    );
 
     Ok((filtered, max_date))
 }
@@ -989,7 +1144,7 @@ pub async fn query_fuzzer_requests_all_matching(
     raw_template_req: Option<&str>,
     target_url: Option<&str>,
 ) -> Result<Vec<FuzzerRequestDb>, String> {
-    query_fuzzer_requests_matching_since(pool, run_id, 0, httpql_expr, raw_template_req, target_url)
+    query_fuzzer_requests_matching_since(pool, run_id, 0, httpql_expr, raw_template_req, target_url, None, None)
         .await
         .map(|(rows, _)| rows)
 }
@@ -1216,6 +1371,72 @@ pub async fn fetch_fuzzer_chunk_blob(
     .map_err(|e| e.to_string())?;
 
     Ok(blob)
+}
+
+#[derive(FromRow)]
+struct ChunkBlobRow {
+    id: i64,
+    compressed_data: Vec<u8>,
+}
+
+/// Fetch raw compressed blobs for multiple chunks from `fuzzer_chunks` in batch
+pub async fn fetch_fuzzer_chunk_blobs_batch(
+    pool: &SqlitePool,
+    chunk_ids: &[i64],
+    cancel_flag: Option<&std::sync::Arc<std::sync::atomic::AtomicBool>>,
+) -> Result<std::collections::HashMap<i64, Vec<u8>>, String> {
+    if chunk_ids.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+
+    let t_start = std::time::Instant::now();
+    let mut result = std::collections::HashMap::with_capacity(chunk_ids.len());
+
+    for (batch_idx, batch) in chunk_ids.chunks(500).enumerate() {
+        if let Some(flag) = cancel_flag {
+            if flag.load(std::sync::atomic::Ordering::Relaxed) {
+                eprintln!(
+                    "[FUZZER_SEARCH_BENCH]   fetch_fuzzer_chunk_blobs_batch: Cancelled before batch #{}",
+                    batch_idx
+                );
+                return Err("Search cancelled".to_string());
+            }
+        }
+        let t_batch_start = std::time::Instant::now();
+        let mut builder = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
+            "SELECT id, compressed_data FROM fuzzer_chunks WHERE id IN ("
+        );
+        let mut separated = builder.separated(", ");
+        for &id in batch {
+            separated.push_bind(id);
+        }
+        separated.push_unseparated(")");
+
+        let rows: Vec<ChunkBlobRow> = builder
+            .build_query_as::<ChunkBlobRow>()
+            .fetch_all(pool)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        eprintln!(
+            "[FUZZER_SEARCH_BENCH]   fetch_fuzzer_chunk_blobs_batch: chunk #{} ({} IDs) fetched in {:?}",
+            batch_idx,
+            batch.len(),
+            t_batch_start.elapsed()
+        );
+
+        for row in rows {
+            result.insert(row.id, row.compressed_data);
+        }
+    }
+
+    eprintln!(
+        "[FUZZER_SEARCH_BENCH]   fetch_fuzzer_chunk_blobs_batch: total {} blobs retrieved in {:?}",
+        result.len(),
+        t_start.elapsed()
+    );
+
+    Ok(result)
 }
 
 /// Insert a single failed/errored fuzzer request in SQLite
@@ -1592,7 +1813,7 @@ mod tests {
         // 6. Query incremental matching with regex (resp.raw.regex:.404.)
         let q6 = crate::ares_utils::httpql::parse_httpql("resp.raw.regex:.404.").unwrap().unwrap();
         let (since_rows1, max_date1) = query_fuzzer_requests_matching_since(
-            &pool, "run-1", 0, Some(&q6), None, None
+            &pool, "run-1", 0, Some(&q6), None, None, None, None
         ).await.unwrap();
         assert_eq!(since_rows1.len(), 1);
         assert_eq!(since_rows1[0].id, "req-2");
@@ -1636,7 +1857,7 @@ mod tests {
             .unwrap();
 
         let (since_rows2, _) = query_fuzzer_requests_matching_since(
-            &pool, "run-1", 1003, Some(&q6), None, None
+            &pool, "run-1", 1003, Some(&q6), None, None, None, None
         ).await.unwrap();
         assert_eq!(since_rows2.len(), 0);
 
@@ -1736,6 +1957,18 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(fts_count_after, 0);
+    }
+
+    #[tokio::test]
+    async fn test_search_cancellation_aborts_chunk_search() {
+        let pool = create_test_pool().await;
+        let cancel_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let q = crate::ares_utils::httpql::parse_httpql("resp.raw.regex:.404.").unwrap().unwrap();
+        let res = query_fuzzer_requests_matching_since(
+            &pool, "run-1", 0, Some(&q), None, None, None, Some(cancel_flag)
+        ).await;
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err(), "Search cancelled");
     }
 }
 
