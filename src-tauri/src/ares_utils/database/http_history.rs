@@ -326,9 +326,10 @@ pub async fn get_http_history_window(
         if !q.trim().is_empty() {
             match crate::ares_utils::httpql::parse_httpql_with_presets(q, &preset_map) {
                 Ok(Some(expr)) => Some(expr),
-                _ => {
-                    // Fallback to a single bare expression
-                    Some(crate::ares_utils::httpql::HttpqlExpr::Bare(q.trim().to_string()))
+                Ok(None) => None,
+                Err(_) => {
+                    // Syntax error while typing: fall back to unfiltered (display all)
+                    None
                 }
             }
         } else {

@@ -101,6 +101,19 @@ export const HttpqlBar: React.FC<HttpqlBarProps> = ({
     const [isValid, setIsValid] = useState<boolean>(true);
     const [validationError, setValidationError] = useState<string | null>(null);
 
+    // Track the last valid query and the last emitted query to parent
+    const lastValidQueryRef = useRef<string>(value || '');
+    const lastEmittedValueRef = useRef<string>(value || '');
+    const onChangeRef = useRef(onChange);
+    onChangeRef.current = onChange;
+
+    const emitQuery = React.useCallback((query: string) => {
+        if (lastEmittedValueRef.current !== query) {
+            lastEmittedValueRef.current = query;
+            onChangeRef.current(query);
+        }
+    }, []);
+
     // History and saved queries
     const [savedQueries, setSavedQueries] = useState<SavedQuery[]>(() => {
         try {
@@ -123,32 +136,52 @@ export const HttpqlBar: React.FC<HttpqlBarProps> = ({
     const [cheatsheetOpen, setCheatsheetOpen] = useState<boolean>(false);
     const [newQueryName, setNewQueryName] = useState<string>('');
 
-    // Sync from outer prop changes
+    // Sync from outer prop changes (only when external change differs from what was emitted)
     useEffect(() => {
-        setInputValue(value);
+        if (value !== lastEmittedValueRef.current) {
+            setInputValue(value || '');
+            lastValidQueryRef.current = value || '';
+            lastEmittedValueRef.current = value || '';
+        }
     }, [value]);
 
-    // Live validation debounce
+    // Live validation debounce: on syntax error while typing, display the last valid query or display all if it was empty
     useEffect(() => {
+        const trimmed = inputValue.trim();
+        if (!trimmed) {
+            setIsValid(true);
+            setValidationError(null);
+            lastValidQueryRef.current = '';
+            emitQuery('');
+            return;
+        }
+
         const timer = setTimeout(() => {
-            if (!inputValue.trim()) {
-                setIsValid(true);
-                setValidationError(null);
-                return;
-            }
             invoke<{ isValid: boolean; error?: string }>('validate_httpql', { query: inputValue })
                 .then((res) => {
-                    setIsValid(res.isValid);
-                    setValidationError(res.error || null);
+                    if (res.isValid) {
+                        setIsValid(true);
+                        setValidationError(null);
+                        lastValidQueryRef.current = inputValue;
+                        emitQuery(inputValue);
+                    } else {
+                        // Syntax error while the user is still writing the command:
+                        // Just display the last query that has been written, or display all if it was empty
+                        setIsValid(false);
+                        setValidationError(res.error || 'Invalid expression');
+                        emitQuery(lastValidQueryRef.current);
+                    }
                 })
                 .catch(() => {
                     setIsValid(true);
                     setValidationError(null);
+                    lastValidQueryRef.current = inputValue;
+                    emitQuery(inputValue);
                 });
         }, 150);
 
         return () => clearTimeout(timer);
-    }, [inputValue]);
+    }, [inputValue, emitQuery]);
 
     const handleSaveToHistory = (queryToSave: string) => {
         const trimmed = queryToSave.trim();
@@ -190,7 +223,8 @@ export const HttpqlBar: React.FC<HttpqlBarProps> = ({
 
     const clearInput = () => {
         setInputValue('');
-        onChange('');
+        lastValidQueryRef.current = '';
+        emitQuery('');
         inputRef.current?.focus();
     };
 
@@ -233,7 +267,6 @@ export const HttpqlBar: React.FC<HttpqlBarProps> = ({
                         value={inputValue}
                         onChange={(val) => {
                             setInputValue(val);
-                            onChange(val);
                         }}
                         onSubmit={(val) => {
                             handleSaveToHistory(val);
@@ -331,7 +364,8 @@ export const HttpqlBar: React.FC<HttpqlBarProps> = ({
                                     className="flex items-center justify-between text-xs py-1.5 cursor-pointer group"
                                     onClick={() => {
                                         setInputValue(saved.query);
-                                        onChange(saved.query);
+                                        lastValidQueryRef.current = saved.query;
+                                        emitQuery(saved.query);
                                     }}
                                 >
                                     <div className="flex flex-col truncate pr-2">
@@ -364,7 +398,8 @@ export const HttpqlBar: React.FC<HttpqlBarProps> = ({
                                     className="text-xs font-mono py-1.5 truncate cursor-pointer text-muted-foreground hover:text-foreground"
                                     onClick={() => {
                                         setInputValue(q);
-                                        onChange(q);
+                                        lastValidQueryRef.current = q;
+                                        emitQuery(q);
                                     }}
                                 >
                                     <span className="truncate">{q}</span>

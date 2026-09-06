@@ -573,7 +573,9 @@ fn is_known_field_prefix(word: &str) -> bool {
     lower.starts_with("req.")
         || lower.starts_with("resp.")
         || lower.starts_with("row.")
+        || lower.starts_with("fuzz.")
         || lower.starts_with("preset")
+        || lower.starts_with("payload")
         || lower.starts_with("method")
         || lower.starts_with("host")
         || lower.starts_with("path")
@@ -762,6 +764,8 @@ impl Parser {
                 // If next token is colon, consume it
                 if let Some(Token::Colon) = self.peek() {
                     self.advance();
+                } else {
+                    return Err(format!("Incomplete query: expected ':' after field '{}'", field_str));
                 }
 
                 let value_tok = self
@@ -805,11 +809,11 @@ impl Parser {
                     let op = parse_operator(op_str.as_deref(), &value);
                     Ok(HttpqlExpr::Condition(HttpqlCondition::new(field, op, value)))
                 } else {
-                    Ok(HttpqlExpr::Bare(s))
+                    Err(format!("Incomplete query: expected ':' after '{}'", s))
                 }
             }
             Token::StringVal(s) => Ok(HttpqlExpr::Bare(s)),
-            Token::NumberVal(n) => Ok(HttpqlExpr::Bare(n.to_string())),
+            Token::NumberVal(n) => Err(format!("Incomplete query: expected field before '{}'", n)),
             Token::Colon => Err("Unexpected standalone ':'".to_string()),
             other => Err(format!("Unexpected token: {:?}", other)),
         }
@@ -3323,11 +3327,26 @@ mod tests {
         compile_fuzzer_httpql_to_sql(&mut b3, &q_payload, None, None);
         assert!(b3.sql().as_str().contains("COALESCE(payload, '') LIKE ?"));
 
-        let q_bare = parse_httpql("foo").unwrap().unwrap();
+        let q_bare = parse_httpql("\"foo\"").unwrap().unwrap();
         let mut b4 = sqlx::QueryBuilder::<sqlx::Sqlite>::new("SELECT * FROM fuzzer_requests WHERE ");
         compile_fuzzer_httpql_to_sql(&mut b4, &q_bare, None, None);
         assert!(b4.sql().as_str().contains("COALESCE(payload, '') LIKE ?"));
         assert!(b4.sql().as_str().contains("chunk_id IN (SELECT rowid FROM fuzzer_chunks_fts"));
+
+        // Test uncompleted queries are treated as incomplete / syntax error
+        assert!(parse_httpql("r").is_err());
+        assert!(parse_httpql("re").is_err());
+        assert!(parse_httpql("res").is_err());
+        assert!(parse_httpql("resp").is_err());
+        assert!(parse_httpql("resp.").is_err());
+        assert!(parse_httpql("resp.c").is_err());
+        assert!(parse_httpql("resp.code").is_err());
+        assert!(parse_httpql("code").is_err());
+        assert!(parse_httpql("status").is_err());
+        assert!(parse_httpql("foo").is_err());
+        assert!(parse_httpql("200").is_err());
+        assert!(parse_httpql("\"foo\"").is_ok());
+        assert!(parse_httpql("resp.code:200").is_ok());
 
         // Test FuzzerEvaluableItem with in-memory evaluation
         let item = FuzzerEvaluableItem {

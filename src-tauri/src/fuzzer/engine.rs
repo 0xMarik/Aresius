@@ -349,8 +349,8 @@ pub async fn get_fuzzer_history_window(
             Ok(Some(expr)) => Some(expr),
             Ok(None) => None,
             Err(_) => {
-                // Return 0 results for malformed queries instead of silently falling back to unfiltered
-                return Ok(FuzzerWindowResult { total: 0, items: vec![] });
+                // If there is a syntax error, fall back to unfiltered (display all)
+                None
             }
         }
     } else {
@@ -360,11 +360,6 @@ pub async fn get_fuzzer_history_window(
     let key = run_key(selected_session, fuzz_history);
     let store = fuzz_store().lock().await;
 
-    eprintln!("[FUZZER_BACKEND_DEBUG] === get_fuzzer_history_window ===");
-    eprintln!("[FUZZER_BACKEND_DEBUG] session={}, history={}, offset={}, limit={}, query={:?}", selected_session, fuzz_history, offset, limit, search_query);
-    eprintln!("[FUZZER_BACKEND_DEBUG] parsed_httpql={:?}", parsed_httpql);
-    eprintln!("[FUZZER_BACKEND_DEBUG] In-memory store has key '{}': {}", key, store.contains_key(&key));
-
     // ─── 1. In-Memory Store for Live / Active Runs ─────────────────────────
     if store.contains_key(&key) {
         let run_data = store.get(&key).unwrap();
@@ -373,8 +368,6 @@ pub async fn get_fuzzer_history_window(
         } else {
             run_data.rows.iter().filter(|r| r.status == "completed" || r.status == "error").collect()
         };
-
-        eprintln!("[FUZZER_BACKEND_DEBUG][IN-MEMORY] total in-store rows={}, target_rows (completed/error)={}", run_data.rows.len(), target_rows.len());
 
         let mut filtered_refs: Vec<&FuzzerRequestRow> = if let Some(ref expr) = parsed_httpql {
             let (tmpl_method, tmpl_path) = run_data.config_snapshot
@@ -399,7 +392,6 @@ pub async fn get_fuzzer_history_window(
                 .as_ref()
                 .map(|cfg| cfg.raw_request.as_str());
 
-            let mut matched_count = 0;
             let res: Vec<&FuzzerRequestRow> = target_rows.into_iter().filter(|r| {
                 let raw_resp_str = r.response.as_ref().map(|resp| resp.response.as_str());
                 let item = crate::ares_utils::httpql::FuzzerEvaluableItem {
@@ -421,13 +413,8 @@ pub async fn get_fuzzer_history_window(
                     raw_response: raw_resp_str,
                     payload: r.payload.as_deref(),
                 };
-                let matches = expr.evaluate(&item);
-                if matches {
-                    matched_count += 1;
-                }
-                matches
+                expr.evaluate(&item)
             }).collect();
-            eprintln!("[FUZZER_BACKEND_DEBUG][IN-MEMORY] Filter matched {} / {} rows", matched_count, res.len());
             res
         } else {
             target_rows
@@ -444,7 +431,6 @@ pub async fn get_fuzzer_history_window(
             row
         }).collect();
 
-        eprintln!("[FUZZER_BACKEND_DEBUG][IN-MEMORY] Returning window: total={}, returned items={}", total, items.len());
         return Ok(FuzzerWindowResult { total, items });
     }
 
@@ -564,9 +550,6 @@ pub async fn get_fuzzer_history_window(
                         .as_ref()
                         .map_or(false, |expr| crate::ares_utils::httpql::has_in_memory_checks(expr, raw_template_req, target_url));
 
-                    eprintln!("[FUZZER_BACKEND_DEBUG][SQLITE-FALLBACK] Entering SQLite fallback for run_id='{}', run_status='{}'", run_id, run_status);
-                    eprintln!("[FUZZER_BACKEND_DEBUG][SQLITE-FALLBACK] needs_memory_filter={}", needs_memory_filter);
-
                     if needs_memory_filter {
                         // ─── Path B: Content-heavy search using FuzzerSearchCache ────
                         let query_str = search_query.as_deref().unwrap_or("").trim();
@@ -626,7 +609,6 @@ pub async fn get_fuzzer_history_window(
 
                                 let rows = cached_item.rows.clone();
                                 cache.push_back(cached_item);
-                                eprintln!("[FUZZER_BACKEND_DEBUG][SQLITE-FALLBACK] Path B cache updated for key '{}' ({} rows, is_active={})", cache_key, rows.len(), is_active);
                                 rows
                             }
                             None => {
@@ -678,7 +660,6 @@ pub async fn get_fuzzer_history_window(
                                     last_scanned_date: max_date,
                                     last_accessed: std::time::Instant::now(),
                                 });
-                                eprintln!("[FUZZER_BACKEND_DEBUG][SQLITE-FALLBACK] Path B initial scan matched {} rows", converted.len());
                                 converted
                             }
                         };
@@ -689,7 +670,6 @@ pub async fn get_fuzzer_history_window(
                         let start = offset.min(total);
                         let end = (offset + limit).min(total);
                         let items = all_rows[start..end].to_vec();
-                        eprintln!("[FUZZER_BACKEND_DEBUG][SQLITE-FALLBACK] Path B returning total={}, items={}", total, items.len());
                         return Ok(FuzzerWindowResult { total, items });
                     } else {
                         // ─── Path A: Pure SQL fast path for metadata queries & sorting ───
@@ -704,7 +684,6 @@ pub async fn get_fuzzer_history_window(
                             raw_template_req,
                             target_url,
                         ).await {
-                            eprintln!("[FUZZER_BACKEND_DEBUG][SQLITE-FALLBACK] Path A (pure SQL) total={}, rows={}", total, db_rows.len());
                             let items: Vec<FuzzerRequestRow> = db_rows.into_iter().map(|r| {
                                 let status = if r.error_message.is_some() || r.connection_dropped {
                                     "error".to_string()

@@ -366,17 +366,25 @@ function FuzzerHistoryBody({
     const [isSearching, setIsSearching] = useState(false);
 
     useEffect(() => {
+        if (!httpqlQuery.trim()) {
+            setDebouncedHttpqlQuery('');
+            setIsSearching(false);
+            return;
+        }
         setIsSearching(true);
         const timer = setTimeout(() => {
             setDebouncedHttpqlQuery(httpqlQuery);
-        }, 300);
+        }, 150);
         return () => clearTimeout(timer);
     }, [httpqlQuery]);
 
     const handleHttpqlChange = useCallback((query: string) => {
-        setHttpqlQuery(query);
-        setIsSearching(true);
-        setWindowState((prev) => ({ ...prev, offset: 0 }));
+        setHttpqlQuery((prev) => {
+            if (prev === query) return prev;
+            setIsSearching(true);
+            setWindowState((w) => ({ ...w, offset: 0 }));
+            return query;
+        });
     }, []);
 
     const handleSortingChange = useCallback((updater: any) => {
@@ -437,8 +445,6 @@ function FuzzerHistoryBody({
         const sortBy = sorting[0]?.id ?? null;
         const sortOrder = sorting[0]?.desc ? 'desc' : 'asc';
 
-        console.log(`[FUZZER_FRONTEND_DEBUG] Dispatching fetch #${thisReqId}: query="${debouncedHttpqlQuery.trim()}", completed=${runState.completed}, offset=${windowState.offset}, limit=${windowState.limit}`);
-
         invoke<{ total: number; items: FuzzerRequest[] }>('get_fuzzer_history_window', {
             selectedSession: sessionIndex,
             fuzzHistory: historyIndex,
@@ -450,7 +456,6 @@ function FuzzerHistoryBody({
             showUncompleted,
         })
             .then((res) => {
-                console.log(`[FUZZER_FRONTEND_DEBUG] Response for #${thisReqId}: total=${res?.total}, items=${res?.items?.length}, isMounted=${isMountedRef.current}, keyMatch=${latestQueryKeyRef.current === queryKey}, committed=${thisReqId >= latestCommittedReqIdRef.current}`);
                 if (!isMountedRef.current || latestQueryKeyRef.current !== queryKey) return;
                 if (thisReqId >= latestCommittedReqIdRef.current) {
                     latestCommittedReqIdRef.current = thisReqId;
@@ -464,8 +469,7 @@ function FuzzerHistoryBody({
                     }
                 }
             })
-            .catch((err) => {
-                console.error(`[FUZZER_FRONTEND_DEBUG] Fetch #${thisReqId} failed:`, err);
+            .catch((_err) => {
                 if (!isMountedRef.current || latestQueryKeyRef.current !== queryKey) return;
                 if (thisReqId >= latestCommittedReqIdRef.current) {
                     latestCommittedReqIdRef.current = thisReqId;
