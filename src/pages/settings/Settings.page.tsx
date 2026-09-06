@@ -9,7 +9,7 @@ import {
     RotateCcw,
     Copy,
     Check,
-    CheckCircle2,
+
     AlertCircle,
     AlertTriangle,
     Sliders,
@@ -18,9 +18,8 @@ import {
     Keyboard,
     Info,
     Radio,
-    Crosshair,
-    Download,
-    Upload,
+    Waves,
+
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -215,59 +214,8 @@ export default function SettingsPage() {
         }
     }
 
-    const handleExportSettings = async () => {
-        try {
-            const jsonStr = await invoke<string>("export_settings")
-            const blob = new Blob([jsonStr], { type: "application/json" })
-            const url = URL.createObjectURL(blob)
-            const a = document.createElement("a")
-            a.href = url
-            a.download = `aresius-settings-${new Date().toISOString().slice(0, 10)}.json`
-            document.body.appendChild(a)
-            a.click()
-            document.body.removeChild(a)
-            URL.revokeObjectURL(url)
-            toast.success("Settings exported successfully")
-        } catch (err) {
-            console.error("Export settings error:", err)
-            toast.error("Failed to export settings")
-        }
-    }
 
-    const handleImportSettings = async (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0]
-        if (!file) return
-        try {
-            const text = await file.text()
-            await invoke("import_settings", { jsonData: text })
 
-            // Reload local state and redux
-            const [savedProxy, savedFuzzer] = await Promise.all([
-                invoke<ProxySettings>("get_proxy_settings_db"),
-                invoke<FuzzerSettings>("get_fuzzer_settings_db"),
-            ])
-            if (savedProxy) {
-                if (savedProxy.host === "127.0.0.1") setHostType("127.0.0.1")
-                else if (savedProxy.host === "0.0.0.0") setHostType("0.0.0.0")
-                else {
-                    setHostType("custom")
-                    setCustomHost(savedProxy.host)
-                }
-                setPort(savedProxy.port || 8080)
-                setAutoFallbackPort(savedProxy.autoFallbackPort ?? true)
-                setAutoFallbackLoopback(savedProxy.autoFallbackLoopback ?? true)
-            }
-            if (savedFuzzer) {
-                dispatch(setFuzzerSettings(savedFuzzer))
-            }
-            toast.success("Settings imported successfully")
-        } catch (err) {
-            console.error("Import settings error:", err)
-            toast.error("Failed to import settings: Invalid JSON format")
-        } finally {
-            e.target.value = ""
-        }
-    }
 
     return (
         <div className="flex flex-col h-full bg-background overflow-hidden">
@@ -287,70 +235,8 @@ export default function SettingsPage() {
                     </div>
                 </div>
 
-                {/* Status indicator badge & Actions */}
-                <div className="flex items-center gap-2.5">
-                    {status.isRunning ? (
-                        status.fallbackApplied ? (
-                            <Badge
-                                variant="outline"
-                                className="bg-amber-500/10 text-amber-500 border-amber-500/30 gap-1.5 py-1 px-2.5 text-xs font-medium"
-                            >
-                                <AlertTriangle className="w-3.5 h-3.5" />
-                                Fallback Active: {status.boundAddress}
-                            </Badge>
-                        ) : (
-                            <Badge
-                                variant="outline"
-                                className="bg-emerald-500/10 text-emerald-500 border-emerald-500/30 gap-1.5 py-1 px-2.5 text-xs font-medium"
-                            >
-                                <CheckCircle2 className="w-3.5 h-3.5" />
-                                Listening: {status.boundAddress}
-                            </Badge>
-                        )
-                    ) : (
-                        <Badge
-                            variant="outline"
-                            className="bg-destructive/10 text-destructive border-destructive/30 gap-1.5 py-1 px-2.5 text-xs font-medium"
-                        >
-                            <AlertCircle className="w-3.5 h-3.5" />
-                            Proxy Offline
-                        </Badge>
-                    )}
 
-                    <div className="h-4 w-px bg-border/60 mx-0.5" />
 
-                    <label className="cursor-pointer">
-                        <input
-                            type="file"
-                            accept=".json,application/json"
-                            className="hidden"
-                            onChange={handleImportSettings}
-                        />
-                        <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            asChild
-                            className="h-8 text-xs gap-1.5 cursor-pointer bg-background/50 hover:bg-muted/60"
-                        >
-                            <span>
-                                <Upload className="w-3.5 h-3.5 text-muted-foreground" />
-                                Import
-                            </span>
-                        </Button>
-                    </label>
-
-                    <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={handleExportSettings}
-                        className="h-8 text-xs gap-1.5 bg-background/50 hover:bg-muted/60"
-                    >
-                        <Download className="w-3.5 h-3.5 text-muted-foreground" />
-                        Export
-                    </Button>
-                </div>
             </div>
 
             {/* ── Main Layout: Left Sidebar + Right Content ── */}
@@ -402,7 +288,7 @@ export default function SettingsPage() {
                                 : "text-muted-foreground hover:bg-muted/40 hover:text-foreground"
                         )}
                     >
-                        <Crosshair className="w-4 h-4 shrink-0" />
+                        <Waves className="w-4 h-4 shrink-0" />
                         <span className="flex-1">Fuzzer</span>
                     </button>
 
@@ -813,7 +699,7 @@ export default function SettingsPage() {
                             <Card className="border-border/60 bg-card shadow-xs">
                                 <CardHeader>
                                     <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                                        <Crosshair className="w-4 h-4 text-primary" />
+                                        <Waves className="w-4 h-4 text-primary" />
                                         Fuzzer Execution & Display Preferences
                                     </CardTitle>
                                     <CardDescription className="text-xs">

@@ -1,9 +1,7 @@
-import { basicSetup, EditorView } from "codemirror";
+import { EditorView } from "codemirror";
 import { Decoration, DecorationSet } from "@codemirror/view";
 import { useEffect, useRef } from "react";
 import { EditorState, StateEffect, StateField, RangeSetBuilder } from '@codemirror/state';
-import { http } from "../../http-parser.component";
-import { javascript } from '@codemirror/lang-javascript';
 import { Minus, Plus } from "lucide-react";
 import { Button } from "../../ui/button";
 import { Badge } from "../../ui/badge";
@@ -11,32 +9,20 @@ import { useAppDispatch, useAppSelector } from "@/hooks/redux";
 import { useProjectId } from "@/hooks/useProjectId";
 import { addParameter, removeParameter, setParameters, setSelectedParameter, setContent, selectFuzzerState, persistFuzzerSession } from '@/store/slices/fuzzerSlice';
 import { FuzzerParameter, HighlightRange } from "@/types/fuzzer.type";
-import { oneDark } from '@codemirror/theme-one-dark';
-import { codeMirrorScrollTheme } from "@/components/codemirror-scroll.theme";
+import { useTheme } from "@/components/theme-provider";
+import { getCommonEditorExtensions } from "@/components/Replayer/editorUtils";
 import CoreContextMenu from "@/components/ContextMenu/CoreContextMenu";
 import RequestEditorContextMenu from "./RequestEditorContextMenu";
 import HttpRequestFormatWarning from "@/components/HttpRequestFormatWarning";
 import { toast } from "sonner";
-
-export const fullHeightTheme = EditorView.theme({
-    '&': {
-        height: '100%',
-        display: 'flex',
-        flexDirection: 'column',
-    },
-    '.cm-scroller': {
-        flex: 1,
-        overflow: 'auto',
-    },
-});
 
 // Create decoration for highlighted fuzzer parameters
 const createHighlightDecoration = (id: string, isSelected: boolean = false) => Decoration.mark({
     class: `fuzzer-highlight ${isSelected ? 'fuzzer-highlight-selected' : ''}`,
     attributes: {
         style: isSelected
-            ? 'padding: 0 3px; background-color: rgba(255, 5, 0, 0.35); color: black; border-radius: 2px; cursor: pointer; border: 2px solid #fbbf24;'
-            : 'padding: 0 3px; background-color: rgba(255, 5, 0, 0.3); color: black; border-radius: 2px; cursor: pointer; border: 2px solid transparent;',
+            ? 'padding: 0 3px; background-color: rgba(255, 5, 0, 0.35); border-radius: 2px; cursor: pointer; border: 2px solid #fbbf24;'
+            : 'padding: 0 3px; background-color: rgba(255, 5, 0, 0.3); border-radius: 2px; cursor: pointer; border: 2px solid transparent;',
         'data-range-id': id
     },
     atomic: true
@@ -190,6 +176,9 @@ const RequestEditor: React.FC = () => {
     const editorRef = useRef<HTMLDivElement | null>(null);
     const viewRef = useRef<EditorView | null>(null);
 
+    const { theme } = useTheme();
+    const isDark = theme === 'dark' || (theme === 'system' && typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+
     const projectId = useProjectId();
     const { activeSessionIndex, fuzzerSessions } = useAppSelector(selectFuzzerState(projectId));
     const dispatch = useAppDispatch();
@@ -340,14 +329,7 @@ const RequestEditor: React.FC = () => {
 
         const state = EditorState.create({
             doc: currentFuzzerSession.fuzzConfig.rawRequest,
-            extensions: [
-                basicSetup,
-                http({ enableFolding: false }),
-                EditorView.lineWrapping,
-                javascript(),
-                oneDark,
-                fullHeightTheme,
-                codeMirrorScrollTheme,
+            extensions: getCommonEditorExtensions(isDark, false, [
                 fuzzerParamsField.init(() => ({
                     parameters: currentFuzzerSession.fuzzConfig.parameters,
                     selectedId: currentFuzzerSession.selectedHighlightId,
@@ -360,7 +342,7 @@ const RequestEditor: React.FC = () => {
                     }
                 }),
                 updateListener,
-            ],
+            ]),
         });
 
         const view = new EditorView({
@@ -375,7 +357,7 @@ const RequestEditor: React.FC = () => {
                 view.destroy();
             }
         };
-    }, [activeSessionIndex]);
+    }, [activeSessionIndex, isDark]);
 
     return (
         <>
@@ -412,11 +394,11 @@ const RequestEditor: React.FC = () => {
                         <Plus />
                     </Button>
                 </div>
-                <CoreContextMenu triggerClassName="bg-background w-full h-full"
+                <CoreContextMenu triggerClassName="bg-card w-full h-full"
                     renderContextMenu={() => (<RequestEditorContextMenu viewRef={viewRef} onAddParameter={handleAddParameter} />)}>
                     <div
                         ref={editorRef}
-                        className="h-full overflow-auto" />
+                        className="h-full w-full" />
                 </CoreContextMenu>
             </div>
         </>
