@@ -882,7 +882,19 @@ pub async fn query_fuzzer_requests_matching_since(
 
     let max_date = candidates.iter().map(|r| r.request_date).max().unwrap_or(since_date);
 
+    let config_snapshot_str: Option<String> = sqlx::query_scalar(
+        "SELECT config_snapshot FROM fuzzer_runs WHERE id = ?"
+    )
+    .bind(run_id)
+    .fetch_optional(pool)
+    .await
+    .unwrap_or(None);
+
+    let config_snapshot: Option<crate::types::SessionPayload> = config_snapshot_str
+        .and_then(|s| serde_json::from_str(&s).ok());
+
     let (tmpl_method, tmpl_path) = raw_template_req
+        .or_else(|| config_snapshot.as_ref().map(|cfg| cfg.raw_request.as_str()))
         .map(|r| {
             let meta = crate::ares_utils::parse::parse_request_line(r.as_bytes());
             (meta.method, meta.path)
@@ -890,11 +902,14 @@ pub async fn query_fuzzer_requests_matching_since(
         .unwrap_or((String::new(), String::new()));
 
     let tmpl_host = target_url
+        .or_else(|| config_snapshot.as_ref().map(|cfg| cfg.metadata.target_url.as_str()))
         .and_then(|u| url::Url::parse(u).ok())
         .and_then(|url| url.host_str().map(String::from))
         .unwrap_or_default();
 
-    let is_https = target_url.map_or(false, |u| u.starts_with("https://"));
+    let is_https = target_url
+        .or_else(|| config_snapshot.as_ref().map(|cfg| cfg.metadata.target_url.as_str()))
+        .map_or(false, |u| u.starts_with("https://"));
 
     let mut chunk_groups: std::collections::BTreeMap<i64, Vec<FuzzerRequestDb>> = std::collections::BTreeMap::new();
     let mut no_chunk_rows: Vec<FuzzerRequestDb> = Vec::new();
@@ -909,23 +924,22 @@ pub async fn query_fuzzer_requests_matching_since(
     let mut filtered = Vec::new();
 
     for row in no_chunk_rows {
-        let item = crate::ares_utils::httpql::FuzzerEvaluableItem {
-            id: row.sort_order as u32,
-            method: &tmpl_method,
-            host: &tmpl_host,
-            path: &tmpl_path,
-            query: None,
-            ext: None,
-            status_code: row.status_code.unwrap_or(0),
-            response_length: row.response_length.unwrap_or(0),
-            response_time_ms: row.response_time_ms.unwrap_or(0),
-            sent_at_ms: row.request_date,
-            state: if row.error_message.is_some() || row.connection_dropped { "error" } else { "pending" },
+        let item = crate::ares_utils::httpql::LazyFuzzerEvaluableItem::new(
+            row.sort_order as u32,
+            row.status_code.unwrap_or(0),
+            row.response_length.unwrap_or(0),
+            row.response_time_ms.unwrap_or(0),
+            row.request_date,
+            if row.error_message.is_some() || row.connection_dropped { "error" } else { "pending" },
+            None,
+            row.payload.as_deref(),
+            &row.id,
+            config_snapshot.as_ref(),
+            &tmpl_method,
+            &tmpl_host,
+            &tmpl_path,
             is_https,
-            raw_request: raw_template_req,
-            raw_response: None,
-            payload: row.payload.as_deref(),
-        };
+        );
         if let Some(expr) = httpql_expr {
             if expr.evaluate(&item) {
                 filtered.push(row);
@@ -938,23 +952,22 @@ pub async fn query_fuzzer_requests_matching_since(
             for row in rows {
                 if let Some(cidx) = row.chunk_index {
                     if let Some(raw_resp) = resps.get(cidx as usize) {
-                        let item = crate::ares_utils::httpql::FuzzerEvaluableItem {
-                            id: row.sort_order as u32,
-                            method: &tmpl_method,
-                            host: &tmpl_host,
-                            path: &tmpl_path,
-                            query: None,
-                            ext: None,
-                            status_code: row.status_code.unwrap_or(0),
-                            response_length: row.response_length.unwrap_or(0),
-                            response_time_ms: row.response_time_ms.unwrap_or(0),
-                            sent_at_ms: row.request_date,
-                            state: "completed",
+                        let item = crate::ares_utils::httpql::LazyFuzzerEvaluableItem::new(
+                            row.sort_order as u32,
+                            row.status_code.unwrap_or(0),
+                            row.response_length.unwrap_or(0),
+                            row.response_time_ms.unwrap_or(0),
+                            row.request_date,
+                            "completed",
+                            Some(raw_resp.as_str()),
+                            row.payload.as_deref(),
+                            &row.id,
+                            config_snapshot.as_ref(),
+                            &tmpl_method,
+                            &tmpl_host,
+                            &tmpl_path,
                             is_https,
-                            raw_request: raw_template_req,
-                            raw_response: Some(raw_resp.as_str()),
-                            payload: row.payload.as_deref(),
-                        };
+                        );
                         if let Some(expr) = httpql_expr {
                             if expr.evaluate(&item) {
                                 filtered.push(row);
@@ -1373,7 +1386,8 @@ mod tests {
 
              CREATE TABLE fuzzer_runs (
                  id TEXT PRIMARY KEY NOT NULL,
-                 session_id TEXT NOT NULL REFERENCES fuzzer_sessions(id) ON DELETE CASCADE
+                 session_id TEXT NOT NULL REFERENCES fuzzer_sessions(id) ON DELETE CASCADE,
+                 config_snapshot TEXT
              );
              INSERT INTO fuzzer_runs (id, session_id) VALUES ('run-1', 'sess-1');
 
@@ -1584,10 +1598,71 @@ mod tests {
         assert_eq!(since_rows1[0].id, "req-2");
         assert_eq!(max_date1, 1002);
 
+        let config_obj = crate::types::SessionPayload {
+            raw_request: "GET /search?q=\u{00a7}FUZZ\u{00a7} HTTP/1.1\r\nHost: example.com\r\n\r\n".to_string(),
+            parameters: vec![crate::types::FuzzerParameter {
+                payload_source: "manual".to_string(),
+                values: vec!["admin".to_string(), "guest".to_string(), "root".to_string()],
+                highlight_range: crate::types::HighlightRange {
+                    id: "p1".to_string(),
+                    from: 14,
+                    to: 22,
+                    byte_from: 14,
+                    byte_to: 22,
+                    original_text: "\u{00a7}FUZZ\u{00a7}".to_string(),
+                    is_active: true,
+                },
+                pipeline_rules: None,
+            }],
+            metadata: crate::types::PayloadMetadata {
+                target_url: "https://example.com/search?q=%C2%A7FUZZ%C2%A7".to_string(),
+                url_is_valid: Some(true),
+            },
+            delay_ms: 0,
+            fuzzing_attack_type: Some("rotator".to_string()),
+            num_threads: Some(1),
+            pipeline_scope: Some("all".to_string()),
+            pipeline_rules: None,
+            set_connection_keep_alive: Some(true),
+            update_content_length: Some(true),
+        };
+        let tmpl_json = serde_json::to_string(&config_obj).unwrap();
+
+        sqlx::query("UPDATE fuzzer_runs SET config_snapshot = ? WHERE id = ?")
+            .bind(&tmpl_json)
+            .bind("run-1")
+            .execute(&pool)
+            .await
+            .unwrap();
+
         let (since_rows2, _) = query_fuzzer_requests_matching_since(
             &pool, "run-1", 1003, Some(&q6), None, None
         ).await.unwrap();
         assert_eq!(since_rows2.len(), 0);
+
+        // 7. Query dynamic reconstructed request: req.query.cont:"q=admin"
+        let q7 = crate::ares_utils::httpql::parse_httpql("req.query.cont:\"q=admin\"").unwrap().unwrap();
+        let (total7, rows7) = query_fuzzer_requests_window(
+            &pool, "run-1", 0, 10, None, None, Some(&q7), None, None
+        ).await.unwrap();
+        assert_eq!(total7, 1);
+        assert_eq!(rows7[0].id, "req-1");
+
+        // 8. Query dynamic reconstructed request: req.query.cont:"q=guest"
+        let q8 = crate::ares_utils::httpql::parse_httpql("req.query.cont:\"q=guest\"").unwrap().unwrap();
+        let (total8, rows8) = query_fuzzer_requests_window(
+            &pool, "run-1", 0, 10, None, None, Some(&q8), None, None
+        ).await.unwrap();
+        assert_eq!(total8, 1);
+        assert_eq!(rows8[0].id, "req-2");
+
+        // 9. Query dynamic reconstructed path: req.path:"/search"
+        let q9 = crate::ares_utils::httpql::parse_httpql("req.path:\"/search\"").unwrap().unwrap();
+        let (total9, rows9) = query_fuzzer_requests_window(
+            &pool, "run-1", 0, 10, None, None, Some(&q9), None, None
+        ).await.unwrap();
+        assert_eq!(total9, 3);
+        assert_eq!(rows9.len(), 3);
     }
 
     #[tokio::test]

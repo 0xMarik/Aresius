@@ -1400,9 +1400,18 @@ pub fn has_in_memory_checks(
             HttpqlField::RespRaw
             | HttpqlField::RespBody
             | HttpqlField::RespHeader(_)
+            | HttpqlField::RespExt
             | HttpqlField::ReqRaw
             | HttpqlField::ReqBody
-            | HttpqlField::ReqHeader(_) => true,
+            | HttpqlField::ReqHeader(_)
+            | HttpqlField::ReqMethod
+            | HttpqlField::ReqHost
+            | HttpqlField::ReqPath
+            | HttpqlField::ReqQuery
+            | HttpqlField::ReqExt
+            | HttpqlField::ReqPort
+            | HttpqlField::ReqTls
+            | HttpqlField::ReqLen => true,
             _ => matches!(cond.op, HttpqlOperator::Regex | HttpqlOperator::Nregex),
         },
         HttpqlExpr::Bare(_) => true,
@@ -1505,71 +1514,11 @@ fn compile_fuzzer_condition_to_sql_inner(
         return;
     }
 
-    let re_ref = cond.compiled_regex.as_deref();
-    match &cond.field {
-        HttpqlField::RespState | HttpqlField::RespExt | HttpqlField::Preset => {
-            builder.push("1=1");
-        }
-        HttpqlField::ReqMethod => {
-            if let Some(raw) = raw_template_req {
-                let meta = crate::ares_utils::parse::parse_request_line(raw.as_bytes());
-                let matches = eval_str_cmp(&meta.method, cond.op, &cond.value, true, re_ref);
-                let ok = if negated { !matches } else { matches };
-                builder.push(if ok { "1=1" } else { "1=0" });
-            } else {
-                builder.push("1=1");
-            }
-        }
-        HttpqlField::ReqHost => {
-            if let Some(u) = target_url {
-                let host = url::Url::parse(u).ok().and_then(|url| url.host_str().map(String::from)).unwrap_or_default();
-                let matches = eval_str_cmp(&host, cond.op, &cond.value, false, re_ref);
-                let ok = if negated { !matches } else { matches };
-                builder.push(if ok { "1=1" } else { "1=0" });
-            } else {
-                builder.push("1=1");
-            }
-        }
-        HttpqlField::ReqPath => {
-            if let Some(raw) = raw_template_req {
-                let meta = crate::ares_utils::parse::parse_request_line(raw.as_bytes());
-                let matches = eval_str_cmp(&meta.path, cond.op, &cond.value, false, re_ref);
-                let ok = if negated { !matches } else { matches };
-                builder.push(if ok { "1=1" } else { "1=0" });
-            } else {
-                builder.push("1=1");
-            }
-        }
-        HttpqlField::ReqQuery => {
-            if let Some(raw) = raw_template_req {
-                let meta = crate::ares_utils::parse::parse_request_line(raw.as_bytes());
-                let query = meta.query.unwrap_or_default();
-                let matches = eval_str_cmp(&query, cond.op, &cond.value, false, re_ref);
-                let ok = if negated { !matches } else { matches };
-                builder.push(if ok { "1=1" } else { "1=0" });
-            } else {
-                builder.push("1=1");
-            }
-        }
-        HttpqlField::ReqTls => {
-            if let Some(u) = target_url {
-                let is_https = u.starts_with("https://");
-                let target_bool = match &cond.value {
-                    HttpqlValue::Bool(b) => *b,
-                    HttpqlValue::String(s) => s.eq_ignore_ascii_case("https") || s.eq_ignore_ascii_case("true"),
-                    _ => true,
-                };
-                let matches = (is_https == target_bool) == (cond.op == HttpqlOperator::Eq);
-                let ok = if negated { !matches } else { matches };
-                builder.push(if ok { "1=1" } else { "1=0" });
-            } else {
-                builder.push("1=1");
-            }
-        }
-        _ => {
-            builder.push("1=1");
-        }
-    }
+    let _ = cond;
+    let _ = raw_template_req;
+    let _ = target_url;
+    let _ = negated;
+    builder.push("1=1");
 }
 
 fn compile_condition_to_sql(
@@ -2474,6 +2423,7 @@ pub trait HttpTransactionEvaluable {
     }
 }
 
+#[allow(dead_code)]
 pub struct FuzzerEvaluableItem<'a> {
     pub id: u32,
     pub method: &'a str,
@@ -2508,6 +2458,161 @@ impl<'a> HttpTransactionEvaluable for FuzzerEvaluableItem<'a> {
     fn eval_raw_request(&self) -> Option<&str> { self.raw_request }
     fn eval_raw_response(&self) -> Option<&str> { self.raw_response }
     fn eval_payload(&self) -> Option<&str> { self.payload }
+}
+
+pub struct LazyFuzzerEvaluableItem<'a> {
+    pub id: u32,
+    pub status_code: i64,
+    pub response_length: i64,
+    pub response_time_ms: i64,
+    pub sent_at_ms: i64,
+    pub state: &'a str,
+    pub raw_response: Option<&'a str>,
+    pub payload: Option<&'a str>,
+    pub fuzz_request_id: &'a str,
+    pub config: Option<&'a crate::types::SessionPayload>,
+    pub tmpl_method: &'a str,
+    pub tmpl_host: &'a str,
+    pub tmpl_path: &'a str,
+    pub is_https: bool,
+    reconstructed_request: std::sync::OnceLock<String>,
+    parsed_meta: std::sync::OnceLock<crate::ares_utils::parse::RequestLineMeta>,
+}
+
+impl<'a> LazyFuzzerEvaluableItem<'a> {
+    pub fn new(
+        id: u32,
+        status_code: i64,
+        response_length: i64,
+        response_time_ms: i64,
+        sent_at_ms: i64,
+        state: &'a str,
+        raw_response: Option<&'a str>,
+        payload: Option<&'a str>,
+        fuzz_request_id: &'a str,
+        config: Option<&'a crate::types::SessionPayload>,
+        tmpl_method: &'a str,
+        tmpl_host: &'a str,
+        tmpl_path: &'a str,
+        is_https: bool,
+    ) -> Self {
+        Self {
+            id,
+            status_code,
+            response_length,
+            response_time_ms,
+            sent_at_ms,
+            state,
+            raw_response,
+            payload,
+            fuzz_request_id,
+            config,
+            tmpl_method,
+            tmpl_host,
+            tmpl_path,
+            is_https,
+            reconstructed_request: std::sync::OnceLock::new(),
+            parsed_meta: std::sync::OnceLock::new(),
+        }
+    }
+
+    fn get_reconstructed(&self) -> Option<&str> {
+        if let Some(cfg) = self.config {
+            let s = self.reconstructed_request.get_or_init(|| {
+                crate::fuzzer::utils::reconstruct_fuzzer_request(cfg, self.payload, self.fuzz_request_id)
+            });
+            Some(s.as_str())
+        } else {
+            None
+        }
+    }
+
+    fn get_meta(&self) -> Option<&crate::ares_utils::parse::RequestLineMeta> {
+        if let Some(req_str) = self.get_reconstructed() {
+            let meta = self.parsed_meta.get_or_init(|| {
+                crate::ares_utils::parse::parse_request_line(req_str.as_bytes())
+            });
+            Some(meta)
+        } else {
+            None
+        }
+    }
+}
+
+impl<'a> HttpTransactionEvaluable for LazyFuzzerEvaluableItem<'a> {
+    fn eval_id(&self) -> u32 {
+        self.id
+    }
+    fn eval_method(&self) -> &str {
+        if let Some(meta) = self.get_meta() {
+            if !meta.method.is_empty() {
+                return &meta.method;
+            }
+        }
+        self.tmpl_method
+    }
+    fn eval_host(&self) -> &str {
+        if let Some(req_str) = self.get_reconstructed() {
+            for line in req_str.lines() {
+                let trimmed = line.trim();
+                if trimmed.len() >= 5 && trimmed[..5].eq_ignore_ascii_case("host:") {
+                    let host_val = trimmed[5..].trim();
+                    if !host_val.is_empty() {
+                        return host_val;
+                    }
+                }
+            }
+        }
+        self.tmpl_host
+    }
+    fn eval_path(&self) -> &str {
+        if let Some(meta) = self.get_meta() {
+            if !meta.path.is_empty() {
+                return &meta.path;
+            }
+        }
+        self.tmpl_path
+    }
+    fn eval_query(&self) -> Option<&str> {
+        if let Some(meta) = self.get_meta() {
+            return meta.query.as_deref();
+        }
+        None
+    }
+    fn eval_ext(&self) -> Option<&str> {
+        if let Some(meta) = self.get_meta() {
+            return meta.extension.as_deref();
+        }
+        None
+    }
+    fn eval_status_code(&self) -> i64 {
+        self.status_code
+    }
+    fn eval_response_length(&self) -> i64 {
+        self.response_length
+    }
+    fn eval_response_time_ms(&self) -> i64 {
+        self.response_time_ms
+    }
+    fn eval_sent_at_ms(&self) -> i64 {
+        self.sent_at_ms
+    }
+    fn eval_state(&self) -> &str {
+        self.state
+    }
+    fn eval_is_https(&self) -> bool {
+        self.is_https
+    }
+    fn eval_raw_request(&self) -> Option<&str> {
+        self.get_reconstructed()
+            .or_else(|| self.config.map(|c| c.raw_request.as_str()))
+    }
+    fn eval_raw_response(&self) -> Option<&str> {
+        self.raw_response
+    }
+    fn eval_payload(&self) -> Option<&str> {
+        self.payload
+    }
 }
 
 impl HttpqlExpr {
@@ -3494,5 +3599,87 @@ mod tests {
         let mut b5 = sqlx::QueryBuilder::<sqlx::Sqlite>::new("SELECT * FROM fuzzer_requests WHERE ");
         compile_fuzzer_httpql_to_sql(&mut b5, &q_and_mixed, None, None);
         assert!(b5.sql().as_str().contains("status_code = ? AND 1=1"));
+    }
+
+    #[test]
+    fn test_lazy_fuzzer_dynamic_request_eval() {
+        let raw = "GET /user?name=\u{00a7}FUZZ\u{00a7} HTTP/1.1\r\nHost: target.local\r\nUser-Agent: AresFuzzer\r\n\r\n";
+        let config = crate::types::SessionPayload {
+            raw_request: raw.to_string(),
+            parameters: vec![crate::types::FuzzerParameter {
+                payload_source: "manual".to_string(),
+                values: vec!["admin".to_string()],
+                highlight_range: crate::types::HighlightRange {
+                    id: "param1".to_string(),
+                    from: 15,
+                    to: 23,
+                    byte_from: 15,
+                    byte_to: 23,
+                    original_text: "\u{00a7}FUZZ\u{00a7}".to_string(),
+                    is_active: true,
+                },
+                pipeline_rules: None,
+            }],
+            metadata: crate::types::PayloadMetadata {
+                target_url: "https://target.local/user?name=%C2%A7FUZZ%C2%A7".to_string(),
+                url_is_valid: Some(true),
+            },
+            delay_ms: 0,
+            fuzzing_attack_type: Some("rotator".to_string()),
+            num_threads: Some(1),
+            pipeline_scope: Some("all".to_string()),
+            pipeline_rules: None,
+            set_connection_keep_alive: Some(true),
+            update_content_length: Some(true),
+        };
+
+        let item = LazyFuzzerEvaluableItem::new(
+            1,
+            200,
+            123,
+            45,
+            1000,
+            "completed",
+            Some("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"),
+            Some("admin"),
+            "0-0",
+            Some(&config),
+            "GET",
+            "target.local",
+            "/user",
+            true,
+        );
+
+        // 1. Check req.query matches dynamically reconstructed value "name=admin"
+        let q_query = parse_httpql("req.query.cont:\"name=admin\"").unwrap().unwrap();
+        assert!(q_query.evaluate(&item));
+
+        let q_query_mismatch = parse_httpql("req.query.cont:\"name=guest\"").unwrap().unwrap();
+        assert!(!q_query_mismatch.evaluate(&item));
+
+        // 2. Check req.path matches "/user"
+        let q_path = parse_httpql("req.path:\"/user\"").unwrap().unwrap();
+        assert!(q_path.evaluate(&item));
+
+        // 3. Check req.method matches "GET"
+        let q_method = parse_httpql("req.method:GET").unwrap().unwrap();
+        assert!(q_method.evaluate(&item));
+
+        // 4. Check req.host matches "target.local"
+        let q_host = parse_httpql("req.host:\"target.local\"").unwrap().unwrap();
+        assert!(q_host.evaluate(&item));
+
+        // 5. Check req.header["user-agent"]
+        let q_header = parse_httpql("req.header[\"user-agent\"].cont:\"AresFuzzer\"").unwrap().unwrap();
+        assert!(q_header.evaluate(&item));
+
+        // 6. Check bare search on payload and reconstructed request
+        let q_bare = parse_httpql("\"admin\"").unwrap().unwrap();
+        assert!(q_bare.evaluate(&item));
+
+        // 7. Verify has_in_memory_checks detects req.* dynamic fields
+        assert!(has_in_memory_checks(&q_query, None, None));
+        assert!(has_in_memory_checks(&q_path, None, None));
+        assert!(has_response_content_checks(&q_query));
     }
 }

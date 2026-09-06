@@ -451,31 +451,26 @@ pub async fn get_fuzzer_history_window(
                 .as_ref()
                 .map_or(false, |cfg| cfg.metadata.target_url.starts_with("https://"));
 
-            let raw_tmpl = run_data.config_snapshot
-                .as_ref()
-                .map(|cfg| cfg.raw_request.as_str());
-
             let res: Vec<&FuzzerRequestRow> = target_rows.into_iter().filter(|r| {
                 let raw_resp_str = r.response.as_ref().map(|resp| resp.response.as_str());
-                let item = crate::ares_utils::httpql::FuzzerEvaluableItem {
-                    id: r.id as u32,
-                    method: &tmpl_method,
-                    host: &tmpl_host,
-                    path: &tmpl_path,
-                    query: None,
-                    ext: None,
-                    status_code: r.status_code.map(|c| c as i64).unwrap_or(0),
-                    response_length: r.response_length.map(|l| l as i64).unwrap_or(0),
-                    response_time_ms: r.response_time_ms.map(|t| t as i64).unwrap_or(0),
-                    sent_at_ms: chrono::DateTime::parse_from_rfc3339(&r.request_date)
+                let item = crate::ares_utils::httpql::LazyFuzzerEvaluableItem::new(
+                    r.id as u32,
+                    r.status_code.map(|c| c as i64).unwrap_or(0),
+                    r.response_length.map(|l| l as i64).unwrap_or(0),
+                    r.response_time_ms.map(|t| t as i64).unwrap_or(0),
+                    chrono::DateTime::parse_from_rfc3339(&r.request_date)
                         .map(|dt| dt.timestamp_millis())
                         .unwrap_or(0),
-                    state: &r.status,
+                    &r.status,
+                    raw_resp_str,
+                    r.payload.as_deref(),
+                    &r.fuzz_request_id,
+                    run_data.config_snapshot.as_ref(),
+                    &tmpl_method,
+                    &tmpl_host,
+                    &tmpl_path,
                     is_https,
-                    raw_request: raw_tmpl,
-                    raw_response: raw_resp_str,
-                    payload: r.payload.as_deref(),
-                };
+                );
                 expr.evaluate(&item)
             }).collect();
             res
@@ -577,72 +572,111 @@ pub async fn get_fuzzer_history_window(
                         .await
                         .unwrap_or_default();
 
+                        let needs_resp = parsed_httpql.as_ref().map_or(false, crate::ares_utils::httpql::has_response_content_checks);
+
+                        let mut chunk_cache: HashMap<i64, std::sync::Arc<Vec<String>>> = HashMap::new();
+                        if needs_resp {
+                            let unique_cids: std::collections::HashSet<i64> = db_rows.iter().filter_map(|r| r.chunk_id).collect();
+                            for cid in unique_cids {
+                                if let Ok(resps) = crate::ares_utils::database::fuzzer::fetch_fuzzer_chunk_responses(&pool, cid).await {
+                                    chunk_cache.insert(cid, resps);
+                                }
+                            }
+                        }
+
                         let mut existing_map = HashMap::with_capacity(db_rows.len());
                         for r in db_rows {
                             existing_map.insert(r.sort_order as usize, r);
                         }
 
-                        let mut all_rows = Vec::with_capacity(total);
+                        let (tmpl_method, tmpl_path) = config_snapshot
+                            .as_ref()
+                            .map(|cfg| {
+                                let meta = crate::ares_utils::parse::parse_request_line(cfg.raw_request.as_bytes());
+                                (meta.method, meta.path)
+                            })
+                            .unwrap_or((String::new(), String::new()));
+
+                        let tmpl_host = config_snapshot
+                            .as_ref()
+                            .and_then(|cfg| url::Url::parse(&cfg.metadata.target_url).ok())
+                            .and_then(|url| url.host_str().map(String::from))
+                            .unwrap_or_default();
+
+                        let is_https = config_snapshot
+                            .as_ref()
+                            .map_or(false, |cfg| cfg.metadata.target_url.starts_with("https://"));
+
+                        let mut filtered_rows = Vec::with_capacity(total);
                         for idx in 0..total {
                             if let Some(r) = existing_map.remove(&idx) {
-                                all_rows.push(db_row_to_request_row(&r));
+                                if let Some(ref expr) = parsed_httpql {
+                                    let raw_resp_str = if needs_resp {
+                                        r.chunk_id
+                                            .and_then(|cid| chunk_cache.get(&cid))
+                                            .and_then(|resps| {
+                                                r.chunk_index
+                                                    .filter(|&cidx| cidx >= 0 && (cidx as usize) < resps.len())
+                                                    .and_then(|cidx| resps.get(cidx as usize))
+                                            })
+                                            .map(|s| s.as_str())
+                                    } else {
+                                        None
+                                    };
+
+                                    let item = crate::ares_utils::httpql::LazyFuzzerEvaluableItem::new(
+                                        r.sort_order as u32,
+                                        r.status_code.unwrap_or(0),
+                                        r.response_length.unwrap_or(0),
+                                        r.response_time_ms.unwrap_or(0),
+                                        r.request_date,
+                                        if r.error_message.is_some() || r.connection_dropped { "error" } else { "completed" },
+                                        raw_resp_str,
+                                        r.payload.as_deref(),
+                                        &r.id,
+                                        config_snapshot.as_ref(),
+                                        &tmpl_method,
+                                        &tmpl_host,
+                                        &tmpl_path,
+                                        is_https,
+                                    );
+                                    if expr.evaluate(&item) {
+                                        filtered_rows.push(db_row_to_request_row(&r));
+                                    }
+                                } else {
+                                    filtered_rows.push(db_row_to_request_row(&r));
+                                }
                             } else {
-                                all_rows.push(make_uncompleted_request_row(
+                                let uncompleted = make_uncompleted_request_row(
                                     idx,
                                     config_snapshot.as_ref(),
                                     &run_status,
-                                ));
+                                );
+                                if let Some(ref expr) = parsed_httpql {
+                                    let item = crate::ares_utils::httpql::LazyFuzzerEvaluableItem::new(
+                                        uncompleted.id as u32,
+                                        uncompleted.status_code.map(|c| c as i64).unwrap_or(0),
+                                        uncompleted.response_length.map(|l| l as i64).unwrap_or(0),
+                                        uncompleted.response_time_ms.map(|t| t as i64).unwrap_or(0),
+                                        0,
+                                        &uncompleted.status,
+                                        None,
+                                        uncompleted.payload.as_deref(),
+                                        &uncompleted.fuzz_request_id,
+                                        config_snapshot.as_ref(),
+                                        &tmpl_method,
+                                        &tmpl_host,
+                                        &tmpl_path,
+                                        is_https,
+                                    );
+                                    if expr.evaluate(&item) {
+                                        filtered_rows.push(uncompleted);
+                                    }
+                                } else {
+                                    filtered_rows.push(uncompleted);
+                                }
                             }
                         }
-
-                        let mut filtered_rows = if let Some(ref expr) = parsed_httpql {
-                            let (tmpl_method, tmpl_path) = config_snapshot
-                                .as_ref()
-                                .map(|cfg| {
-                                    let meta = crate::ares_utils::parse::parse_request_line(cfg.raw_request.as_bytes());
-                                    (meta.method, meta.path)
-                                })
-                                .unwrap_or((String::new(), String::new()));
-
-                            let tmpl_host = config_snapshot
-                                .as_ref()
-                                .and_then(|cfg| url::Url::parse(&cfg.metadata.target_url).ok())
-                                .and_then(|url| url.host_str().map(String::from))
-                                .unwrap_or_default();
-
-                            let is_https = config_snapshot
-                                .as_ref()
-                                .map_or(false, |cfg| cfg.metadata.target_url.starts_with("https://"));
-
-                            let raw_tmpl = config_snapshot
-                                .as_ref()
-                                .map(|cfg| cfg.raw_request.as_str());
-
-                            all_rows.into_iter().filter(|r| {
-                                let item = crate::ares_utils::httpql::FuzzerEvaluableItem {
-                                    id: r.id as u32,
-                                    method: &tmpl_method,
-                                    host: &tmpl_host,
-                                    path: &tmpl_path,
-                                    query: None,
-                                    ext: None,
-                                    status_code: r.status_code.map(|c| c as i64).unwrap_or(0),
-                                    response_length: r.response_length.map(|l| l as i64).unwrap_or(0),
-                                    response_time_ms: r.response_time_ms.map(|t| t as i64).unwrap_or(0),
-                                    sent_at_ms: chrono::DateTime::parse_from_rfc3339(&r.request_date)
-                                        .map(|dt| dt.timestamp_millis())
-                                        .unwrap_or(0),
-                                    state: &r.status,
-                                    is_https,
-                                    raw_request: raw_tmpl,
-                                    raw_response: None,
-                                    payload: r.payload.as_deref(),
-                                };
-                                expr.evaluate(&item)
-                            }).collect()
-                        } else {
-                            all_rows
-                        };
 
                         let total = filtered_rows.len();
                         sort_fuzzer_rows_in_place(&mut filtered_rows, sort_by.as_deref(), is_desc);
@@ -668,7 +702,7 @@ pub async fn get_fuzzer_history_window(
                         // ─── Path B: Content-heavy search using FuzzerSearchCache ────
                         let query_str = search_query.as_deref().unwrap_or("").trim();
                         let cache_key = format!("{}:{}:{}", selected_session, fuzz_history, query_str);
-                        let is_active = is_run_active(selected_session, fuzz_history).await || run_status == "running";
+                        let _is_active = is_run_active(selected_session, fuzz_history).await || run_status == "running";
 
                         let mut cache = search_cache().lock().await;
                         let existing_pos = cache.iter().position(|c| c.key == cache_key);
@@ -678,47 +712,45 @@ pub async fn get_fuzzer_history_window(
                                 let mut cached_item = cache.remove(pos).unwrap();
                                 cached_item.last_accessed = std::time::Instant::now();
 
-                                if is_active {
-                                    // Incremental scan: only inspect requests completed since last scan
-                                    let since_date = cached_item.last_scanned_date.saturating_sub(2000);
-                                    if let Ok((new_db_rows, new_max_date)) = crate::ares_utils::database::fuzzer::query_fuzzer_requests_matching_since(
-                                        &pool,
-                                        &run_id,
-                                        since_date,
-                                        parsed_httpql.as_ref(),
-                                        raw_template_req,
-                                        target_url,
-                                    ).await {
-                                        for r in new_db_rows {
-                                            if cached_item.seen_ids.insert(r.id.clone()) {
-                                                let status = if r.error_message.is_some() || r.connection_dropped {
-                                                    "error".to_string()
-                                                } else {
-                                                    "completed".to_string()
-                                                };
-                                                cached_item.rows.push(FuzzerRequestRow {
-                                                    id: r.sort_order as usize,
-                                                    fuzz_request_id: r.id,
-                                                    raw_request: None,
-                                                    payload: r.payload,
-                                                    response: None,
-                                                    request_date: chrono::DateTime::from_timestamp_millis(r.request_date)
-                                                        .map(|dt| dt.to_rfc3339())
-                                                        .unwrap_or_default(),
-                                                    status,
-                                                    error_message: r.error_message,
-                                                    connection_dropped: r.connection_dropped,
-                                                    worker_id: r.worker_id.map(|w| w as u32),
-                                                    status_code: r.status_code.map(|c| c as u16),
-                                                    response_length: r.response_length.map(|l| l as usize),
-                                                    response_time_ms: r.response_time_ms.map(|t| t as u128),
-                                                    chunk_id: r.chunk_id,
-                                                    chunk_index: r.chunk_index,
-                                                });
-                                            }
+                                // Incremental scan: inspect requests completed since last scan
+                                let since_date = cached_item.last_scanned_date.saturating_sub(2000);
+                                if let Ok((new_db_rows, new_max_date)) = crate::ares_utils::database::fuzzer::query_fuzzer_requests_matching_since(
+                                    &pool,
+                                    &run_id,
+                                    since_date,
+                                    parsed_httpql.as_ref(),
+                                    raw_template_req,
+                                    target_url,
+                                ).await {
+                                    for r in new_db_rows {
+                                        if cached_item.seen_ids.insert(r.id.clone()) {
+                                            let status = if r.error_message.is_some() || r.connection_dropped {
+                                                "error".to_string()
+                                            } else {
+                                                "completed".to_string()
+                                            };
+                                            cached_item.rows.push(FuzzerRequestRow {
+                                                id: r.sort_order as usize,
+                                                fuzz_request_id: r.id,
+                                                raw_request: None,
+                                                payload: r.payload,
+                                                response: None,
+                                                request_date: chrono::DateTime::from_timestamp_millis(r.request_date)
+                                                    .map(|dt| dt.to_rfc3339())
+                                                    .unwrap_or_default(),
+                                                status,
+                                                error_message: r.error_message,
+                                                connection_dropped: r.connection_dropped,
+                                                worker_id: r.worker_id.map(|w| w as u32),
+                                                status_code: r.status_code.map(|c| c as u16),
+                                                response_length: r.response_length.map(|l| l as usize),
+                                                response_time_ms: r.response_time_ms.map(|t| t as u128),
+                                                chunk_id: r.chunk_id,
+                                                chunk_index: r.chunk_index,
+                                            });
                                         }
-                                        cached_item.last_scanned_date = cached_item.last_scanned_date.max(new_max_date);
                                     }
+                                    cached_item.last_scanned_date = cached_item.last_scanned_date.max(new_max_date);
                                 }
 
                                 let rows = cached_item.rows.clone();
@@ -913,8 +945,10 @@ pub async fn stream_fuzzer_search(
             .await
             .unwrap_or(None);
 
-    let config_snapshot: Option<crate::types::SessionPayload> =
-        config_snapshot_str.and_then(|s| serde_json::from_str(&s).ok());
+    let config_snapshot: Option<std::sync::Arc<crate::types::SessionPayload>> =
+        config_snapshot_str
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .map(std::sync::Arc::new);
 
     let raw_template_req_owned: Option<String> =
         config_snapshot.as_ref().map(|cfg| cfg.raw_request.clone());
@@ -1038,9 +1072,10 @@ pub async fn stream_fuzzer_search(
             let tmpl_method_nc = tmpl_method.clone();
             let tmpl_host_nc = tmpl_host.clone();
             let tmpl_path_nc = tmpl_path.clone();
-            let raw_req_nc = raw_template_req_owned.clone();
+            let config_snapshot_nc = config_snapshot.clone();
 
             let no_chunk_matches = tokio::task::spawn_blocking(move || {
+                let cfg_ref = config_snapshot_nc.as_deref();
                 use rayon::prelude::*;
                 no_chunk_rows
                     .par_iter()
@@ -1050,23 +1085,22 @@ pub async fn stream_fuzzer_search(
                         } else {
                             "pending"
                         };
-                        let item = crate::ares_utils::httpql::FuzzerEvaluableItem {
-                            id: row.sort_order as u32,
-                            method: &tmpl_method_nc,
-                            host: &tmpl_host_nc,
-                            path: &tmpl_path_nc,
-                            query: None,
-                            ext: None,
-                            status_code: row.status_code.unwrap_or(0),
-                            response_length: row.response_length.unwrap_or(0),
-                            response_time_ms: row.response_time_ms.unwrap_or(0),
-                            sent_at_ms: row.request_date,
+                        let item = crate::ares_utils::httpql::LazyFuzzerEvaluableItem::new(
+                            row.sort_order as u32,
+                            row.status_code.unwrap_or(0),
+                            row.response_length.unwrap_or(0),
+                            row.response_time_ms.unwrap_or(0),
+                            row.request_date,
                             state,
+                            None,
+                            row.payload.as_deref(),
+                            &row.id,
+                            cfg_ref,
+                            &tmpl_method_nc,
+                            &tmpl_host_nc,
+                            &tmpl_path_nc,
                             is_https,
-                            raw_request: raw_req_nc.as_deref(),
-                            raw_response: None,
-                            payload: row.payload.as_deref(),
-                        };
+                        );
                         if expr_nc.evaluate(&item) {
                             Some(db_row_to_request_row(row))
                         } else {
@@ -1102,7 +1136,7 @@ pub async fn stream_fuzzer_search(
             let tmpl_method = tmpl_method.clone();
             let tmpl_host = tmpl_host.clone();
             let tmpl_path = tmpl_path.clone();
-            let raw_req = raw_template_req_owned.clone();
+            let config_snapshot_cg = config_snapshot.clone();
 
             join_set.spawn(async move {
                 let _permit = sem.acquire().await.map_err(|e| e.to_string())?;
@@ -1113,28 +1147,28 @@ pub async fn stream_fuzzer_search(
                     .await?;
 
                 let matches = tokio::task::spawn_blocking(move || {
+                    let cfg_ref = config_snapshot_cg.as_deref();
                     use rayon::prelude::*;
                     rows.par_iter()
                         .filter_map(|row| {
                             let cidx = row.chunk_index? as usize;
                             let raw_resp = resps.get(cidx)?;
-                            let item = crate::ares_utils::httpql::FuzzerEvaluableItem {
-                                id: row.sort_order as u32,
-                                method: &tmpl_method,
-                                host: &tmpl_host,
-                                path: &tmpl_path,
-                                query: None,
-                                ext: None,
-                                status_code: row.status_code.unwrap_or(0),
-                                response_length: row.response_length.unwrap_or(0),
-                                response_time_ms: row.response_time_ms.unwrap_or(0),
-                                sent_at_ms: row.request_date,
-                                state: "completed",
+                            let item = crate::ares_utils::httpql::LazyFuzzerEvaluableItem::new(
+                                row.sort_order as u32,
+                                row.status_code.unwrap_or(0),
+                                row.response_length.unwrap_or(0),
+                                row.response_time_ms.unwrap_or(0),
+                                row.request_date,
+                                "completed",
+                                Some(raw_resp.as_str()),
+                                row.payload.as_deref(),
+                                &row.id,
+                                cfg_ref,
+                                &tmpl_method,
+                                &tmpl_host,
+                                &tmpl_path,
                                 is_https,
-                                raw_request: raw_req.as_deref(),
-                                raw_response: Some(raw_resp.as_str()),
-                                payload: row.payload.as_deref(),
-                            };
+                            );
                             if expr.evaluate(&item) {
                                 Some(db_row_to_request_row(row))
                             } else {
@@ -2052,6 +2086,8 @@ async fn run_dynamic_fuzzer(
         .await;
     }
 
+    invalidate_fuzzer_search_cache(selected_session, fuzz_history).await;
+
     emit_progress(
         &app,
         selected_session,
@@ -2745,6 +2781,76 @@ mod tests {
         assert_eq!(run_data2.rows[0].status, "completed");
         assert_eq!(run_data2.rows[1].status, "cancelled");
         assert_eq!(run_data2.rows[2].status, "cancelled");
+    }
+
+    #[tokio::test]
+    async fn test_show_uncompleted_with_lazy_fuzzer_response_filter() {
+        let q_404 = crate::ares_utils::httpql::parse_httpql("resp.raw.regex:.404.").unwrap().unwrap();
+        let q_pending = crate::ares_utils::httpql::parse_httpql("resp.state:\"pending\"").unwrap().unwrap();
+
+        // 1. Completed 404 item
+        let item_404 = crate::ares_utils::httpql::LazyFuzzerEvaluableItem::new(
+            0,
+            404,
+            50,
+            20,
+            1000,
+            "completed",
+            Some("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n"),
+            Some("payload-0"),
+            "0",
+            None,
+            "GET",
+            "example.com",
+            "/",
+            false,
+        );
+
+        // 2. Completed 200 item
+        let item_200 = crate::ares_utils::httpql::LazyFuzzerEvaluableItem::new(
+            1,
+            200,
+            150,
+            15,
+            1001,
+            "completed",
+            Some("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"),
+            Some("payload-1"),
+            "1",
+            None,
+            "GET",
+            "example.com",
+            "/",
+            false,
+        );
+
+        // 3. Uncompleted pending item (no response)
+        let item_pending = crate::ares_utils::httpql::LazyFuzzerEvaluableItem::new(
+            2,
+            0,
+            0,
+            0,
+            0,
+            "pending",
+            None,
+            Some("payload-2"),
+            "2",
+            None,
+            "GET",
+            "example.com",
+            "/",
+            false,
+        );
+
+        // resp.raw.regex:.404. should only match item_404
+        assert!(q_404.evaluate(&item_404));
+        assert!(!q_404.evaluate(&item_200));
+        assert!(!q_404.evaluate(&item_pending));
+
+        // resp.state:"pending" should only match item_pending
+        assert!(!q_pending.evaluate(&item_404));
+        assert!(!q_pending.evaluate(&item_200));
+        assert!(q_pending.evaluate(&item_pending));
     }
 
     #[test]
