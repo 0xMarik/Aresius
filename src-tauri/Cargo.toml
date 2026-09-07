@@ -32,7 +32,8 @@ rustls = "0.23.35"
 rustls-pemfile = "2.2.0"
 rustls-native-certs = "0.8.3"
 tracing = "0.1.44"
-tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt", "json", "registry"] }
+tracing-appender = "0.2"
 tauri-plugin-shell = "2.3.5"
 flate2 = "1.1.9"
 brotli = "8.0.4"

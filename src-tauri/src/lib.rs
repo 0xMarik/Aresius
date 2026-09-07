@@ -75,19 +75,20 @@ use crate::ares_utils::database::preset_filters::{
     save_preset_filter_db, sync_interception_filters_db, toggle_preset_filter_interception_db,
 };
 
+use crate::ares_utils::logger::init_logging;
+use crate::commands::logs::{
+    clear_memory_logs, get_log_settings, get_recent_logs, open_log_directory, set_custom_log_filter,
+    set_log_level,
+};
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "aresius=debug,tauri=info".into()),
-        )
-        .with_target(true)
-        .init();
+    let log_state = init_logging(None).expect("Failed to initialize tracing logger");
 
     tracing::info!("Aresius starting up");
 
     tauri::Builder::default()
+        .manage(log_state)
         .manage(InterceptState::new())
         .manage(CertCache::new())
         .manage(HistoryIdCounter::new())
@@ -211,6 +212,13 @@ pub fn run() {
             reset_default_preset_filters_db,
             toggle_preset_filter_interception_db,
             sync_interception_filters_db,
+            // Logs
+            get_log_settings,
+            set_log_level,
+            set_custom_log_filter,
+            get_recent_logs,
+            clear_memory_logs,
+            open_log_directory,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -508,7 +508,7 @@ async fn handle_connect(
         .to_string();
 
     let domain = target.split(':').next().unwrap_or(&target).to_string();
-    println!("MITM CONNECT to: {}", target);
+    tracing::info!(target: "aresius::proxy", target = %target, "MITM CONNECT to: {}", target);
 
     // Send 200 OK to client
     client_stream

@@ -19,7 +19,7 @@ import {
     Info,
     Radio,
     Waves,
-
+    Terminal,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -40,9 +40,10 @@ import { FuzzerSettings } from "@/types/fuzzerSettings.type"
 import { useAppDispatch, useAppSelector } from "@/hooks/redux"
 import { setFuzzerSettings } from "@/store/slices/appStateSlice"
 import InstallCertificateDialog from "@/components/InstallCert"
+import LogViewer from "@/components/LogViewer"
 import { cn } from "@/lib/utils"
 
-type SettingsTab = "proxy" | "certificates" | "fuzzer" | "shortcuts" | "about"
+type SettingsTab = "proxy" | "certificates" | "fuzzer" | "logs" | "shortcuts" | "about"
 
 const PRESET_PORTS = [8080, 8081, 8443, 8888, 9090]
 
@@ -290,6 +291,20 @@ export default function SettingsPage() {
                     >
                         <Waves className="w-4 h-4 shrink-0" />
                         <span className="flex-1">Fuzzer</span>
+                    </button>
+
+                    <button
+                        type="button"
+                        onClick={() => setActiveTab("logs")}
+                        className={cn(
+                            "flex items-center gap-2.5 px-3 py-2 rounded-md text-xs font-medium transition-colors text-left",
+                            activeTab === "logs"
+                                ? "bg-primary/10 text-primary border border-primary/20 shadow-xs"
+                                : "text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+                        )}
+                    >
+                        <Terminal className="w-4 h-4 shrink-0" />
+                        <span className="flex-1">Logs & Diagnostics</span>
                     </button>
 
                     <button
@@ -728,6 +743,15 @@ export default function SettingsPage() {
                                     </div>
                                 </CardContent>
                             </Card>
+                        </div>
+                    )}
+
+                    {/* ════════════════════════════════════════════════════════════ */}
+                    {/* TAB: LOGS & DIAGNOSTICS */}
+                    {/* ════════════════════════════════════════════════════════════ */}
+                    {activeTab === "logs" && (
+                        <div className="max-w-5xl space-y-6">
+                            <LogViewer />
                         </div>
                     )}
 

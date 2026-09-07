@@ -6,6 +6,7 @@ pub mod http_connection;
 pub mod httpql;
 pub mod parse;
 pub mod content_filter;
+pub mod logger;
 
 // ares_utils/database/mod.rs — or a new ares_utils/lifecycle.rs if you'd rather separate it
 
