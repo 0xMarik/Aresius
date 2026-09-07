@@ -3,13 +3,24 @@ import { createEntityAdapter, createSlice, createSelector, PayloadAction } from 
 import type { RootState } from '@/store';
 import { deleteProject } from './projectSlice';
 
+import { invoke } from '@tauri-apps/api/core';
+
+export interface HttpHistoryUiState {
+  httpqlQuery: string;
+  scopeFilter: 'all' | 'in' | 'out';
+  selectedRequestId: number | null;
+  applyInterceptionFilters: boolean;
+}
+
 // Per-project bucket using entity adapter state shape
-type ProjectHistoryState = ReturnType<typeof historyAdapter.getInitialState>
-type HttpHistoryByProject = Record<string, ProjectHistoryState>
+type ProjectHistoryState = ReturnType<typeof historyAdapter.getInitialState> & {
+  uiState?: HttpHistoryUiState;
+};
+type HttpHistoryByProject = Record<string, ProjectHistoryState>;
 
 const historyAdapter = createEntityAdapter<HttpHistory>();
 
-const initialState: HttpHistoryByProject = {}
+const initialState: HttpHistoryByProject = {};
 
 const HttpHistorySlice = createSlice({
   name: 'http-history',
@@ -30,10 +41,42 @@ const HttpHistorySlice = createSlice({
       action: PayloadAction<{ items: HttpHistory[]; projectId: string }>
     ) => {
       const { items, projectId } = action.payload;
+      const prevUiState = state[projectId]?.uiState;
       state[projectId] = historyAdapter.setAll(
         historyAdapter.getInitialState(),
         items
       );
+      if (prevUiState) {
+        state[projectId].uiState = prevUiState;
+      }
+    },
+    setHttpHistoryUiState: (
+      state,
+      action: PayloadAction<{ projectId: string; uiState: Partial<HttpHistoryUiState> }>
+    ) => {
+      const { projectId, uiState } = action.payload;
+      if (!state[projectId]) {
+        state[projectId] = {
+          ...historyAdapter.getInitialState(),
+          uiState: {
+            httpqlQuery: '',
+            scopeFilter: 'all',
+            selectedRequestId: null,
+            applyInterceptionFilters: true,
+            ...uiState,
+          },
+        };
+      } else {
+        state[projectId].uiState = {
+          ...(state[projectId].uiState || {
+            httpqlQuery: '',
+            scopeFilter: 'all',
+            selectedRequestId: null,
+            applyInterceptionFilters: true,
+          }),
+          ...uiState,
+        };
+      }
     },
   },
   extraReducers: (builder) => {
@@ -43,7 +86,7 @@ const HttpHistorySlice = createSlice({
   },
 });
 
-export const { addToHttpHistory, setHistoryBulk } = HttpHistorySlice.actions;
+export const { addToHttpHistory, setHistoryBulk, setHttpHistoryUiState } = HttpHistorySlice.actions;
 
 const EMPTY_HISTORY: HttpHistory[] = [];
 const emptyState = historyAdapter.getInitialState();
@@ -85,5 +128,43 @@ export const getHistorySelectors = (projectId: string | null) => {
 export const historySelectors = historyAdapter.getSelectors<RootState>(
   (state) => state.httpHistory['__legacy__'] ?? historyAdapter.getInitialState()
 );
+
+export const selectHttpHistoryUiState = (projectId: string | null) => (state: RootState): HttpHistoryUiState | undefined => {
+  if (!projectId || !state.httpHistory[projectId]) return undefined;
+  return state.httpHistory[projectId].uiState;
+};
+
+export const fetchHttpHistoryUiState = (projectId: string) => async (dispatch: any) => {
+  try {
+    const data = await invoke<any>('get_http_history_state_db', { projectId });
+    if (data && data.uiState) {
+      const parsed: HttpHistoryUiState = JSON.parse(data.uiState);
+      dispatch(setHttpHistoryUiState({ projectId, uiState: parsed }));
+      return parsed;
+    }
+  } catch (err) {
+    console.error('Failed to fetch http history ui state:', err);
+  }
+  return null;
+};
+
+let httpHistoryUiStateSaveTimers: Record<string, NodeJS.Timeout> = {};
+
+export const persistHttpHistoryUiState = (projectId: string, uiState: HttpHistoryUiState) => async (dispatch: any) => {
+  dispatch(setHttpHistoryUiState({ projectId, uiState }));
+  if (httpHistoryUiStateSaveTimers[projectId]) {
+    clearTimeout(httpHistoryUiStateSaveTimers[projectId]);
+  }
+  httpHistoryUiStateSaveTimers[projectId] = setTimeout(async () => {
+    try {
+      await invoke('save_http_history_state_db', {
+        projectId,
+        uiState: JSON.stringify(uiState),
+      });
+    } catch (err) {
+      console.error('Failed to save http history ui state to DB:', err);
+    }
+  }, 400);
+};
 
 export default HttpHistorySlice.reducer;

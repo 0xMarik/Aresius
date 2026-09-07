@@ -92,6 +92,8 @@ function AppInner() {
                 sidebarCollapsed: s.appState.sidebarCollapsed,
                 activeProjectId: s.workspacestate.currentProjectId,
                 lastPage: s.appState.lastPage,
+                fontSizeScale: s.appState.fontSizeScale,
+                showSplashscreen: s.appState.showSplashscreen ?? true,
                 ...partial,
             });
         }, 400);
@@ -166,6 +168,8 @@ function AppInner() {
                             sidebarCollapsed: saved.sidebarCollapsed,
                             activeProjectId: null,
                             lastPage: saved.lastPage,
+                            fontSizeScale: saved.fontSizeScale,
+                            showSplashscreen: saved.showSplashscreen ?? true,
                         });
                     }
                 }

@@ -2469,8 +2469,8 @@ pub async fn run_fuzz_targets(app: AppHandle, config: FuzzRunConfig, targets: Ve
                 let new_id = uuid::Uuid::new_v4().to_string();
                 let now = chrono::Utc::now().timestamp_millis();
                 let _ = sqlx::query(
-                    "INSERT INTO fuzzer_sessions (id, project_id, name, target_url, raw_request, sort_order, is_selected, is_expanded, created_at)
-                     VALUES (?, ?, ?, ?, '', ?, 1, 1, ?)"
+                    "INSERT INTO fuzzer_sessions (id, project_id, name, target_url, raw_request, sort_order, created_at)
+                     VALUES (?, ?, ?, ?, '', ?, ?)"
                 )
                 .bind(&new_id)
                 .bind(&real_project_id)

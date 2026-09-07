@@ -13,6 +13,8 @@ import {
     AlertCircle,
     AlertTriangle,
     Sliders,
+    SlidersHorizontal,
+    Sparkles,
     Save,
     RefreshCw,
     Keyboard,
@@ -38,19 +40,42 @@ import {
 import { ProxySettings, ProxyStatus } from "@/types/proxySettings.type"
 import { FuzzerSettings } from "@/types/fuzzerSettings.type"
 import { useAppDispatch, useAppSelector } from "@/hooks/redux"
-import { setFuzzerSettings } from "@/store/slices/appStateSlice"
+import {
+    setFuzzerSettings,
+    setShowSplashscreen,
+    increaseFontSize,
+    decreaseFontSize,
+    resetFontSize,
+} from "@/store/slices/appStateSlice"
 import InstallCertificateDialog from "@/components/InstallCert"
 import LogViewer from "@/components/LogViewer"
 import { cn } from "@/lib/utils"
 
-type SettingsTab = "proxy" | "certificates" | "fuzzer" | "logs" | "shortcuts" | "about"
+type SettingsTab = "general" | "proxy" | "certificates" | "fuzzer" | "logs" | "shortcuts" | "about"
 
 const PRESET_PORTS = [8080, 8081, 8443, 8888, 9090]
 
 export default function SettingsPage() {
-    const [activeTab, setActiveTab] = useState<SettingsTab>("proxy")
+    const [activeTab, setActiveTab] = useState<SettingsTab>("general")
     const dispatch = useAppDispatch()
+    const showSplashscreen = useAppSelector((s) => s.appState.showSplashscreen ?? true)
+    const fontSizeScale = useAppSelector((s) => s.appState.fontSizeScale ?? 1.0)
     const fuzzerSettings = useAppSelector((s) => s.appState.fuzzerSettings) || { showUncompletedRequests: false }
+
+    const handleToggleShowSplashscreen = async (checked: boolean) => {
+        dispatch(setShowSplashscreen(checked))
+        try {
+            await invoke("set_show_splashscreen", { show: checked })
+            toast.success(
+                checked
+                    ? "Splash screen enabled on startup"
+                    : "Splash screen disabled on startup"
+            )
+        } catch (err) {
+            console.error("Failed to save splash screen setting:", err)
+            toast.error("Failed to save splash screen setting")
+        }
+    }
 
     const handleToggleShowUncompleted = (checked: boolean) => {
         const newSettings: FuzzerSettings = {
@@ -250,6 +275,20 @@ export default function SettingsPage() {
 
                     <button
                         type="button"
+                        onClick={() => setActiveTab("general")}
+                        className={cn(
+                            "flex items-center gap-2.5 px-3 py-2 rounded-md text-xs font-medium transition-colors text-left",
+                            activeTab === "general"
+                                ? "bg-primary/10 text-primary border border-primary/20 shadow-xs"
+                                : "text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+                        )}
+                    >
+                        <SlidersHorizontal className="w-4 h-4 shrink-0" />
+                        <span className="flex-1">General</span>
+                    </button>
+
+                    <button
+                        type="button"
                         onClick={() => setActiveTab("proxy")}
                         className={cn(
                             "flex items-center gap-2.5 px-3 py-2 rounded-md text-xs font-medium transition-colors text-left",
@@ -338,6 +377,103 @@ export default function SettingsPage() {
 
                 {/* ── Right Content Area ── */}
                 <div className="flex-1 min-w-0 overflow-y-auto p-6 space-y-6">
+                    {/* ════════════════════════════════════════════════════════════ */}
+                    {/* TAB: GENERAL */}
+                    {/* ════════════════════════════════════════════════════════════ */}
+                    {activeTab === "general" && (
+                        <div className="max-w-4xl space-y-6">
+                            {/* Startup & Window Preferences */}
+                            <Card className="border-border/60 bg-card shadow-xs">
+                                <CardHeader>
+                                    <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                                        <Sparkles className="w-4 h-4 text-primary" />
+                                        Startup & Launch Preferences
+                                    </CardTitle>
+                                    <CardDescription className="text-xs">
+                                        Configure how Aresius initializes when opened.
+                                    </CardDescription>
+                                </CardHeader>
+                                <CardContent className="space-y-4">
+                                    <div className="flex items-center justify-between p-4 rounded-lg border border-border/50 bg-muted/10 hover:bg-muted/20 transition-colors">
+                                        <div className="space-y-1 pr-6">
+                                            <Label
+                                                htmlFor="show-splashscreen-toggle"
+                                                className="text-xs font-semibold cursor-pointer text-foreground flex items-center gap-2"
+                                            >
+                                                Show Splash Screen on Startup
+                                                <Badge variant={showSplashscreen ? "default" : "secondary"} className="text-[10px] h-4 px-1.5 font-mono">
+                                                    {showSplashscreen ? "Enabled" : "Disabled"}
+                                                </Badge>
+                                            </Label>
+                                            <p className="text-[11px] text-muted-foreground leading-relaxed">
+                                                Display the animated Aresius splash screen and security initialization sequence when launching the application. Disable this to skip the splash screen and launch directly into your workspace.
+                                            </p>
+                                        </div>
+                                        <Switch
+                                            id="show-splashscreen-toggle"
+                                            checked={showSplashscreen}
+                                            onCheckedChange={handleToggleShowSplashscreen}
+                                        />
+                                    </div>
+                                </CardContent>
+                            </Card>
+
+                            {/* Display & Interface Scaling */}
+                            <Card className="border-border/60 bg-card shadow-xs">
+                                <CardHeader>
+                                    <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                                        <SlidersHorizontal className="w-4 h-4 text-primary" />
+                                        Interface & Display Scaling
+                                    </CardTitle>
+                                    <CardDescription className="text-xs">
+                                        Adjust the overall UI scaling factor for high-DPI displays.
+                                    </CardDescription>
+                                </CardHeader>
+                                <CardContent className="space-y-4">
+                                    <div className="flex items-center justify-between p-4 rounded-lg border border-border/50 bg-muted/10">
+                                        <div className="space-y-1">
+                                            <span className="text-xs font-semibold text-foreground">
+                                                Current Zoom Level: {Math.round(fontSizeScale * 100)}%
+                                            </span>
+                                            <p className="text-[11px] text-muted-foreground">
+                                                Scale all UI elements and text. You can also use Ctrl++ / Ctrl+- anytime.
+                                            </p>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                className="h-7 text-xs border-border/60"
+                                                onClick={() => dispatch(decreaseFontSize(0.05))}
+                                                disabled={fontSizeScale <= 0.75}
+                                            >
+                                                Zoom Out (-5%)
+                                            </Button>
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                className="h-7 text-xs border-border/60"
+                                                onClick={() => dispatch(resetFontSize())}
+                                                disabled={Math.abs(fontSizeScale - 1.0) < 0.01}
+                                            >
+                                                Reset (100%)
+                                            </Button>
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                className="h-7 text-xs border-border/60"
+                                                onClick={() => dispatch(increaseFontSize(0.05))}
+                                                disabled={fontSizeScale >= 1.75}
+                                            >
+                                                Zoom In (+5%)
+                                            </Button>
+                                        </div>
+                                    </div>
+                                </CardContent>
+                            </Card>
+                        </div>
+                    )}
+
                     {/* ════════════════════════════════════════════════════════════ */}
                     {/* TAB: PROXY LISTENER */}
                     {/* ════════════════════════════════════════════════════════════ */}

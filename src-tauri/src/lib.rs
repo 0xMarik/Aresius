@@ -26,6 +26,7 @@ use crate::ares_utils::database::projects_catalog::{
 use crate::ares_utils::database::settings::{
     export_settings, get_app_state, get_fuzzer_settings_db, get_proxy_settings_db,
     import_settings, save_app_state, save_fuzzer_settings_db, save_proxy_settings_db,
+    set_show_splashscreen,
 };
 use crate::ares_utils::database::DbState;
 use crate::commands::{cancel_replayer_request, replay_request};
@@ -37,8 +38,9 @@ use crate::fuzzer::engine::{
 };
 use crate::ares_utils::database::fuzzer::{
     create_fuzzer_session_db, delete_fuzzer_history_db, delete_fuzzer_session_db,
-    get_fuzzer_project_data, save_fuzzer_parameters_db, save_fuzzer_session_draft,
-    set_fuzzer_expanded_ids, set_fuzzer_session_selection,
+    get_fuzzer_project_data, get_fuzzer_ui_state_db, save_fuzzer_parameters_db,
+    save_fuzzer_session_draft, save_fuzzer_ui_state_db, set_fuzzer_expanded_ids,
+    set_fuzzer_session_selection,
 };
 use crate::fuzzer::rotator::execute_rotator_fuzzing;
 use crate::fuzzer::zipped::execute_zipped_fuzzing;
@@ -103,6 +105,7 @@ pub fn run() {
             // Proxy & Settings
             get_app_state,
             save_app_state,
+            set_show_splashscreen,
             get_proxy_settings_db,
             save_proxy_settings_db,
             get_fuzzer_settings_db,
@@ -132,6 +135,8 @@ pub fn run() {
             get_fuzzer_request_by_id,
             stream_fuzzer_search,
             get_fuzzer_project_data,
+            get_fuzzer_ui_state_db,
+            save_fuzzer_ui_state_db,
             set_fuzzer_session_selection,
             set_fuzzer_expanded_ids,
             create_fuzzer_session_db,

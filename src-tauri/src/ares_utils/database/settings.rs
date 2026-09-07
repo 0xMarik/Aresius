@@ -26,6 +26,10 @@ impl Default for ProxySettings {
     }
 }
 
+fn default_show_splashscreen() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppState {
@@ -33,6 +37,20 @@ pub struct AppState {
     pub active_project_id: Option<String>,
     pub last_page: String,
     pub font_size_scale: Option<f64>,
+    #[serde(default = "default_show_splashscreen")]
+    pub show_splashscreen: bool,
+}
+
+impl Default for AppState {
+    fn default() -> Self {
+        Self {
+            sidebar_collapsed: false,
+            active_project_id: None,
+            last_page: "/projects".to_string(),
+            font_size_scale: None,
+            show_splashscreen: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -183,7 +201,7 @@ pub async fn save_fuzzer_settings_internal(pool: &SqlitePool, settings: &FuzzerS
 
 pub async fn get_app_state_internal(pool: &SqlitePool) -> Result<AppState, String> {
     let rows: Vec<(String, Option<String>)> =
-        sqlx::query_as("SELECT key, value FROM global_settings WHERE key IN ('sidebar_collapsed', 'active_project_id', 'last_page', 'font_size_scale')")
+        sqlx::query_as("SELECT key, value FROM global_settings WHERE key IN ('sidebar_collapsed', 'active_project_id', 'last_page', 'font_size_scale', 'show_splashscreen')")
             .fetch_all(pool)
             .await
             .map_err(|e| e.to_string())?;
@@ -192,6 +210,7 @@ pub async fn get_app_state_internal(pool: &SqlitePool) -> Result<AppState, Strin
     let mut active_project_id: Option<String> = None;
     let mut last_page = "/projects".to_string();
     let mut font_size_scale: Option<f64> = None;
+    let mut show_splashscreen = true;
 
     for (key, value) in rows {
         match key.as_str() {
@@ -213,6 +232,11 @@ pub async fn get_app_state_internal(pool: &SqlitePool) -> Result<AppState, Strin
                     font_size_scale = v.parse::<f64>().ok();
                 }
             }
+            "show_splashscreen" => {
+                if let Some(v) = value {
+                    show_splashscreen = v != "false";
+                }
+            }
             _ => {}
         }
     }
@@ -222,6 +246,7 @@ pub async fn get_app_state_internal(pool: &SqlitePool) -> Result<AppState, Strin
         active_project_id,
         last_page,
         font_size_scale,
+        show_splashscreen,
     })
 }
 
@@ -270,6 +295,30 @@ pub async fn save_app_state_internal(pool: &SqlitePool, state: &AppState) -> Res
         .map_err(|e| e.to_string())?;
     }
 
+    let splash_val = if state.show_splashscreen { "true" } else { "false" };
+    sqlx::query(
+        "INSERT INTO global_settings (key, value) VALUES (?, ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    )
+    .bind("show_splashscreen")
+    .bind(splash_val)
+    .execute(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+pub async fn set_show_splashscreen_internal(pool: &SqlitePool, show: bool) -> Result<(), String> {
+    let val = if show { "true" } else { "false" };
+    sqlx::query(
+        "INSERT INTO global_settings (key, value) VALUES ('show_splashscreen', ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    )
+    .bind(val)
+    .execute(pool)
+    .await
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -290,6 +339,14 @@ pub async fn save_app_state(
     settings_state: tauri::State<'_, SettingsState>,
 ) -> Result<(), String> {
     save_app_state_internal(settings_state.pool(), &state).await
+}
+
+#[tauri::command]
+pub async fn set_show_splashscreen(
+    show: bool,
+    settings_state: tauri::State<'_, SettingsState>,
+) -> Result<(), String> {
+    set_show_splashscreen_internal(settings_state.pool(), show).await
 }
 
 #[tauri::command]

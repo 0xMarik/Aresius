@@ -14,9 +14,6 @@ pub struct FuzzerSessionDb {
     pub delay_ms: i64,
     pub target_url: String,
     pub sort_order: i64,
-    pub is_expanded: bool,
-    pub is_selected: bool,
-    pub selected_history_index: Option<i64>,
     pub created_at: i64,
     #[sqlx(default)]
     pub pipeline_scope: Option<String>,
@@ -121,6 +118,7 @@ pub struct FuzzerProjectData {
     pub sessions: Vec<FuzzerFullSession>,
     pub selected_session_index: Option<usize>,
     pub expanded_ids: Vec<String>,
+    pub ui_state: Option<String>,
 }
 
 /// Helper function to parse HTTP status code from raw response string
@@ -160,17 +158,13 @@ pub async fn get_fuzzer_project_data(
     .await
     .map_err(|e| e.to_string())?;
 
-    let mut selected_session_index: Option<usize> = None;
-    let mut expanded_ids = Vec::new();
-
-    for (idx, sess) in sessions.iter().enumerate() {
-        if sess.is_selected {
-            selected_session_index = Some(idx);
-        }
-        if sess.is_expanded {
-            expanded_ids.push(idx.to_string());
-        }
-    }
+    let ui_state: Option<String> = sqlx::query_scalar(
+        "SELECT ui_state FROM fuzzer_ui_state WHERE project_id = ?"
+    )
+    .bind(&real_project_id)
+    .fetch_optional(&pool)
+    .await
+    .unwrap_or(None);
 
     let mut full_sessions = Vec::new();
 
@@ -216,68 +210,51 @@ pub async fn get_fuzzer_project_data(
 
     Ok(FuzzerProjectData {
         sessions: full_sessions,
-        selected_session_index,
-        expanded_ids,
+        selected_session_index: None,
+        expanded_ids: Vec::new(),
+        ui_state,
     })
 }
 
-#[tauri::command]
-pub async fn set_fuzzer_session_selection(
-    db: tauri::State<'_, DbState>,
-    project_id: String,
-    session_index: Option<usize>,
-    selected_history_index: Option<i64>,
-) -> Result<(), String> {
-    let pool = db.pool().await?;
-    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
-
-    let real_project_id: String =
-        match sqlx::query_scalar::<_, String>("SELECT id FROM projects LIMIT 1")
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(|e| e.to_string())?
-        {
-            Some(pid) => pid,
-            None => project_id.clone(),
-        };
-
-    sqlx::query("UPDATE fuzzer_sessions SET is_selected = 0 WHERE project_id = ?")
-        .bind(&real_project_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    if let Some(s_idx) = session_index {
-        let session_id: Option<String> = sqlx::query_scalar(
-            "SELECT id FROM fuzzer_sessions WHERE project_id = ? ORDER BY sort_order ASC, created_at ASC LIMIT 1 OFFSET ?"
-        )
-        .bind(&real_project_id)
-        .bind(s_idx as i64)
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(|e| e.to_string())?;
-
-        if let Some(s_id) = session_id {
-            sqlx::query(
-                "UPDATE fuzzer_sessions SET is_selected = 1, selected_history_index = ? WHERE id = ?"
-            )
-            .bind(selected_history_index)
-            .bind(&s_id)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| e.to_string())?;
-        }
-    }
-
-    tx.commit().await.map_err(|e| e.to_string())?;
-    Ok(())
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct DbFuzzerUiStateRow {
+    pub project_id: String,
+    pub ui_state: String,
+    pub updated_at: i64,
 }
 
 #[tauri::command]
-pub async fn set_fuzzer_expanded_ids(
+pub async fn get_fuzzer_ui_state_db(
     db: tauri::State<'_, DbState>,
     project_id: String,
-    expanded_ids: Vec<String>,
+) -> Result<Option<DbFuzzerUiStateRow>, String> {
+    let pool = db.pool().await?;
+    let real_project_id: String =
+        match sqlx::query_scalar::<_, String>("SELECT id FROM projects LIMIT 1")
+            .fetch_optional(&pool)
+            .await
+        {
+            Ok(Some(pid)) => pid,
+            _ => project_id.clone(),
+        };
+
+    let row: Option<DbFuzzerUiStateRow> = sqlx::query_as(
+        "SELECT project_id, ui_state, updated_at FROM fuzzer_ui_state WHERE project_id = ?"
+    )
+    .bind(&real_project_id)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    Ok(row)
+}
+
+#[tauri::command]
+pub async fn save_fuzzer_ui_state_db(
+    db: tauri::State<'_, DbState>,
+    project_id: String,
+    ui_state: String,
 ) -> Result<(), String> {
     let pool = db.pool().await?;
     let real_project_id: String =
@@ -289,25 +266,44 @@ pub async fn set_fuzzer_expanded_ids(
             _ => project_id.clone(),
         };
 
-    let sessions = sqlx::query_as::<_, FuzzerSessionDb>(
-        "SELECT * FROM fuzzer_sessions WHERE project_id = ? ORDER BY sort_order ASC, created_at ASC"
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+
+    sqlx::query(
+        "INSERT INTO fuzzer_ui_state (project_id, ui_state, updated_at)
+         VALUES (?, ?, ?)
+         ON CONFLICT(project_id) DO UPDATE SET
+            ui_state = excluded.ui_state,
+            updated_at = excluded.updated_at"
     )
     .bind(&real_project_id)
-    .fetch_all(&pool)
+    .bind(&ui_state)
+    .bind(now)
+    .execute(&pool)
     .await
     .map_err(|e| e.to_string())?;
 
-    for (idx, sess) in sessions.into_iter().enumerate() {
-        let is_expanded =
-            expanded_ids.contains(&idx.to_string()) || expanded_ids.contains(&sess.id);
-        sqlx::query("UPDATE fuzzer_sessions SET is_expanded = ? WHERE id = ?")
-            .bind(is_expanded)
-            .bind(&sess.id)
-            .execute(&pool)
-            .await
-            .map_err(|e| e.to_string())?;
-    }
+    Ok(())
+}
 
+#[tauri::command]
+pub async fn set_fuzzer_session_selection(
+    _db: tauri::State<'_, DbState>,
+    _project_id: String,
+    _session_index: Option<usize>,
+    _selected_history_index: Option<i64>,
+) -> Result<(), String> {
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn set_fuzzer_expanded_ids(
+    _db: tauri::State<'_, DbState>,
+    _project_id: String,
+    _expanded_ids: Vec<String>,
+) -> Result<(), String> {
     Ok(())
 }
 
@@ -342,15 +338,9 @@ pub async fn create_fuzzer_session_db(
             .await
             .unwrap_or(0);
 
-    sqlx::query("UPDATE fuzzer_sessions SET is_selected = 0 WHERE project_id = ?")
-        .bind(&real_project_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| e.to_string())?;
-
     sqlx::query(
-        "INSERT INTO fuzzer_sessions (id, project_id, name, target_url, raw_request, sort_order, is_selected, is_expanded, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, 1, 1, ?)"
+        "INSERT INTO fuzzer_sessions (id, project_id, name, target_url, raw_request, sort_order, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)"
     )
     .bind(&session_id)
     .bind(&real_project_id)
@@ -607,8 +597,8 @@ pub async fn save_fuzzer_session_draft(
             let new_id = uuid::Uuid::new_v4().to_string();
             let now = chrono::Utc::now().timestamp_millis();
             sqlx::query(
-                "INSERT INTO fuzzer_sessions (id, project_id, name, raw_request, target_url, attack_type, num_threads, delay_ms, pipeline_scope, pipeline_rules, set_connection_keep_alive, update_content_length, sort_order, is_selected, is_expanded, created_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?)"
+                "INSERT INTO fuzzer_sessions (id, project_id, name, raw_request, target_url, attack_type, num_threads, delay_ms, pipeline_scope, pipeline_rules, set_connection_keep_alive, update_content_length, sort_order, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
             )
             .bind(&new_id)
             .bind(&real_project_id)
@@ -692,8 +682,8 @@ pub async fn save_fuzzer_parameters_db(
             let new_id = uuid::Uuid::new_v4().to_string();
             let now = chrono::Utc::now().timestamp_millis();
             sqlx::query(
-                "INSERT INTO fuzzer_sessions (id, project_id, name, raw_request, target_url, sort_order, is_selected, is_expanded, created_at)
-                 VALUES (?, ?, ?, 'GET / HTTP/1.1\r\n\r\n', '', ?, 1, 1, ?)"
+                "INSERT INTO fuzzer_sessions (id, project_id, name, raw_request, target_url, sort_order, created_at)
+                 VALUES (?, ?, ?, 'GET / HTTP/1.1\r\n\r\n', '', ?, ?)"
             )
             .bind(&new_id)
             .bind(&real_project_id)

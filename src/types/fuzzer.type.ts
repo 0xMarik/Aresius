@@ -130,6 +130,7 @@ export interface FuzzingHistory {
     requests: FuzzerRequest[];
     fuzzConfigSnapshot: FuzzConfig;
     runState: FuzzRunState;
+    selectedRequestId?: number | null;
 }
 
 export interface FuzzerSession {

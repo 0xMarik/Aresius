@@ -12,4 +12,5 @@ INSERT OR IGNORE INTO global_settings (key, value) VALUES
     ('proxy_port', '8080'),
     ('proxy_auto_fallback_port', 'true'),
     ('proxy_auto_fallback_loopback', 'true'),
-    ('fuzzer_show_uncompleted_requests', 'false');
+    ('fuzzer_show_uncompleted_requests', 'false'),
+    ('show_splashscreen', 'true');

@@ -9,9 +9,6 @@ CREATE TABLE fuzzer_sessions (
     delay_ms      INTEGER NOT NULL DEFAULT 0,
     target_url    TEXT    NOT NULL DEFAULT '',
     sort_order    INTEGER NOT NULL DEFAULT 0,
-    is_expanded   INTEGER NOT NULL DEFAULT 1,
-    is_selected   INTEGER NOT NULL DEFAULT 0,
-    selected_history_index INTEGER,
     created_at    INTEGER NOT NULL
 );
 CREATE INDEX idx_fuzzer_sessions_project_id ON fuzzer_sessions (project_id);
@@ -107,3 +104,10 @@ CREATE INDEX idx_fuzzer_requests_sort_code ON fuzzer_requests (run_id, status_co
 CREATE INDEX idx_fuzzer_requests_sort_duration ON fuzzer_requests (run_id, response_time_ms);
 CREATE INDEX idx_fuzzer_requests_sort_length ON fuzzer_requests (run_id, response_length);
 CREATE INDEX idx_fuzzer_requests_chunk ON fuzzer_requests (chunk_id);
+
+-- 7. Fuzzer UI State
+CREATE TABLE IF NOT EXISTS fuzzer_ui_state (
+    project_id TEXT PRIMARY KEY NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    ui_state   TEXT NOT NULL DEFAULT '{}',
+    updated_at INTEGER NOT NULL
+);

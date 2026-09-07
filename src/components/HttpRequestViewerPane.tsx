@@ -37,6 +37,11 @@ export interface HttpRequestViewerPaneProps {
     autoSaveId?: string;
     emptyTitle?: string;
     emptyDescription?: string;
+    requestHeaderExtra?: React.ReactNode;
+    responseHeaderExtra?: React.ReactNode;
+    responseCustomContent?: React.ReactNode;
+    statusOverride?: string | number | null;
+    showSendToFuzzer?: boolean;
 }
 
 export type ViewVersion = 'manual' | 'automated' | 'original' | 'diff';
@@ -50,6 +55,11 @@ export const HttpRequestViewerPane = React.memo(function HttpRequestViewerPane({
     autoSaveId = 'aresius-req-res-viewer',
     emptyTitle = 'No Request Selected',
     emptyDescription = 'Choose a request row above to inspect its raw HTTP request and response payload.',
+    requestHeaderExtra,
+    responseHeaderExtra,
+    responseCustomContent,
+    statusOverride,
+    showSendToFuzzer = true,
 }: HttpRequestViewerPaneProps) {
     const [internalReqMode, setInternalReqMode] = useState<'raw' | 'pretty'>('raw');
     const [internalResMode, setInternalResMode] = useState<'raw' | 'pretty'>('raw');
@@ -238,6 +248,7 @@ export const HttpRequestViewerPane = React.memo(function HttpRequestViewerPane({
                         <span className="font-mono text-xs text-foreground/90 truncate max-w-[240px]" title={request.path}>
                             {request.path || '/'}
                         </span>
+                        {requestHeaderExtra}
                     </div>
 
                     <div className="flex items-center gap-2 shrink-0">
@@ -380,7 +391,9 @@ export const HttpRequestViewerPane = React.memo(function HttpRequestViewerPane({
 
                             <SendToReplayer rawRequest={activeRawRequest} />
 
-                            <SendToFuzzer rawRequest={activeRawRequest} host={request.host || ''} />
+                            {showSendToFuzzer && (
+                                <SendToFuzzer rawRequest={activeRawRequest} host={request.host || ''} />
+                            )}
                         </ContextMenuContent>
                     </ContextMenu>
                 )}
@@ -393,7 +406,7 @@ export const HttpRequestViewerPane = React.memo(function HttpRequestViewerPane({
                 {/* Response Header Bar */}
                 <div className="flex items-center justify-between px-3 py-1.5 bg-card/60 border-b border-border/50 text-xs shrink-0 select-none">
                     <div className="flex items-center gap-2 min-w-0">
-                        <HttpStatusBadge status={request.statusCode} />
+                        <HttpStatusBadge status={statusOverride !== undefined ? statusOverride : request.statusCode} />
 
                         {request.responseTimeMs !== undefined && request.responseTimeMs > 0 && (
                             <span className="flex items-center gap-1 text-[11px] text-muted-foreground font-mono tabular-nums">
@@ -417,6 +430,7 @@ export const HttpRequestViewerPane = React.memo(function HttpRequestViewerPane({
                     </div>
 
                     <div className="flex items-center gap-2 shrink-0">
+                        {responseHeaderExtra}
                         {/* Dropdown for Original vs Automated vs Manual vs Differentiation Response */}
                         {hasResModifications && (
                             <DropdownMenu>
@@ -522,14 +536,18 @@ export const HttpRequestViewerPane = React.memo(function HttpRequestViewerPane({
                             </DropdownMenu>
                         )}
 
-                        {resVersion !== 'diff' && (
+                        {resVersion !== 'diff' && !responseCustomContent && (
                             <ViewModeTabs mode={currentResMode} onChange={handleResModeChange} />
                         )}
                     </div>
                 </div>
 
                 {/* Response Content */}
-                {resVersion === 'diff' ? (
+                {responseCustomContent ? (
+                    <div className="flex-1 min-h-0 overflow-auto bg-card">
+                        {responseCustomContent}
+                    </div>
+                ) : resVersion === 'diff' ? (
                     <div className="flex-1 min-h-0 overflow-hidden bg-background">
                         <HttpMessageDiffViewer
                             original={originalRes}

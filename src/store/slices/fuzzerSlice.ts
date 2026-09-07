@@ -349,6 +349,18 @@ export const fuzzerSlice = createSlice({
       currentSession.selectedHistoryIndex = historyIndex;
     },
 
+    setFuzzerHistorySelectedRequest: (
+      state,
+      action: PayloadAction<{ sessionIndex: number; historyIndex: number; selectedRequestId: number | null; projectId: string }>
+    ) => {
+      const { sessionIndex, historyIndex, selectedRequestId, projectId } = action.payload;
+      const bucket = getBucket(state, projectId);
+      const history = bucket.fuzzerSessions[sessionIndex]?.fuzzingHistory[historyIndex];
+      if (history) {
+        history.selectedRequestId = selectedRequestId;
+      }
+    },
+
     updatePayloadRawRequest: (state, action: PayloadAction<{ content: string; projectId: string }>) => {
       const { content, projectId } = action.payload;
       const bucket = getBucket(state, projectId);
@@ -602,6 +614,7 @@ export const {
   setDelayMs,
   setTargerUrl,
   setSelectedFuzz,
+  setFuzzerHistorySelectedRequest,
   setFuzzingAttackType,
   setConnectionKeepAlive,
   setUpdateContentLength,
@@ -705,11 +718,27 @@ export const equalFuzzerSessionTree = (a: FuzzerSessionTreeState, b: FuzzerSessi
   return true;
 };
 
+export interface FuzzerUiState {
+  activeSessionIndex: number | null;
+  expandedIds: string[];
+  sessionHistorySelections?: Record<number, number | null>;
+  historyRowSelections?: Record<string, number | null>;
+}
+
 export const fetchFuzzerDataForProject = (projectId: string) => async (dispatch: any) => {
   try {
     const data = await invoke<any>('get_fuzzer_project_data', { projectId });
     if (data && data.sessions && data.sessions.length > 0) {
-      const mappedSessions: FuzzerSession[] = data.sessions.map((fullSess: any) => {
+      let parsedUiState: FuzzerUiState | null = null;
+      if (data.uiState) {
+        try {
+          parsedUiState = typeof data.uiState === 'string' ? JSON.parse(data.uiState) : data.uiState;
+        } catch (e) {
+          console.error('Failed to parse fuzzer ui_state:', e);
+        }
+      }
+
+      const mappedSessions: FuzzerSession[] = data.sessions.map((fullSess: any, sIdx: number) => {
         const s = fullSess.session;
         let sessionPipelineRules: PreprocessingRule[] = [];
         try {
@@ -719,6 +748,12 @@ export const fetchFuzzerDataForProject = (projectId: string) => async (dispatch:
         } catch {
           sessionPipelineRules = [];
         }
+
+        const selectedHistIdx = parsedUiState?.sessionHistorySelections?.[sIdx] !== undefined
+          ? parsedUiState.sessionHistorySelections[sIdx]
+          : (fullSess.session.selectedHistoryIndex !== undefined && fullSess.session.selectedHistoryIndex !== null
+            ? fullSess.session.selectedHistoryIndex
+            : null);
 
         return {
           name: s.name,
@@ -761,10 +796,8 @@ export const fetchFuzzerDataForProject = (projectId: string) => async (dispatch:
             },
           },
           selectedHighlightId: null,
-          selectedHistoryIndex: fullSess.session.selectedHistoryIndex !== undefined && fullSess.session.selectedHistoryIndex !== null
-            ? fullSess.session.selectedHistoryIndex
-            : null,
-          fuzzingHistory: (fullSess.runs || []).map((rawRun: any) => {
+          selectedHistoryIndex: selectedHistIdx,
+          fuzzingHistory: (fullSess.runs || []).map((rawRun: any, hIdx: number) => {
             const run = rawRun.run || rawRun;
             let configSnapshot: any = {};
             try {
@@ -822,10 +855,14 @@ export const fetchFuzzerDataForProject = (projectId: string) => async (dispatch:
                 ...(configSnapshot?.metadata || {}),
               },
             };
+
+            const savedSelectedRow = parsedUiState?.historyRowSelections?.[`${sIdx}_${hIdx}`] ?? null;
+
             return {
               date: new Date(run.startedAt).toISOString(),
               fuzzConfigSnapshot: fullConfigSnapshot,
               requests: [],
+              selectedRequestId: savedSelectedRow,
               runState: {
                 status: run.status,
                 completed: run.completed,
@@ -839,10 +876,13 @@ export const fetchFuzzerDataForProject = (projectId: string) => async (dispatch:
         };
       });
 
-      dispatch(setSessions({ sessions: mappedSessions, projectId, expandedIds: data.expandedIds || [] }));
-      const selectedSessionIdx = (data.selectedSessionIndex !== undefined && data.selectedSessionIndex !== null)
-        ? data.selectedSessionIndex
-        : null;
+      const expandedIds = parsedUiState?.expandedIds ?? data.expandedIds ?? [];
+      dispatch(setSessions({ sessions: mappedSessions, projectId, expandedIds }));
+      const selectedSessionIdx = (parsedUiState?.activeSessionIndex !== undefined && parsedUiState?.activeSessionIndex !== null)
+        ? parsedUiState.activeSessionIndex
+        : ((data.selectedSessionIndex !== undefined && data.selectedSessionIndex !== null)
+          ? data.selectedSessionIndex
+          : null);
       dispatch(setActiveSession({ sessionIndex: selectedSessionIdx, projectId }));
 
       if (selectedSessionIdx !== null) {
@@ -858,6 +898,50 @@ export const fetchFuzzerDataForProject = (projectId: string) => async (dispatch:
   } catch (err) {
     console.error('Failed to load fuzzer data on project selection:', err);
   }
+};
+
+let fuzzerUiStateSaveTimers: Record<string, NodeJS.Timeout> = {};
+
+export const persistFuzzerUiState = (projectId: string) => async (_dispatch: any, getState: () => RootState) => {
+  if (fuzzerUiStateSaveTimers[projectId]) {
+    clearTimeout(fuzzerUiStateSaveTimers[projectId]);
+  }
+
+  fuzzerUiStateSaveTimers[projectId] = setTimeout(async () => {
+    try {
+      const state = getState();
+      const bucket = state.fuzzerstate[projectId];
+      if (!bucket) return;
+
+      const sessionHistorySelections: Record<number, number | null> = {};
+      const historyRowSelections: Record<string, number | null> = {};
+
+      bucket.fuzzerSessions.forEach((sess, sIdx) => {
+        if (sess.selectedHistoryIndex !== null && sess.selectedHistoryIndex !== undefined) {
+          sessionHistorySelections[sIdx] = sess.selectedHistoryIndex;
+        }
+        sess.fuzzingHistory.forEach((hist, hIdx) => {
+          if (hist.selectedRequestId !== null && hist.selectedRequestId !== undefined) {
+            historyRowSelections[`${sIdx}_${hIdx}`] = hist.selectedRequestId;
+          }
+        });
+      });
+
+      const uiState: FuzzerUiState = {
+        activeSessionIndex: bucket.activeSessionIndex,
+        expandedIds: bucket.expandedIds || [],
+        sessionHistorySelections,
+        historyRowSelections,
+      };
+
+      await invoke('save_fuzzer_ui_state_db', {
+        projectId,
+        uiState: JSON.stringify(uiState),
+      });
+    } catch (err) {
+      console.error('Failed to save fuzzer ui state to DB:', err);
+    }
+  }, 250);
 };
 
 export const persistFuzzerSession = (projectId: string, sessionIndex: number) => async (_dispatch: any, getState: () => RootState) => {

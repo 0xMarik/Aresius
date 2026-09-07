@@ -10,11 +10,12 @@ import {
   increaseFontSize,
   decreaseFontSize,
   resetFontSize,
+  setShowSplashscreen,
 } from './slices/appStateSlice';
 
 /**
  * Middleware that intercepts project changes (setcurrentProjectId, deleteProject)
- * and app state updates (font size / zoom) to perform side effects and persist to catalog DB.
+ * and app state updates (font size / zoom / splashscreen) to perform side effects and persist to catalog DB.
  */
 export const projectDataMiddleware: Middleware = (store) => (next) => (action) => {
   const result = next(action);
@@ -29,13 +30,14 @@ export const projectDataMiddleware: Middleware = (store) => (next) => (action) =
       (store.dispatch as any)(fetchFiltersForProject(projectId));
     }
 
-    // Persist to DB (includes sidebar + lastPage + font size scale)
+    // Persist to DB (includes sidebar + lastPage + font size scale + splashscreen)
     const s = store.getState() as any;
     persistAppState({
       sidebarCollapsed: s.appState.sidebarCollapsed,
       activeProjectId: projectId,
       lastPage: s.appState.lastPage,
       fontSizeScale: s.appState.fontSizeScale,
+      showSplashscreen: s.appState.showSplashscreen ?? true,
     });
   } else if (deleteProject.match(action)) {
     const s = store.getState() as any;
@@ -47,13 +49,15 @@ export const projectDataMiddleware: Middleware = (store) => (next) => (action) =
         activeProjectId: null,
         lastPage: s.appState.lastPage,
         fontSizeScale: s.appState.fontSizeScale,
+        showSplashscreen: s.appState.showSplashscreen ?? true,
       });
     }
   } else if (
     setFontSizeScale.match(action) ||
     increaseFontSize.match(action) ||
     decreaseFontSize.match(action) ||
-    resetFontSize.match(action)
+    resetFontSize.match(action) ||
+    setShowSplashscreen.match(action)
   ) {
     const s = store.getState() as any;
     persistAppState({
@@ -61,6 +65,7 @@ export const projectDataMiddleware: Middleware = (store) => (next) => (action) =
       activeProjectId: s.appState.activeProjectId,
       lastPage: s.appState.lastPage,
       fontSizeScale: s.appState.fontSizeScale,
+      showSplashscreen: s.appState.showSplashscreen ?? true,
     });
   }
   return result;

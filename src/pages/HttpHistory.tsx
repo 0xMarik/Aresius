@@ -2,7 +2,6 @@ import Table, { isRowSelected } from '@/components/Table';
 import { useAppDispatch, useAppSelector } from '@/hooks/redux';
 import { ColumnDef, createColumnHelper } from '@tanstack/react-table';
 import { useState, useEffect } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { renderHttpHistoryTableContextMenu } from '@/components/HttpHistoryTableContextMenu';
 import { HttpTransaction } from '@/types/http.type';
@@ -17,6 +16,10 @@ import {
     selectApplyInterceptionInHistory,
     setApplyInterceptionInHistory,
 } from '@/store/slices/filtersSlice';
+import {
+    fetchHttpHistoryUiState,
+    persistHttpHistoryUiState,
+} from '@/store/slices/http-historySlice';
 
 function codeColor(code: number, selected: boolean) {
     if (selected) return 'text-primary-foreground';
@@ -200,42 +203,35 @@ const HTTPHistory = () => {
     useEffect(() => {
         if (!projectId) return;
 
-        invoke<{
-            projectId: string;
-            httpqlQuery: string;
-            scopeFilter: string;
-            selectedRequestId: number | null;
-            applyInterceptionFilters: boolean;
-            updatedAt: number;
-        } | null>('get_http_history_state_db', { projectId })
-            .then((savedState) => {
-                if (savedState) {
-                    if (savedState.httpqlQuery !== undefined) {
-                        setHttpqlQuery(savedState.httpqlQuery);
+        dispatch(fetchHttpHistoryUiState(projectId))
+            .then((uiState: any) => {
+                if (uiState) {
+                    if (uiState.httpqlQuery !== undefined) {
+                        setHttpqlQuery(uiState.httpqlQuery);
                     }
                     if (
-                        savedState.scopeFilter &&
-                        (savedState.scopeFilter === 'all' ||
-                            savedState.scopeFilter === 'in' ||
-                            savedState.scopeFilter === 'out')
+                        uiState.scopeFilter &&
+                        (uiState.scopeFilter === 'all' ||
+                            uiState.scopeFilter === 'in' ||
+                            uiState.scopeFilter === 'out')
                     ) {
-                        setScopeFilter(savedState.scopeFilter as ScopeFilterOption);
+                        setScopeFilter(uiState.scopeFilter as ScopeFilterOption);
                     }
-                    if (savedState.selectedRequestId) {
-                        setSelectedRequest(savedState.selectedRequestId);
+                    if (uiState.selectedRequestId !== undefined && uiState.selectedRequestId !== null) {
+                        setSelectedRequest(uiState.selectedRequestId);
                     }
-                    if (savedState.applyInterceptionFilters !== undefined) {
+                    if (uiState.applyInterceptionFilters !== undefined) {
                         dispatch(
                             setApplyInterceptionInHistory({
                                 projectId,
-                                enabled: savedState.applyInterceptionFilters,
+                                enabled: uiState.applyInterceptionFilters,
                             })
                         );
                     }
                 }
                 setIsStateLoaded(true);
             })
-            .catch((err) => {
+            .catch((err: any) => {
                 console.error('Failed to load http history state:', err);
                 setIsStateLoaded(true);
             });
@@ -245,25 +241,15 @@ const HTTPHistory = () => {
     useEffect(() => {
         if (!projectId || !isStateLoaded) return;
 
-        try {
-            localStorage.setItem(`aresius_http_history_httpql_${projectId}`, httpqlQuery);
-            localStorage.setItem(`aresius_http_history_scope_${projectId}`, scopeFilter);
-        } catch {}
-
-        const timer = setTimeout(() => {
-            invoke('save_http_history_state_db', {
-                projectId,
+        dispatch(
+            persistHttpHistoryUiState(projectId, {
                 httpqlQuery,
                 scopeFilter,
                 selectedRequestId: selectedRequest ?? null,
                 applyInterceptionFilters: applyInterceptionInHistory,
-            }).catch((err) => {
-                console.error('Failed to save http history state to DB:', err);
-            });
-        }, 400);
-
-        return () => clearTimeout(timer);
-    }, [projectId, httpqlQuery, scopeFilter, selectedRequest, applyInterceptionInHistory, isStateLoaded]);
+            })
+        );
+    }, [projectId, httpqlQuery, scopeFilter, selectedRequest, applyInterceptionInHistory, isStateLoaded, dispatch]);
 
     const handleToggleApplyFilter = (checked: boolean) => {
         if (projectId) {

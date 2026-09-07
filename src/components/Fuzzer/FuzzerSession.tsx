@@ -11,6 +11,7 @@ import {
     renameFuzzSession,
     setSelectedFuzz,
     setFuzzerExpandedIds,
+    persistFuzzerUiState,
     selectFuzzerSessionTree,
     equalFuzzerSessionTree,
 } from '@/store/slices/fuzzerSlice';
@@ -90,13 +91,14 @@ const FuzzSession: React.FC = () => {
                 targetUrl: "",
                 rawRequest: "GET / HTTP/1.1\r\nHost: example.com\r\n\r\n",
             }).catch(console.error);
+            dispatch(persistFuzzerUiState(projectId));
         }
     }, [dispatch, projectId]);
 
     const handleExpand = useCallback((ids: string[]) => {
         if (!projectId) return;
         dispatch(setFuzzerExpandedIds({ projectId, expandedIds: ids }));
-        invoke('set_fuzzer_expanded_ids', { projectId, expandedIds: ids }).catch(console.error);
+        dispatch(persistFuzzerUiState(projectId));
     }, [dispatch, projectId]);
 
     const handleSelection = useCallback((value: string[]) => {
@@ -107,23 +109,14 @@ const FuzzSession: React.FC = () => {
                 const sessIdx = Number(sessionId);
                 const histIdx = Number(historyId);
                 dispatch(setSelectedFuzz({ sessionIndex: sessIdx, historyIndex: histIdx, projectId }));
-                invoke('set_fuzzer_session_selection', {
-                    projectId,
-                    sessionIndex: sessIdx,
-                    selectedHistoryIndex: histIdx,
-                }).catch(console.error);
             } else {
                 const sessIdx = Number(value[0]);
                 dispatch(setSelectedFuzz({ sessionIndex: sessIdx, historyIndex: null, projectId }));
-                invoke('set_fuzzer_session_selection', {
-                    projectId,
-                    sessionIndex: sessIdx,
-                    selectedHistoryIndex: null,
-                }).catch(console.error);
             }
         } else {
             dispatch(setSelectedFuzz({ sessionIndex: null, historyIndex: null, projectId }));
         }
+        dispatch(persistFuzzerUiState(projectId));
     }, [dispatch, projectId]);
 
     const handleConfirmRemove = async () => {
@@ -147,6 +140,7 @@ const FuzzSession: React.FC = () => {
                     historyIndex: removingItem.histIdx,
                 });
             }
+            dispatch(persistFuzzerUiState(projectId));
         } catch (err) {
             console.error('Failed to delete fuzzer item:', err);
             toast.error(typeof err === 'string' ? err : 'Failed to delete item', { position: 'top-center' });
@@ -194,29 +188,13 @@ const FuzzSession: React.FC = () => {
             if (isSelected) {
                 // Clicking an already selected item deselects it
                 dispatch(setSelectedFuzz({ sessionIndex: null, historyIndex: null, projectId }));
-                invoke('set_fuzzer_session_selection', {
-                    projectId,
-                    sessionIndex: null,
-                    selectedHistoryIndex: null,
-                }).catch(console.error);
-                return;
-            }
-            if (isHistory) {
+            } else if (isHistory) {
                 dispatch(setSelectedFuzz({ sessionIndex: sessIdx, historyIndex: histIdx, projectId }));
-                invoke('set_fuzzer_session_selection', {
-                    projectId,
-                    sessionIndex: sessIdx,
-                    selectedHistoryIndex: histIdx,
-                }).catch(console.error);
             } else {
                 // Clicking the session / payload node switches directly to the payload editor
                 dispatch(setSelectedFuzz({ sessionIndex: sessIdx, historyIndex: null, projectId }));
-                invoke('set_fuzzer_session_selection', {
-                    projectId,
-                    sessionIndex: sessIdx,
-                    selectedHistoryIndex: null,
-                }).catch(console.error);
             }
+            dispatch(persistFuzzerUiState(projectId));
         };
 
         const handleEditClick = (e: React.MouseEvent) => {
@@ -411,11 +389,7 @@ const FuzzSession: React.FC = () => {
                     if (!projectId) return;
                     if (e.target === e.currentTarget && (activeSessionIndex !== null || activeHistoryIndex !== null)) {
                         dispatch(setSelectedFuzz({ sessionIndex: null, historyIndex: null, projectId }));
-                        invoke('set_fuzzer_session_selection', {
-                            projectId,
-                            sessionIndex: null,
-                            selectedHistoryIndex: null,
-                        }).catch(console.error);
+                        dispatch(persistFuzzerUiState(projectId));
                     }
                 }}
             >

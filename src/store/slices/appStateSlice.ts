@@ -60,6 +60,9 @@ const appStateSlice = createSlice({
       state.fontSizeScale = 1.0;
       applyFontScaleToDOM(1.0);
     },
+    setShowSplashscreen(state, action: PayloadAction<boolean>) {
+      state.showSplashscreen = action.payload;
+    },
     setFuzzerSettings(state, action: PayloadAction<FuzzerSettings>) {
       state.fuzzerSettings = action.payload;
     },
@@ -71,6 +74,7 @@ const appStateSlice = createSlice({
         ...state,
         ...action.payload,
         fontSizeScale: scale,
+        showSplashscreen: action.payload.showSplashscreen ?? true,
       };
     },
   },
@@ -84,6 +88,7 @@ export const {
   increaseFontSize,
   decreaseFontSize,
   resetFontSize,
+  setShowSplashscreen,
   setFuzzerSettings,
   hydrateAppState,
 } = appStateSlice.actions;

@@ -3,6 +3,7 @@ export interface AppState {
     activeProjectId: string | null;
     lastPage: string;
     fontSizeScale?: number;
+    showSplashscreen?: boolean;
 }
 
 export interface ProxySettings {
@@ -26,6 +27,7 @@ export const defaultAppState: AppState = {
     activeProjectId: null,
     lastPage: '/projects',
     fontSizeScale: 1.0,
+    showSplashscreen: true,
 };
 
 export const defaultProxySettings: ProxySettings = {

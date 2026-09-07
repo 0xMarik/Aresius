@@ -1,7 +1,9 @@
 use tauri::Manager;
 
 use crate::ares_utils::database::projects_catalog::{catalog_db_path, CatalogState};
-use crate::ares_utils::database::settings::{settings_db_path, SettingsState, get_proxy_settings_internal};
+use crate::ares_utils::database::settings::{
+    get_app_state_internal, get_proxy_settings_internal, settings_db_path, SettingsState,
+};
 use crate::ares_utils::database::{open_project_db, DatabaseType};
 use crate::ares_utils::shutdown_gracefully;
 
@@ -34,8 +36,9 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
     // Load persisted proxy settings from settings DB and spawn the HTTP proxy service in the background.
     let app_handle = app.handle().clone();
+    let proxy_settings_pool = settings_pool.clone();
     tauri::async_runtime::spawn(async move {
-        let settings = get_proxy_settings_internal(&settings_pool)
+        let settings = get_proxy_settings_internal(&proxy_settings_pool)
             .await
             .unwrap_or_default();
         if let Err(e) = crate::proxy::start_proxy_service(app_handle, settings).await {
@@ -43,8 +46,41 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    // If splashscreen window doesn't exist, show main window directly
-    if app.get_webview_window("splashscreen").is_none() {
+    // Check splashscreen preference
+    let app_state = tauri::async_runtime::block_on(async {
+        get_app_state_internal(&settings_pool)
+            .await
+            .unwrap_or_default()
+    });
+
+    if app_state.show_splashscreen {
+        let splash_res = tauri::WebviewWindowBuilder::new(
+            app,
+            "splashscreen",
+            tauri::WebviewUrl::App("splashscreen.html".into()),
+        )
+        .title("")
+        .inner_size(900.0, 600.0)
+        .transparent(true)
+        .always_on_top(true)
+        .center()
+        .decorations(false)
+        .resizable(false)
+        .shadow(false)
+        .skip_taskbar(false)
+        .visible(true)
+        .build();
+
+        if let Err(e) = splash_res {
+            tracing::error!("Failed to build splashscreen window: {}", e);
+            if let Some(main) = app.get_webview_window("main") {
+                let _ = main.show();
+                let _ = main.set_focus();
+            }
+        }
+    } else {
+        // When splashscreen is disabled, never create or open splashscreen window!
+        // Directly show the main window.
         if let Some(main) = app.get_webview_window("main") {
             let _ = main.show();
             let _ = main.set_focus();

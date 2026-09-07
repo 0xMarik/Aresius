@@ -12,21 +12,6 @@
   "app": {
     "windows": [
       {
-        "label": "splashscreen",
-        "title": "",
-        "skipTaskbar": false,
-        "width": 900,
-        "height": 600,
-        "transparent": true,
-        "alwaysOnTop": true,
-        "center": true,
-        "decorations": false,
-        "resizable": false,
-        "url": "splashscreen.html",
-        "visible": true,
-        "shadow": false
-      },
-      {
         "label": "main",
         "decorations": false,
         "title": "Aresius",
