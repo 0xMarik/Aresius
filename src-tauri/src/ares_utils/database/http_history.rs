@@ -48,6 +48,12 @@ pub struct HttpHistorySummaryRowDb {
     pub sent_at_ms: i64,
     pub state: String,
     pub is_https: bool,
+    #[serde(skip_serializing)]
+    #[sqlx(default)]
+    pub raw_request: Option<String>,
+    #[serde(skip_serializing)]
+    #[sqlx(default)]
+    pub raw_response: Option<String>,
     pub request_auto_patch: Option<String>,
     pub request_manual_patch: Option<String>,
     pub response_auto_patch: Option<String>,
@@ -94,10 +100,10 @@ impl crate::ares_utils::httpql::HttpTransactionEvaluable for HttpHistorySummaryR
         self.is_https
     }
     fn eval_raw_request(&self) -> Option<&str> {
-        None
+        self.raw_request.as_deref()
     }
     fn eval_raw_response(&self) -> Option<&str> {
-        None
+        self.raw_response.as_deref()
     }
 }
 
@@ -314,14 +320,6 @@ pub async fn get_http_history_window(
         }
     }
 
-    let mut query_builder = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
-        "SELECT id, project_id, host, method, path, query, extension, status_code, response_length, response_time_ms, sent_at_ms, state, is_https, request_auto_patch, request_manual_patch, response_auto_patch, response_manual_patch, request_edit_type, response_edit_type FROM http_history WHERE 1=1"
-    );
-    if let Some(ref pid) = project_id {
-        query_builder.push(" AND project_id = ");
-        query_builder.push_bind(pid);
-    }
-
     let parsed_httpql = if let Some(ref q) = search {
         if !q.trim().is_empty() {
             match crate::ares_utils::httpql::parse_httpql_with_presets(q, &preset_map) {
@@ -356,15 +354,27 @@ pub async fn get_http_history_window(
         (None, true) => None,
     };
 
+    let has_regex = final_httpql.as_ref().map_or(false, |e| e.has_regex());
+    let needs_memory_filter = needs_scope_filter || has_regex;
+
+    let base_select = if needs_memory_filter {
+        "SELECT id, project_id, host, method, path, query, extension, status_code, response_length, response_time_ms, sent_at_ms, state, is_https, raw_request, raw_response, request_auto_patch, request_manual_patch, response_auto_patch, response_manual_patch, request_edit_type, response_edit_type FROM http_history WHERE 1=1"
+    } else {
+        "SELECT id, project_id, host, method, path, query, extension, status_code, response_length, response_time_ms, sent_at_ms, state, is_https, NULL AS raw_request, NULL AS raw_response, request_auto_patch, request_manual_patch, response_auto_patch, response_manual_patch, request_edit_type, response_edit_type FROM http_history WHERE 1=1"
+    };
+
+    let mut query_builder = sqlx::QueryBuilder::<sqlx::Sqlite>::new(base_select);
+    if let Some(ref pid) = project_id {
+        query_builder.push(" AND project_id = ");
+        query_builder.push_bind(pid);
+    }
+
     if let Some(ref expr) = final_httpql {
         query_builder.push(" AND ");
         crate::ares_utils::httpql::compile_httpql_to_sql(&mut query_builder, expr);
     }
     query_builder.push(" ORDER BY ");
     query_builder.push(&order_clause);
-
-    let has_regex = final_httpql.as_ref().map_or(false, |e| e.has_regex());
-    let needs_memory_filter = needs_scope_filter || has_regex;
 
     if needs_memory_filter {
         let compiled_scope = scope.as_ref().map(crate::proxy::interceptor::CompiledScope::compile);
@@ -777,5 +787,94 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(after_count, 0);
+    }
+
+    #[tokio::test]
+    async fn test_http_history_regex_filtering_on_raw_payloads() {
+        let pool = create_test_pool().await;
+
+        // 1. Insert 2 rows
+        save_http_history(
+            pool.clone(),
+            "test-proj".to_string(),
+            "api.example.com".to_string(),
+            "POST".to_string(),
+            "/login".to_string(),
+            None,
+            None,
+            200,
+            50,
+            120,
+            1000,
+            true,
+            "POST /login HTTP/1.1\r\nHost: api.example.com\r\nAuthorization: Bearer abc123def\r\n\r\n{\"user\":\"admin\",\"pass\":\"12345\"}".to_string(),
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"token\":\"xyz987\",\"status\":\"success\"}".to_string(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        save_http_history(
+            pool.clone(),
+            "test-proj".to_string(),
+            "static.example.com".to_string(),
+            "GET".to_string(),
+            "/logo.png".to_string(),
+            None,
+            Some("png".to_string()),
+            404,
+            100,
+            30,
+            2000,
+            false,
+            "GET /logo.png HTTP/1.1\r\nHost: static.example.com\r\n\r\n".to_string(),
+            "HTTP/1.1 404 Not Found\r\nContent-Type: text/html\r\n\r\n<html>404 Not Found</html>".to_string(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        // 2. Query with raw request regex
+        let expr = crate::ares_utils::httpql::parse_httpql("req.raw.regex:\"Bearer\\s+[a-z0-9]+\"").unwrap().unwrap();
+        assert!(expr.has_regex());
+
+        let rows = sqlx::query_as::<_, HttpHistorySummaryRowDb>(
+            "SELECT id, project_id, host, method, path, query, extension, status_code, response_length, response_time_ms, sent_at_ms, state, is_https, raw_request, raw_response, request_auto_patch, request_manual_patch, response_auto_patch, response_manual_patch, request_edit_type, response_edit_type FROM http_history WHERE project_id = 'test-proj'"
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+
+        let matching: Vec<_> = rows.iter().filter(|r| expr.evaluate(*r)).collect();
+        assert_eq!(matching.len(), 1);
+        assert_eq!(matching[0].path, "/login");
+
+        // 3. Query with raw response regex
+        let expr_res = crate::ares_utils::httpql::parse_httpql("resp.raw.regex:\"token.*xyz[0-9]+\"").unwrap().unwrap();
+        let matching_res: Vec<_> = rows.iter().filter(|r| expr_res.evaluate(*r)).collect();
+        assert_eq!(matching_res.len(), 1);
+        assert_eq!(matching_res[0].path, "/login");
+
+        // 4. Query with nregex
+        let expr_nregex = crate::ares_utils::httpql::parse_httpql("resp.raw.nregex:\"404 Not Found\"").unwrap().unwrap();
+        let matching_nregex: Vec<_> = rows.iter().filter(|r| expr_nregex.evaluate(*r)).collect();
+        assert_eq!(matching_nregex.len(), 1);
+        assert_eq!(matching_nregex[0].path, "/login");
+
+        // 5. Query with req.body regex
+        let expr_body = crate::ares_utils::httpql::parse_httpql("req.body.regex:\"admin\"").unwrap().unwrap();
+        let matching_body: Vec<_> = rows.iter().filter(|r| expr_body.evaluate(*r)).collect();
+        assert_eq!(matching_body.len(), 1);
+        assert_eq!(matching_body[0].path, "/login");
     }
 }

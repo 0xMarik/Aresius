@@ -1679,45 +1679,6 @@ fn compile_condition_to_sql(
     }
 }
 
-fn regex_to_sql_like_candidate(re_str: &str) -> String {
-    let mut s = re_str.trim();
-    let anchored_start = s.starts_with('^');
-    if anchored_start {
-        s = &s[1..];
-    }
-    let anchored_end = s.ends_with('$');
-    if anchored_end {
-        s = &s[..s.len() - 1];
-    }
-
-    let mut cleaned = String::new();
-    let mut chars = s.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '.' && chars.peek() == Some(&'*') {
-            chars.next();
-            cleaned.push('%');
-        } else if c == '\\' {
-            if let Some(next_c) = chars.next() {
-                cleaned.push(next_c);
-            }
-        } else if c == '(' || c == ')' || c == '[' || c == ']' || c == '+' || c == '?' {
-            // Drop grouping punctuation for broad LIKE candidate filter
-        } else {
-            cleaned.push(c);
-        }
-    }
-    let core = cleaned.trim();
-    if core.is_empty() {
-        return "%".to_string();
-    }
-    match (anchored_start, anchored_end) {
-        (true, true) => core.to_string(),
-        (true, false) => format!("{}%", core),
-        (false, true) => format!("%{}", core),
-        (false, false) => format!("%{}%", core),
-    }
-}
-
 fn compile_str_field(
     builder: &mut sqlx::QueryBuilder<sqlx::Sqlite>,
     col: &str,
@@ -1983,19 +1944,8 @@ fn compile_str_field(
             builder.push(" NOT LIKE ");
             builder.push_bind(s);
         }
-        HttpqlOperator::Regex => {
-            let s = val_as_string(val);
-            let pattern = regex_to_sql_like_candidate(&s);
-            builder.push(col);
-            builder.push(" LIKE ");
-            builder.push_bind(pattern);
-        }
-        HttpqlOperator::Nregex => {
-            let s = val_as_string(val);
-            let pattern = regex_to_sql_like_candidate(&s);
-            builder.push(col);
-            builder.push(" NOT LIKE ");
-            builder.push_bind(pattern);
+        HttpqlOperator::Regex | HttpqlOperator::Nregex => {
+            builder.push("1=1");
         }
         HttpqlOperator::Gt | HttpqlOperator::Ge | HttpqlOperator::Lt | HttpqlOperator::Le => {
             // String comparison
@@ -2138,7 +2088,7 @@ fn compile_header_field(
         let header_prefix = format!("{}:", hname_lower);
 
         match op {
-            HttpqlOperator::Cont | HttpqlOperator::Like | HttpqlOperator::Regex => {
+            HttpqlOperator::Cont | HttpqlOperator::Like => {
                 let target_val = val_as_string(val);
                 let pattern = format!("%{}%", target_val.to_lowercase());
                 builder.push("(INSTR(LOWER(");
@@ -2151,7 +2101,7 @@ fn compile_header_field(
                 builder.push_bind(pattern);
                 builder.push(")");
             }
-            HttpqlOperator::Ncont | HttpqlOperator::Nlike | HttpqlOperator::Nregex => {
+            HttpqlOperator::Ncont | HttpqlOperator::Nlike => {
                 let target_val = val_as_string(val);
                 let pattern = format!("%{}%", target_val.to_lowercase());
                 builder.push("(INSTR(LOWER(");
@@ -2163,6 +2113,16 @@ fn compile_header_field(
                 builder.push(") NOT LIKE ");
                 builder.push_bind(pattern);
                 builder.push(")");
+            }
+            HttpqlOperator::Regex => {
+                builder.push("(INSTR(LOWER(");
+                builder.push(col);
+                builder.push("), ");
+                builder.push_bind(header_prefix.clone());
+                builder.push(") > 0)");
+            }
+            HttpqlOperator::Nregex => {
+                builder.push("1=1");
             }
             HttpqlOperator::Eq => match val {
                 HttpqlValue::List(list) => {
@@ -2337,10 +2297,12 @@ fn compile_header_field(
         let target_val = val_as_string(val);
         let pattern = format!("%{}%", target_val);
         match op {
+            HttpqlOperator::Regex | HttpqlOperator::Nregex => {
+                builder.push("1=1");
+            }
             HttpqlOperator::Ne
             | HttpqlOperator::Ncont
             | HttpqlOperator::Nlike
-            | HttpqlOperator::Nregex
             | HttpqlOperator::Nsw
             | HttpqlOperator::New
             | HttpqlOperator::Nin => {
@@ -2714,9 +2676,14 @@ fn eval_condition<T: HttpTransactionEvaluable>(cond: &HttpqlCondition, item: &T)
                 _ => true,
             }
         }
-        HttpqlField::ReqRaw | HttpqlField::ReqBody => {
+        HttpqlField::ReqRaw => {
             let raw = item.eval_raw_request().unwrap_or("");
             eval_str_cmp(raw, cond.op, &cond.value, false, re_ref)
+        }
+        HttpqlField::ReqBody => {
+            let raw = item.eval_raw_request().unwrap_or("");
+            let (_, body) = crate::ares_utils::parse::split_message(raw);
+            eval_str_cmp(body, cond.op, &cond.value, false, re_ref)
         }
         HttpqlField::ReqHeader(hname) => {
             let raw = item.eval_raw_request().unwrap_or("");
