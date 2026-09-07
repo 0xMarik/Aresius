@@ -75,20 +75,33 @@ pub async fn invalidate_fuzzer_search_cache(session: u32, history: u32) {
     cache.retain(|item| !item.key.starts_with(&prefix));
 }
 
-static SEARCH_CANCELLATIONS: OnceLock<Mutex<HashMap<String, Arc<AtomicBool>>>> = OnceLock::new();
+struct ActiveSearchInfo {
+    query: String,
+    flag: Arc<AtomicBool>,
+}
 
-fn search_cancellations() -> &'static Mutex<HashMap<String, Arc<AtomicBool>>> {
+static SEARCH_CANCELLATIONS: OnceLock<Mutex<HashMap<String, ActiveSearchInfo>>> = OnceLock::new();
+
+fn search_cancellations() -> &'static Mutex<HashMap<String, ActiveSearchInfo>> {
     SEARCH_CANCELLATIONS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-pub async fn register_search_cancel(session: u32, history: u32) -> Arc<AtomicBool> {
+pub async fn register_search_cancel(session: u32, history: u32, query_str: &str) -> Arc<AtomicBool> {
     let key = run_key(session, history);
     let mut map = search_cancellations().lock().await;
-    if let Some(old_flag) = map.get(&key) {
-        old_flag.store(true, Ordering::Relaxed);
+    if let Some(existing) = map.get(&key) {
+        if existing.query == query_str {
+            // Same query signature: reuse existing flag so live updates/polls do not abort in-flight search
+            return Arc::clone(&existing.flag);
+        }
+        // Different query: cancel the superseded search
+        existing.flag.store(true, Ordering::Relaxed);
     }
     let new_flag = Arc::new(AtomicBool::new(false));
-    map.insert(key, Arc::clone(&new_flag));
+    map.insert(key, ActiveSearchInfo {
+        query: query_str.to_string(),
+        flag: Arc::clone(&new_flag),
+    });
     new_flag
 }
 
@@ -106,7 +119,7 @@ impl Drop for SearchCancelGuard {
         tokio::spawn(async move {
             let key = run_key(session, history);
             let mut map = search_cancellations().lock().await;
-            if map.get(&key).map(|f| Arc::ptr_eq(f, &flag)).unwrap_or(false) {
+            if map.get(&key).map(|info| Arc::ptr_eq(&info.flag, &flag)).unwrap_or(false) {
                 map.remove(&key);
             }
         });
@@ -932,7 +945,7 @@ pub async fn get_fuzzer_history_window(
                         let cache_key = format!("{}:{}:{}", selected_session, fuzz_history, query_str);
                         let is_active = is_run_active(selected_session, fuzz_history).await || run_status == "running";
 
-                        let cancel_flag = register_search_cancel(selected_session, fuzz_history).await;
+                        let cancel_flag = register_search_cancel(selected_session, fuzz_history, query_str).await;
                         let _cancel_guard = SearchCancelGuard {
                             session: selected_session,
                             history: fuzz_history,
@@ -953,12 +966,14 @@ pub async fn get_fuzzer_history_window(
                                 eprintln!("[FUZZER_SEARCH_BENCH]   Search cache HIT for key={}", cache_key);
                                 let mut cached_item = cache.remove(pos).unwrap();
                                 cached_item.last_accessed = std::time::Instant::now();
+                                // Drop the cache lock immediately so concurrent window/search requests aren't stalled
+                                drop(cache);
 
                                 if is_active {
                                     // Incremental scan: inspect requests completed since last scan
                                     let since_date = cached_item.last_scanned_date.saturating_sub(2000);
                                     let t_inc = std::time::Instant::now();
-                                    if let Ok((new_db_rows, new_max_date)) = crate::ares_utils::database::fuzzer::query_fuzzer_requests_matching_since(
+                                    let inc_res = crate::ares_utils::database::fuzzer::query_fuzzer_requests_matching_since(
                                         &pool,
                                         &run_id,
                                         since_date,
@@ -967,41 +982,52 @@ pub async fn get_fuzzer_history_window(
                                         target_url,
                                         config_snapshot.clone(),
                                         Some(Arc::clone(&cancel_flag)),
-                                    ).await {
-                                        eprintln!(
-                                            "[FUZZER_SEARCH_BENCH]   Incremental scan found {} new rows in {:?}",
-                                            new_db_rows.len(),
-                                            t_inc.elapsed()
-                                        );
-                                        for r in new_db_rows {
-                                            if cached_item.seen_ids.insert(r.id.clone()) {
-                                                let status = if r.error_message.is_some() || r.connection_dropped {
-                                                    "error".to_string()
-                                                } else {
-                                                    "completed".to_string()
-                                                };
-                                                cached_item.rows.push(FuzzerRequestRow {
-                                                    id: r.sort_order as usize,
-                                                    fuzz_request_id: r.id,
-                                                    raw_request: None,
-                                                    payload: r.payload,
-                                                    response: None,
-                                                    request_date: chrono::DateTime::from_timestamp_millis(r.request_date)
-                                                        .map(|dt| dt.to_rfc3339())
-                                                        .unwrap_or_default(),
-                                                    status,
-                                                    error_message: r.error_message,
-                                                    connection_dropped: r.connection_dropped,
-                                                    worker_id: r.worker_id.map(|w| w as u32),
-                                                    status_code: r.status_code.map(|c| c as u16),
-                                                    response_length: r.response_length.map(|l| l as usize),
-                                                    response_time_ms: r.response_time_ms.map(|t| t as u128),
-                                                    chunk_id: r.chunk_id,
-                                                    chunk_index: r.chunk_index,
-                                                });
+                                    ).await;
+
+                                    match inc_res {
+                                        Ok((new_db_rows, new_max_date)) => {
+                                            eprintln!(
+                                                "[FUZZER_SEARCH_BENCH]   Incremental scan found {} new rows in {:?}",
+                                                new_db_rows.len(),
+                                                t_inc.elapsed()
+                                            );
+                                            for r in new_db_rows {
+                                                if cached_item.seen_ids.insert(r.id.clone()) {
+                                                    let status = if r.error_message.is_some() || r.connection_dropped {
+                                                        "error".to_string()
+                                                    } else {
+                                                        "completed".to_string()
+                                                    };
+                                                    cached_item.rows.push(FuzzerRequestRow {
+                                                        id: r.sort_order as usize,
+                                                        fuzz_request_id: r.id,
+                                                        raw_request: None,
+                                                        payload: r.payload,
+                                                        response: None,
+                                                        request_date: chrono::DateTime::from_timestamp_millis(r.request_date)
+                                                            .map(|dt| dt.to_rfc3339())
+                                                            .unwrap_or_default(),
+                                                        status,
+                                                        error_message: r.error_message,
+                                                        connection_dropped: r.connection_dropped,
+                                                        worker_id: r.worker_id.map(|w| w as u32),
+                                                        status_code: r.status_code.map(|c| c as u16),
+                                                        response_length: r.response_length.map(|l| l as usize),
+                                                        response_time_ms: r.response_time_ms.map(|t| t as u128),
+                                                        chunk_id: r.chunk_id,
+                                                        chunk_index: r.chunk_index,
+                                                    });
+                                                }
                                             }
+                                            cached_item.last_scanned_date = cached_item.last_scanned_date.max(new_max_date);
                                         }
-                                        cached_item.last_scanned_date = cached_item.last_scanned_date.max(new_max_date);
+                                        Err(e) if e == "Search cancelled" => {
+                                            eprintln!("[FUZZER_SEARCH_BENCH]   Incremental search was cancelled; returning empty window");
+                                            return Ok(FuzzerWindowResult { total: 0, items: Vec::new() });
+                                        }
+                                        Err(e) => {
+                                            eprintln!("[FUZZER_SEARCH_BENCH]   Incremental search failed: {}", e);
+                                        }
                                     }
                                 } else {
                                     eprintln!(
@@ -1011,6 +1037,7 @@ pub async fn get_fuzzer_history_window(
                                 }
 
                                 let rows = cached_item.rows.clone();
+                                let mut cache = search_cache().lock().await;
                                 cache.push_back(cached_item);
                                 drop(cache);
                                 rows

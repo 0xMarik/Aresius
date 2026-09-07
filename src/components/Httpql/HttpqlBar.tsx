@@ -100,6 +100,7 @@ export const HttpqlBar: React.FC<HttpqlBarProps> = ({
     const [inputValue, setInputValue] = useState(value);
     const [isValid, setIsValid] = useState<boolean>(true);
     const [validationError, setValidationError] = useState<string | null>(null);
+    const [showSyntaxErrorBanner, setShowSyntaxErrorBanner] = useState<boolean>(false);
 
     // Track the last valid query and the last emitted query to parent
     const lastValidQueryRef = useRef<string>(value || '');
@@ -108,10 +109,8 @@ export const HttpqlBar: React.FC<HttpqlBarProps> = ({
     onChangeRef.current = onChange;
 
     const emitQuery = React.useCallback((query: string) => {
-        if (lastEmittedValueRef.current !== query) {
-            lastEmittedValueRef.current = query;
-            onChangeRef.current(query);
-        }
+        lastEmittedValueRef.current = query;
+        onChangeRef.current(query);
     }, []);
 
     // History and saved queries
@@ -142,17 +141,20 @@ export const HttpqlBar: React.FC<HttpqlBarProps> = ({
             setInputValue(value || '');
             lastValidQueryRef.current = value || '';
             lastEmittedValueRef.current = value || '';
+            setIsValid(true);
+            setValidationError(null);
+            setShowSyntaxErrorBanner(false);
         }
     }, [value]);
 
-    // Live validation debounce: on syntax error while typing, display the last valid query or display all if it was empty
+    // Live validation debounce: validates syntax as user types for status icon feedback ONLY.
+    // DOES NOT emit queries or trigger filtering while typing.
     useEffect(() => {
         const trimmed = inputValue.trim();
         if (!trimmed) {
             setIsValid(true);
             setValidationError(null);
-            lastValidQueryRef.current = '';
-            emitQuery('');
+            setShowSyntaxErrorBanner(false);
             return;
         }
 
@@ -162,28 +164,23 @@ export const HttpqlBar: React.FC<HttpqlBarProps> = ({
                     if (res.isValid) {
                         setIsValid(true);
                         setValidationError(null);
-                        lastValidQueryRef.current = inputValue;
-                        emitQuery(inputValue);
+                        setShowSyntaxErrorBanner(false);
                     } else {
-                        // Syntax error while the user is still writing the command:
-                        // Just display the last query that has been written, or display all if it was empty
                         setIsValid(false);
                         setValidationError(res.error || 'Invalid expression');
-                        emitQuery(lastValidQueryRef.current);
                     }
                 })
                 .catch(() => {
                     setIsValid(true);
                     setValidationError(null);
-                    lastValidQueryRef.current = inputValue;
-                    emitQuery(inputValue);
+                    setShowSyntaxErrorBanner(false);
                 });
         }, 150);
 
         return () => clearTimeout(timer);
-    }, [inputValue, emitQuery]);
+    }, [inputValue]);
 
-    const handleSaveToHistory = (queryToSave: string) => {
+    const handleSaveToHistory = React.useCallback((queryToSave: string) => {
         const trimmed = queryToSave.trim();
         if (!trimmed) return;
         setHistoryQueries((prev) => {
@@ -194,7 +191,41 @@ export const HttpqlBar: React.FC<HttpqlBarProps> = ({
             } catch {}
             return updated;
         });
-    };
+    }, []);
+
+    // Strict submit handler: applied ONLY on Enter or explicit preset/history click
+    const handleSubmit = React.useCallback(async (queryToSubmit: string) => {
+        const trimmed = queryToSubmit.trim();
+        if (!trimmed) {
+            setIsValid(true);
+            setValidationError(null);
+            setShowSyntaxErrorBanner(false);
+            lastValidQueryRef.current = '';
+            emitQuery('');
+            return;
+        }
+
+        try {
+            const res = await invoke<{ isValid: boolean; error?: string }>('validate_httpql', { query: trimmed });
+            if (res.isValid) {
+                setIsValid(true);
+                setValidationError(null);
+                setShowSyntaxErrorBanner(false);
+                lastValidQueryRef.current = trimmed;
+                handleSaveToHistory(trimmed);
+                emitQuery(trimmed);
+            } else {
+                setIsValid(false);
+                setValidationError(res.error || 'Invalid expression');
+                setShowSyntaxErrorBanner(true);
+                // DO NOT trigger filtering if syntax is incorrect!
+            }
+        } catch {
+            setIsValid(false);
+            setValidationError('Failed to validate query syntax');
+            setShowSyntaxErrorBanner(true);
+        }
+    }, [emitQuery, handleSaveToHistory]);
 
     const handleSaveCurrentQuery = () => {
         if (!inputValue.trim() || !newQueryName.trim()) return;
@@ -223,6 +254,9 @@ export const HttpqlBar: React.FC<HttpqlBarProps> = ({
 
     const clearInput = () => {
         setInputValue('');
+        setIsValid(true);
+        setValidationError(null);
+        setShowSyntaxErrorBanner(false);
         lastValidQueryRef.current = '';
         emitQuery('');
         inputRef.current?.focus();
@@ -269,7 +303,7 @@ export const HttpqlBar: React.FC<HttpqlBarProps> = ({
                             setInputValue(val);
                         }}
                         onSubmit={(val) => {
-                            handleSaveToHistory(val);
+                            handleSubmit(val);
                         }}
                         placeholder={placeholder}
                         dynamicPresets={dynamicPresets}
@@ -278,6 +312,13 @@ export const HttpqlBar: React.FC<HttpqlBarProps> = ({
 
                     {/* Right side controls inside input */}
                     <div className="absolute right-2 flex items-center gap-1.5 z-10">
+                        {/* Keyboard hint (↵ Enter) */}
+                        {inputValue.trim() && (
+                            <kbd className="hidden sm:inline-flex items-center px-1.5 py-0.5 text-[9px] text-muted-foreground/70 bg-muted/40 rounded border border-border/50 font-mono select-none">
+                                ↵ Enter
+                            </kbd>
+                        )}
+
                         {/* Validation Status Indicator */}
                         {inputValue.trim() && (
                             <TooltipProvider>
@@ -293,7 +334,7 @@ export const HttpqlBar: React.FC<HttpqlBarProps> = ({
                                     </TooltipTrigger>
                                     <TooltipContent side="bottom" className="text-xs">
                                         {isValid
-                                            ? 'Valid HTTPQL syntax'
+                                            ? 'Valid HTTPQL syntax — Press Enter to filter'
                                             : `Syntax error: ${validationError || 'Invalid expression'}`}
                                     </TooltipContent>
                                 </Tooltip>
@@ -364,8 +405,7 @@ export const HttpqlBar: React.FC<HttpqlBarProps> = ({
                                     className="flex items-center justify-between text-xs py-1.5 cursor-pointer group"
                                     onClick={() => {
                                         setInputValue(saved.query);
-                                        lastValidQueryRef.current = saved.query;
-                                        emitQuery(saved.query);
+                                        handleSubmit(saved.query);
                                     }}
                                 >
                                     <div className="flex flex-col truncate pr-2">
@@ -398,8 +438,7 @@ export const HttpqlBar: React.FC<HttpqlBarProps> = ({
                                     className="text-xs font-mono py-1.5 truncate cursor-pointer text-muted-foreground hover:text-foreground"
                                     onClick={() => {
                                         setInputValue(q);
-                                        lastValidQueryRef.current = q;
-                                        emitQuery(q);
+                                        handleSubmit(q);
                                     }}
                                 >
                                     <span className="truncate">{q}</span>
@@ -438,6 +477,21 @@ export const HttpqlBar: React.FC<HttpqlBarProps> = ({
                 )}
             </div>
 
+            {/* Syntax Error Banner (shown only when user pressed Enter with invalid syntax) */}
+            {showSyntaxErrorBanner && !isValid && validationError && (
+                <div className="flex items-center justify-between gap-2 px-2.5 py-1 rounded bg-rose-500/10 border border-rose-500/20 text-rose-500 dark:text-rose-400 text-xs font-mono animate-in fade-in duration-150">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                        <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                        <span className="truncate">
+                            Syntax error: {validationError}
+                        </span>
+                    </div>
+                    <span className="text-[10px] text-muted-foreground shrink-0 uppercase tracking-wider font-sans font-medium">
+                        Filter not applied
+                    </span>
+                </div>
+            )}
+
             {/* Cheatsheet Modal */}
             <HttpqlCheatsheetModal
                 open={cheatsheetOpen}
@@ -445,7 +499,7 @@ export const HttpqlBar: React.FC<HttpqlBarProps> = ({
                 presets={effectivePresets}
                 onSelectQuery={(q) => {
                     setInputValue(q);
-                    onChange(q);
+                    handleSubmit(q);
                 }}
             />
         </div>

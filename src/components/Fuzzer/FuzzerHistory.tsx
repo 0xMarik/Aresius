@@ -362,21 +362,8 @@ function FuzzerHistoryBody({
     const [sorting, setSorting] = useState<SortingState>([]);
     const [fetchedFocusedResult, setFetchedFocusedResult] = useState<EnrichedFuzzerRow | null>(null);
     const [httpqlQuery, setHttpqlQuery] = useState('');
-    const [debouncedHttpqlQuery, setDebouncedHttpqlQuery] = useState('');
+    const [queryTrigger, setQueryTrigger] = useState(0);
     const [isSearching, setIsSearching] = useState(false);
-
-    useEffect(() => {
-        if (!httpqlQuery.trim()) {
-            setDebouncedHttpqlQuery('');
-            setIsSearching(false);
-            return;
-        }
-        setIsSearching(true);
-        const timer = setTimeout(() => {
-            setDebouncedHttpqlQuery(httpqlQuery);
-        }, 300);
-        return () => clearTimeout(timer);
-    }, [httpqlQuery]);
 
     const prevShowUncompletedRef = useRef(showUncompleted);
     useEffect(() => {
@@ -387,12 +374,10 @@ function FuzzerHistoryBody({
     }, [showUncompleted]);
 
     const handleHttpqlChange = useCallback((query: string) => {
-        setHttpqlQuery((prev) => {
-            if (prev === query) return prev;
-            setIsSearching(true);
-            setWindowState((w) => ({ ...w, offset: 0 }));
-            return query;
-        });
+        setHttpqlQuery(query);
+        setIsSearching(!!query.trim());
+        setWindowState((w) => ({ ...w, offset: 0 }));
+        setQueryTrigger((prev) => prev + 1);
     }, []);
 
     const handleSortingChange = useCallback((updater: any) => {
@@ -431,10 +416,14 @@ function FuzzerHistoryBody({
         });
     }, []);
 
+    const inFlightRef = useRef<boolean>(false);
+    const pendingLiveUpdateRef = useRef<boolean>(false);
+    const liveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const latestQueryKeyRef = useRef<string>('');
     const latestReqIdRef = useRef<number>(0);
     const latestCommittedReqIdRef = useRef<number>(0);
     const isMountedRef = useRef<boolean>(true);
+    const scheduleLivePollRef = useRef<() => void>(() => {});
 
     useEffect(() => {
         isMountedRef.current = true;
@@ -443,17 +432,26 @@ function FuzzerHistoryBody({
         };
     }, []);
 
-    const queryKey = `${sessionIndex}:${historyIndex}:${debouncedHttpqlQuery.trim()}:${JSON.stringify(sorting)}:${windowState.offset}:${windowState.limit}:${showUncompleted}`;
+    const queryKey = `${sessionIndex}:${historyIndex}:${httpqlQuery.trim()}:${queryTrigger}:${JSON.stringify(sorting)}:${windowState.offset}:${windowState.limit}:${showUncompleted}`;
 
-    // ─── Unified window fetch (with or without HTTPQL query) ─────────────────
-    useEffect(() => {
+    const doFetchWindow = useCallback((isLivePoll = false) => {
+        if (isLivePoll && inFlightRef.current) {
+            // Already searching; mark that we need a fresh check after current completes
+            pendingLiveUpdateRef.current = true;
+            return;
+        }
+
         const thisReqId = ++latestReqIdRef.current;
-        const isNewQuery = latestQueryKeyRef.current !== queryKey;
-        latestQueryKeyRef.current = queryKey;
+        const currentQueryKey = queryKey;
+        const isNewQuery = latestQueryKeyRef.current !== currentQueryKey;
+        latestQueryKeyRef.current = currentQueryKey;
 
         if (isNewQuery) {
             latestCommittedReqIdRef.current = thisReqId - 1;
         }
+
+        inFlightRef.current = true;
+        // isSearching is initiated only in handleHttpqlChange when user presses Enter or submits a query.
 
         const sortBy = sorting[0]?.id ?? null;
         const sortOrder = sorting[0]?.desc ? 'desc' : 'asc';
@@ -465,11 +463,12 @@ function FuzzerHistoryBody({
             limit: windowState.limit,
             sortBy,
             sortOrder,
-            searchQuery: debouncedHttpqlQuery.trim(),
+            searchQuery: httpqlQuery.trim(),
             showUncompleted,
         })
             .then((res) => {
-                if (!isMountedRef.current || latestQueryKeyRef.current !== queryKey) return;
+                inFlightRef.current = false;
+                if (!isMountedRef.current || latestQueryKeyRef.current !== currentQueryKey) return;
                 if (thisReqId >= latestCommittedReqIdRef.current) {
                     latestCommittedReqIdRef.current = thisReqId;
                     setIsSearching(false);
@@ -481,9 +480,16 @@ function FuzzerHistoryBody({
                         }));
                     }
                 }
+
+                // If live attack traffic was queued while this query was running, schedule next poll
+                if (pendingLiveUpdateRef.current) {
+                    pendingLiveUpdateRef.current = false;
+                    scheduleLivePollRef.current();
+                }
             })
             .catch((_err) => {
-                if (!isMountedRef.current || latestQueryKeyRef.current !== queryKey) return;
+                inFlightRef.current = false;
+                if (!isMountedRef.current || latestQueryKeyRef.current !== currentQueryKey) return;
                 if (thisReqId >= latestCommittedReqIdRef.current) {
                     latestCommittedReqIdRef.current = thisReqId;
                     setIsSearching(false);
@@ -497,19 +503,76 @@ function FuzzerHistoryBody({
     }, [
         sessionIndex,
         historyIndex,
+        httpqlQuery,
+        queryTrigger,
+        sorting,
         windowState.offset,
         windowState.limit,
-        runState.completed,
-        runState.failed,
-        runState.status,
-        sorting,
-        debouncedHttpqlQuery,
         showUncompleted,
         queryKey,
     ]);
 
+    const scheduleLivePoll = useCallback(() => {
+        if (liveTimerRef.current !== null) return;
+        const delay = httpqlQuery.trim() ? 800 : 250;
+        liveTimerRef.current = setTimeout(() => {
+            liveTimerRef.current = null;
+            if (isMountedRef.current) {
+                doFetchWindow(true);
+            }
+        }, delay);
+    }, [httpqlQuery, doFetchWindow]);
+
+    scheduleLivePollRef.current = scheduleLivePoll;
+
+    // 1. Immediate trigger on user interaction (query submit, sort, pagination, session switch)
+    useEffect(() => {
+        doFetchWindow(false);
+    }, [
+        sessionIndex,
+        historyIndex,
+        windowState.offset,
+        windowState.limit,
+        sorting,
+        httpqlQuery,
+        queryTrigger,
+        showUncompleted,
+    ]);
+
+    // 2. Throttled trigger on live attack progress (completed/failed count updates)
+    const prevCompletedRef = useRef(runState.completed);
+    const prevFailedRef = useRef(runState.failed);
+    const prevStatusRef = useRef(runState.status);
+
+    useEffect(() => {
+        const hasChanged =
+            prevCompletedRef.current !== runState.completed ||
+            prevFailedRef.current !== runState.failed ||
+            prevStatusRef.current !== runState.status;
+
+        prevCompletedRef.current = runState.completed;
+        prevFailedRef.current = runState.failed;
+        prevStatusRef.current = runState.status;
+
+        if (hasChanged && runState.status === 'running') {
+            scheduleLivePoll();
+        } else if (hasChanged && (runState.status === 'completed' || runState.status === 'cancelled')) {
+            // Once attack finishes, do one final sync
+            doFetchWindow(true);
+        }
+    }, [runState.completed, runState.failed, runState.status, scheduleLivePoll, doFetchWindow]);
+
+    useEffect(() => {
+        return () => {
+            if (liveTimerRef.current !== null) {
+                clearTimeout(liveTimerRef.current);
+                liveTimerRef.current = null;
+            }
+        };
+    }, []);
+
     const effectiveTotal = useMemo(() => {
-        if (debouncedHttpqlQuery.trim()) {
+        if (httpqlQuery.trim()) {
             return windowState.totalFromBackend;
         }
         if (showUncompleted) {
@@ -517,7 +580,7 @@ function FuzzerHistoryBody({
         }
         if (windowState.totalFromBackend > 0) return windowState.totalFromBackend;
         return (runState.completed ?? 0) + (runState.failed ?? 0);
-    }, [debouncedHttpqlQuery, windowState.totalFromBackend, runState.total, runState.completed, runState.failed, showUncompleted]);
+    }, [httpqlQuery, windowState.totalFromBackend, runState.total, runState.completed, runState.failed, showUncompleted]);
 
     const rows = useMemo(
         () => adaptFuzzerRequests(windowState.items, windowState.offset),
@@ -597,7 +660,7 @@ function FuzzerHistoryBody({
                             placeholder="Filter fuzzer requests with HTTPQL (e.g. resp.code:200, resp.len.gt:500, resp.roundtrip.lt:100)..."
                         />
                         {/* Filtering indicator — visible only while search query is running */}
-                        {isSearching && debouncedHttpqlQuery.trim() && (
+                        {isSearching && httpqlQuery.trim() && (
                             <div className="flex items-center gap-2 px-3 py-1 shrink-0 bg-primary/5 border-b border-primary/20">
                                 <Loader2 className="w-3 h-3 animate-spin text-primary shrink-0" />
                                 <span className="text-[11px] text-primary/80 font-medium">
@@ -615,8 +678,8 @@ function FuzzerHistoryBody({
                                 sorting={sorting}
                                 onSortingChange={handleSortingChange}
                                 manualSorting={true}
-                                emptyLabel={isSearching ? 'Filtering…' : (isLoading ? 'Running fuzzer…' : (debouncedHttpqlQuery.trim() ? 'No matching requests' : 'No fuzzing results yet'))}
-                                emptyHint={isSearching ? undefined : (isLoading ? undefined : (debouncedHttpqlQuery.trim() ? 'Try adjusting your HTTPQL filter query' : 'Run the fuzzer to see results here'))}
+                                emptyLabel={isSearching ? 'Filtering…' : (isLoading ? 'Running fuzzer…' : (httpqlQuery.trim() ? 'No matching requests' : 'No fuzzing results yet'))}
+                                emptyHint={isSearching ? undefined : (isLoading ? undefined : (httpqlQuery.trim() ? 'Try adjusting your HTTPQL filter query' : 'Run the fuzzer to see results here'))}
                                 setSelectedRequest={setFocusedId}
                                 renderRowContextMenu={renderFuzzerHistoryTableContextMenu}
                                 fillHeight

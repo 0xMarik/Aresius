@@ -432,6 +432,13 @@ export const HttpqlCodeEditor = forwardRef<HttpqlCodeEditorRef, HttpqlCodeEditor
                     },
                 },
                 {
+                    key: 'Mod-Enter',
+                    run: (view) => {
+                        onSubmitRef.current?.(view.state.doc.toString());
+                        return true;
+                    },
+                },
+                {
                     key: 'Escape',
                     run: (view) => {
                         if (completionStatus(view.state) === 'active') {
