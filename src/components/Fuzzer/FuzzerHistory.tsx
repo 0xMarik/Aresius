@@ -1,7 +1,7 @@
 import { useAppDispatch, useAppSelector } from '@/hooks/redux';
 import { useProjectId } from '@/hooks/useProjectId';
-import { selectFuzzerState, setFuzzerHistorySelectedRequest, persistFuzzerUiState } from '@/store/slices/fuzzerSlice';
-import { createColumnHelper, ColumnDef, SortingState } from '@tanstack/react-table';
+import { selectFuzzerState, setFuzzerHistorySelectedRequest, persistFuzzerUiState, setFuzzerColumnVisibility } from '@/store/slices/fuzzerSlice';
+import { createColumnHelper, ColumnDef, SortingState, VisibilityState } from '@tanstack/react-table';
 import Table, { isRowSelected, BaseRow } from '@/components/Table';
 import { FuzzerRequest, FuzzerParameter, FuzzConfig, initialFuzzRunState } from '@/types/fuzzer.type';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -358,6 +358,37 @@ function FuzzerHistoryBody({
     const projectId = useProjectId();
     const fuzzerSettings = useAppSelector((s) => s.appState.fuzzerSettings) || { showUncompletedRequests: false };
     const showUncompleted = fuzzerSettings.showUncompletedRequests;
+
+    const savedColumnVisibility = useAppSelector((s) => projectId ? s.fuzzerstate[projectId]?.columnVisibility : undefined);
+    const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(() => {
+        if (projectId) {
+            try {
+                const saved = localStorage.getItem(`aresius_fuzzer_col_vis_${projectId}`);
+                if (saved) return JSON.parse(saved);
+            } catch {}
+        }
+        return savedColumnVisibility ?? {};
+    });
+
+    useEffect(() => {
+        if (savedColumnVisibility && Object.keys(savedColumnVisibility).length > 0) {
+            setColumnVisibility(savedColumnVisibility);
+        }
+    }, [savedColumnVisibility]);
+
+    const handleColumnVisibilityChange = useCallback((updater: any) => {
+        setColumnVisibility((prev) => {
+            const next = typeof updater === 'function' ? updater(prev) : updater;
+            if (projectId) {
+                dispatch(setFuzzerColumnVisibility({ projectId, columnVisibility: next }));
+                dispatch(persistFuzzerUiState(projectId));
+                try {
+                    localStorage.setItem(`aresius_fuzzer_col_vis_${projectId}`, JSON.stringify(next));
+                } catch {}
+            }
+            return next;
+        });
+    }, [projectId, dispatch]);
 
     const [focusedId, setFocusedId] = useState<number | null>(initialSelectedId);
 
@@ -790,6 +821,9 @@ function FuzzerHistoryBody({
                                 setSelectedRequest={handleSelectRequest}
                                 renderRowContextMenu={renderFuzzerHistoryTableContextMenu}
                                 fillHeight
+                                columnVisibility={columnVisibility}
+                                onColumnVisibilityChange={handleColumnVisibilityChange}
+                                storageKey={projectId ? `aresius_fuzzer_col_vis_${projectId}` : undefined}
                             />
                         </div>
 

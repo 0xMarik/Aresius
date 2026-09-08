@@ -18,7 +18,16 @@ import {
     ChevronsUpDown,
     Trash2,
     GripVertical,
+    MoreVertical,
 } from 'lucide-react';
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuCheckboxItem,
+    DropdownMenuLabel,
+    DropdownMenuSeparator,
+    DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import {
     ContextMenu,
     ContextMenuContent,
@@ -186,6 +195,7 @@ interface TableRowProps<TData extends BaseRow> {
      *  unrelated re-render (e.g. the next streamed row) happened to
      *  paper over it. */
     columnOrder: string[];
+    columnVisibility: VisibilityState;
     onRowClick: (e: React.MouseEvent, id: number) => void;
     onContextMenu: (id: number) => void;
     getActionIds: (rowId: number) => number[];
@@ -199,6 +209,7 @@ function TableRowInner<TData extends BaseRow>({
     row,
     selected,
     columnOrder,
+    columnVisibility,
     onRowClick,
     onContextMenu,
     getActionIds,
@@ -207,6 +218,7 @@ function TableRowInner<TData extends BaseRow>({
 }: TableRowProps<TData>) {
     // Not read directly — see the doc comment on `columnOrder` above.
     void columnOrder;
+    void columnVisibility;
 
     const rowId = row.original.id;
     // getActionIds is a stable (useCallback([])) function that reads a ref
@@ -262,6 +274,7 @@ const TableRow = React.memo(TableRowInner, (prev, next) => {
         prev.row === next.row &&
         prev.selected === next.selected &&
         prev.columnOrder === next.columnOrder &&
+        prev.columnVisibility === next.columnVisibility &&
         prev.onRowClick === next.onRowClick &&
         prev.onContextMenu === next.onContextMenu &&
         prev.getActionIds === next.getActionIds &&
@@ -282,6 +295,8 @@ interface TableHeaderRowProps<TData extends BaseRow> {
     table: Table<TData>;
     columnOrder: string[];
     sorting: SortingState;
+    columnVisibility: VisibilityState;
+    enableColumnVisibility?: boolean;
     sensors: ReturnType<typeof useSensors>;
     onColumnDragEnd: (event: DragEndEvent) => void;
     onResizeStart: (id: string, e: React.PointerEvent) => void;
@@ -292,6 +307,8 @@ function TableHeaderRowInner<TData extends BaseRow>({
     table,
     columnOrder,
     sorting,
+    columnVisibility,
+    enableColumnVisibility = true,
     sensors,
     onColumnDragEnd,
     onResizeStart,
@@ -303,36 +320,111 @@ function TableHeaderRowInner<TData extends BaseRow>({
     // `table` instance reference never changes.
     void columnOrder;
     void sorting;
+    void columnVisibility;
+
+    const allColumns = table.getAllLeafColumns();
+    const visibleCount = allColumns.filter((c) => c.getIsVisible()).length;
 
     return (
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onColumnDragEnd}>
-            <div className="sticky top-0 z-20 border-b border-border bg-muted text-muted-foreground min-w-full w-max">
-                {table.getHeaderGroups().map((hg) => (
-                    <div key={hg.id} className="flex items-center min-w-full w-max">
-                        {hg.headers.map((header) => (
-                            <DraggableHeaderCell
-                                key={header.id}
-                                id={header.column.id}
-                                onResizeStart={onResizeStart}
-                                onResizeReset={onResizeReset}
-                            >
-                                <span
-                                    onClick={header.column.getToggleSortingHandler()}
-                                    className="flex flex-1 cursor-pointer select-none items-center justify-between gap-1"
+            <div className="sticky top-0 z-20 border-b border-border bg-muted text-muted-foreground min-w-full w-max flex items-center justify-between">
+                <div className="flex items-center">
+                    {table.getHeaderGroups().map((hg) => (
+                        <div key={hg.id} className="flex items-center">
+                            {hg.headers.map((header) => (
+                                <DraggableHeaderCell
+                                    key={header.id}
+                                    id={header.column.id}
+                                    onResizeStart={onResizeStart}
+                                    onResizeReset={onResizeReset}
                                 >
-                                    <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap">
-                                        {flexRender(header.column.columnDef.header, header.getContext())}
+                                    <span
+                                        onClick={header.column.getToggleSortingHandler()}
+                                        className="flex flex-1 cursor-pointer select-none items-center justify-between gap-1"
+                                    >
+                                        <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap">
+                                            {flexRender(header.column.columnDef.header, header.getContext())}
+                                        </span>
+                                        <span className="text-muted-foreground/60">
+                                            {header.column.getIsSorted() === 'asc' && <ChevronUp className="h-3 w-3" />}
+                                            {header.column.getIsSorted() === 'desc' && <ChevronDown className="h-3 w-3" />}
+                                            {!header.column.getIsSorted() && <ChevronsUpDown className="h-3 w-3" />}
+                                        </span>
                                     </span>
-                                    <span className="text-muted-foreground/60">
-                                        {header.column.getIsSorted() === 'asc' && <ChevronUp className="h-3 w-3" />}
-                                        {header.column.getIsSorted() === 'desc' && <ChevronDown className="h-3 w-3" />}
-                                        {!header.column.getIsSorted() && <ChevronsUpDown className="h-3 w-3" />}
-                                    </span>
-                                </span>
-                            </DraggableHeaderCell>
-                        ))}
+                                </DraggableHeaderCell>
+                            ))}
+                        </div>
+                    ))}
+                </div>
+
+                {enableColumnVisibility && (
+                    <div className="sticky right-0 ml-auto z-30 flex shrink-0 items-center justify-center bg-muted border-l border-border px-2 self-stretch">
+                        <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                                <button
+                                    type="button"
+                                    className="h-6 w-6 inline-flex items-center justify-center rounded hover:bg-accent hover:text-foreground text-muted-foreground/70 transition-colors focus:outline-none translate-y-[1.5px]"
+                                    title="Toggle columns"
+                                    aria-label="Toggle columns"
+                                >
+                                    <MoreVertical className="h-3.5 w-3.5" />
+                                </button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" className="w-52 p-1 max-h-80 overflow-y-auto">
+                                <DropdownMenuLabel className="text-xs font-semibold px-2 py-1.5">
+                                    Displayed Columns
+                                </DropdownMenuLabel>
+                                <DropdownMenuSeparator />
+                                {allColumns.map((column) => {
+                                    const headerText = typeof column.columnDef.header === 'string'
+                                        ? column.columnDef.header
+                                        : column.id;
+                                    const isVisible = column.getIsVisible();
+                                    const isLastVisible = isVisible && visibleCount <= 1;
+
+                                    return (
+                                        <DropdownMenuCheckboxItem
+                                            key={column.id}
+                                            className="text-xs capitalize cursor-pointer"
+                                            checked={isVisible}
+                                            disabled={isLastVisible}
+                                            onSelect={(e) => e.preventDefault()}
+                                            onCheckedChange={(value) => {
+                                                if (isLastVisible && !value) return;
+                                                column.toggleVisibility(!!value);
+                                            }}
+                                        >
+                                            {headerText}
+                                        </DropdownMenuCheckboxItem>
+                                    );
+                                })}
+                                <DropdownMenuSeparator />
+                                <div className="p-1 flex items-center justify-between gap-1">
+                                    <button
+                                        type="button"
+                                        className="text-[11px] px-2 py-1 rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors flex-1 text-center"
+                                        onClick={(e) => {
+                                            e.preventDefault();
+                                            table.toggleAllColumnsVisible(true);
+                                        }}
+                                    >
+                                        Show all
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="text-[11px] px-2 py-1 rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors flex-1 text-center"
+                                        onClick={(e) => {
+                                            e.preventDefault();
+                                            table.resetColumnVisibility();
+                                        }}
+                                    >
+                                        Reset
+                                    </button>
+                                </div>
+                            </DropdownMenuContent>
+                        </DropdownMenu>
                     </div>
-                ))}
+                )}
             </div>
         </DndContext>
     );
@@ -358,6 +450,7 @@ interface RowsViewportProps<TData extends BaseRow> {
     header: React.ReactNode;
     visibleRows: Row<TData>[];
     columnOrder: string[];
+    columnVisibility: VisibilityState;
     selectedIds: Set<number>;
     setSelectedIds: React.Dispatch<React.SetStateAction<Set<number>>>;
     maxHeight: number;
@@ -375,6 +468,7 @@ function RowsViewportInner<TData extends BaseRow>({
     header,
     visibleRows,
     columnOrder,
+    columnVisibility,
     selectedIds,
     setSelectedIds,
     maxHeight,
@@ -666,6 +760,7 @@ function RowsViewportInner<TData extends BaseRow>({
                                         row={row}
                                         selected={selectedIds.has(rowId)}
                                         columnOrder={columnOrder}
+                                        columnVisibility={columnVisibility}
                                         onRowClick={handleRowClick}
                                         onContextMenu={handleRowContextMenu}
                                         getActionIds={getActionIds}
@@ -727,6 +822,10 @@ interface DataTableProps<TData extends BaseRow> {
     sorting?: SortingState;
     onSortingChange?: (updater: any) => void;
     manualSorting?: boolean;
+    columnVisibility?: VisibilityState;
+    onColumnVisibilityChange?: (updater: any) => void;
+    enableColumnVisibility?: boolean;
+    storageKey?: string;
 }
 
 export default function DataTable<TData extends BaseRow>({
@@ -748,6 +847,10 @@ export default function DataTable<TData extends BaseRow>({
     sorting: propsSorting,
     onSortingChange,
     manualSorting = false,
+    columnVisibility: propsColumnVisibility,
+    onColumnVisibilityChange,
+    enableColumnVisibility = true,
+    storageKey,
 }: DataTableProps<TData>) {
     const [rows, setRows] = useState<TData[]>(data);
     const [internalSorting, setInternalSorting] = useState<SortingState>([]);
@@ -816,7 +919,43 @@ export default function DataTable<TData extends BaseRow>({
         rowsRef.current = rows;
     }, [rows]);
 
-    const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
+    const [internalColumnVisibility, setInternalColumnVisibility] = useState<VisibilityState>(() => {
+        if (storageKey) {
+            try {
+                const saved = localStorage.getItem(storageKey);
+                if (saved) return JSON.parse(saved);
+            } catch (e) {
+                console.error('Failed to read column visibility from localStorage:', e);
+            }
+        }
+        return propsColumnVisibility ?? {};
+    });
+
+    useEffect(() => {
+        if (propsColumnVisibility !== undefined) {
+            setInternalColumnVisibility(propsColumnVisibility);
+        }
+    }, [propsColumnVisibility]);
+
+    const columnVisibility = propsColumnVisibility !== undefined ? propsColumnVisibility : internalColumnVisibility;
+    const setColumnVisibility = useCallback(
+        (updater: any) => {
+            const nextVisibility = typeof updater === 'function' ? updater(columnVisibility) : updater;
+            if (storageKey) {
+                try {
+                    localStorage.setItem(storageKey, JSON.stringify(nextVisibility));
+                } catch (e) {
+                    console.error('Failed to save column visibility to localStorage:', e);
+                }
+            }
+            if (onColumnVisibilityChange) {
+                onColumnVisibilityChange(updater);
+            } else {
+                setInternalColumnVisibility(nextVisibility);
+            }
+        },
+        [columnVisibility, onColumnVisibilityChange, storageKey]
+    );
     const [columnOrder, setColumnOrder] = useState<string[]>(() => columns.map((c) => c.id as string));
 
     const [selectedIds, setSelectedIds] = useState<Set<number>>(() =>
@@ -1036,6 +1175,8 @@ export default function DataTable<TData extends BaseRow>({
                         table={table}
                         columnOrder={columnOrder}
                         sorting={sorting}
+                        columnVisibility={columnVisibility}
+                        enableColumnVisibility={enableColumnVisibility}
                         sensors={sensors}
                         onColumnDragEnd={handleColumnDragEnd}
                         onResizeStart={handleResizeStart}
@@ -1044,6 +1185,7 @@ export default function DataTable<TData extends BaseRow>({
                 }
                 visibleRows={visibleRows}
                 columnOrder={columnOrder}
+                columnVisibility={columnVisibility}
                 selectedIds={selectedIds}
                 setSelectedIds={setSelectedIds}
                 maxHeight={maxHeight}

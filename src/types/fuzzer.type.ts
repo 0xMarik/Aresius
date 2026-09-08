@@ -146,6 +146,7 @@ export interface FuzzerState {
     receivedSession: number;
     activeSessionIndex: number | null;
     expandedIds: string[];
+    columnVisibility?: Record<string, boolean>;
 }
 
 export const initialFuzzRunState = (): FuzzRunState => ({

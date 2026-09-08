@@ -1,6 +1,6 @@
 import Table, { isRowSelected } from '@/components/Table';
 import { useAppDispatch, useAppSelector } from '@/hooks/redux';
-import { ColumnDef, createColumnHelper } from '@tanstack/react-table';
+import { ColumnDef, createColumnHelper, VisibilityState } from '@tanstack/react-table';
 import { useState, useEffect } from 'react';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { renderHttpHistoryTableContextMenu } from '@/components/HttpHistoryTableContextMenu';
@@ -179,6 +179,15 @@ const HTTPHistory = () => {
         }
         return '';
     });
+    const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(() => {
+        if (projectId) {
+            try {
+                const v = localStorage.getItem(`aresius_http_history_col_vis_${projectId}`);
+                if (v) return JSON.parse(v);
+            } catch {}
+        }
+        return {};
+    });
 
     const {
         items,
@@ -228,6 +237,9 @@ const HTTPHistory = () => {
                             })
                         );
                     }
+                    if (uiState.columnVisibility !== undefined && typeof uiState.columnVisibility === 'object') {
+                        setColumnVisibility(uiState.columnVisibility);
+                    }
                 }
                 setIsStateLoaded(true);
             })
@@ -237,7 +249,7 @@ const HTTPHistory = () => {
             });
     }, [projectId, dispatch]);
 
-    // 2. Debounced save to SQLite DB whenever query or filter changes (only after initial load)
+    // 2. Debounced save to SQLite DB whenever query, filter, or column visibility changes (only after initial load)
     useEffect(() => {
         if (!projectId || !isStateLoaded) return;
 
@@ -247,9 +259,16 @@ const HTTPHistory = () => {
                 scopeFilter,
                 selectedRequestId: selectedRequest ?? null,
                 applyInterceptionFilters: applyInterceptionInHistory,
+                columnVisibility,
             })
         );
-    }, [projectId, httpqlQuery, scopeFilter, selectedRequest, applyInterceptionInHistory, isStateLoaded, dispatch]);
+        try {
+            localStorage.setItem(
+                `aresius_http_history_col_vis_${projectId}`,
+                JSON.stringify(columnVisibility)
+            );
+        } catch {}
+    }, [projectId, httpqlQuery, scopeFilter, selectedRequest, applyInterceptionInHistory, columnVisibility, isStateLoaded, dispatch]);
 
     const handleToggleApplyFilter = (checked: boolean) => {
         if (projectId) {
@@ -291,6 +310,9 @@ const HTTPHistory = () => {
                             setSelectedRequest={setSelectedRequest}
                             renderRowContextMenu={renderHttpHistoryTableContextMenu}
                             fillHeight
+                            columnVisibility={columnVisibility}
+                            onColumnVisibilityChange={setColumnVisibility}
+                            enableColumnVisibility={true}
                         />
                     </div>
                 </ResizablePanel>

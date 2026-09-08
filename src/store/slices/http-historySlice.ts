@@ -10,6 +10,7 @@ export interface HttpHistoryUiState {
   scopeFilter: 'all' | 'in' | 'out';
   selectedRequestId: number | null;
   applyInterceptionFilters: boolean;
+  columnVisibility?: Record<string, boolean>;
 }
 
 // Per-project bucket using entity adapter state shape
@@ -63,6 +64,7 @@ const HttpHistorySlice = createSlice({
             scopeFilter: 'all',
             selectedRequestId: null,
             applyInterceptionFilters: true,
+            columnVisibility: {},
             ...uiState,
           },
         };
@@ -73,6 +75,7 @@ const HttpHistorySlice = createSlice({
             scopeFilter: 'all',
             selectedRequestId: null,
             applyInterceptionFilters: true,
+            columnVisibility: {},
           }),
           ...uiState,
         };

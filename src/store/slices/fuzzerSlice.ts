@@ -13,6 +13,7 @@ export const defaultFuzzerState = (): FuzzerState => ({
   activeSessionIndex: null,
   receivedSession: 0,
   expandedIds: [],
+  columnVisibility: {},
 });
 
 export type FuzzerByProject = Record<string, FuzzerState>;
@@ -30,13 +31,20 @@ export const fuzzerSlice = createSlice({
   name: 'fuzzer',
   initialState,
   reducers: {
-    setSessions: (state, action: PayloadAction<{ sessions: FuzzerSession[]; projectId: string; expandedIds?: string[] }>) => {
-      const { sessions, projectId, expandedIds } = action.payload;
+    setSessions: (state, action: PayloadAction<{ sessions: FuzzerSession[]; projectId: string; expandedIds?: string[]; columnVisibility?: Record<string, boolean> }>) => {
+      const { sessions, projectId, expandedIds, columnVisibility } = action.payload;
       const bucket = getBucket(state, projectId);
       bucket.fuzzerSessions = sessions;
       if (expandedIds !== undefined) {
         bucket.expandedIds = expandedIds;
       }
+      if (columnVisibility !== undefined) {
+        bucket.columnVisibility = columnVisibility;
+      }
+    },
+    setFuzzerColumnVisibility: (state, action: PayloadAction<{ projectId: string; columnVisibility: Record<string, boolean> }>) => {
+      const { projectId, columnVisibility } = action.payload;
+      getBucket(state, projectId).columnVisibility = columnVisibility;
     },
     setFuzzerExpandedIds: (state, action: PayloadAction<{ projectId: string; expandedIds: string[] }>) => {
       const { projectId, expandedIds } = action.payload;
@@ -598,6 +606,7 @@ export const {
   addFuzzingHistory,
   activeFuzzSession,
   setSessions,
+  setFuzzerColumnVisibility,
   setFuzzerExpandedIds,
   toggleFuzzerSessionExpand,
   updatePayloadRawRequest,
@@ -723,6 +732,7 @@ export interface FuzzerUiState {
   expandedIds: string[];
   sessionHistorySelections?: Record<number, number | null>;
   historyRowSelections?: Record<string, number | null>;
+  columnVisibility?: Record<string, boolean>;
 }
 
 export const fetchFuzzerDataForProject = (projectId: string) => async (dispatch: any) => {
@@ -877,7 +887,8 @@ export const fetchFuzzerDataForProject = (projectId: string) => async (dispatch:
       });
 
       const expandedIds = parsedUiState?.expandedIds ?? data.expandedIds ?? [];
-      dispatch(setSessions({ sessions: mappedSessions, projectId, expandedIds }));
+      const columnVisibility = parsedUiState?.columnVisibility;
+      dispatch(setSessions({ sessions: mappedSessions, projectId, expandedIds, columnVisibility }));
       const selectedSessionIdx = (parsedUiState?.activeSessionIndex !== undefined && parsedUiState?.activeSessionIndex !== null)
         ? parsedUiState.activeSessionIndex
         : ((data.selectedSessionIndex !== undefined && data.selectedSessionIndex !== null)
@@ -932,6 +943,7 @@ export const persistFuzzerUiState = (projectId: string) => async (_dispatch: any
         expandedIds: bucket.expandedIds || [],
         sessionHistorySelections,
         historyRowSelections,
+        columnVisibility: bucket.columnVisibility || {},
       };
 
       await invoke('save_fuzzer_ui_state_db', {
