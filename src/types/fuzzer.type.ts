@@ -100,6 +100,13 @@ export interface NullPayloadConfig {
     count: number;
 }
 
+export interface FilePayloadConfig {
+    fileId: string;
+    fileName: string;
+    lineCount: number;
+    sizeBytes: number;
+}
+
 export interface FuzzerParameter {
     payloadSource: PayloadSource;
     values: string[];
@@ -107,6 +114,7 @@ export interface FuzzerParameter {
     pipelineRules?: PreprocessingRule[];
     numbersConfig?: NumbersPayloadConfig;
     nullPayloadConfig?: NullPayloadConfig;
+    fileConfig?: FilePayloadConfig;
 }
 
 export interface FuzzConfig {

@@ -13,6 +13,7 @@ import {
   ListTree,
   ArrowLeftRight,
   ListFilter,
+  FolderArchive,
 } from "lucide-react"
 
 // import { NavMain } from '@/components/nav-main'
@@ -166,6 +167,11 @@ const data = {
       name: "Projects",
       url: "/projects",
       icon: PanelsTopLeft,
+    },
+    {
+      name: "Files",
+      url: "/files",
+      icon: FolderArchive,
     },
     {
       name: "Settings",

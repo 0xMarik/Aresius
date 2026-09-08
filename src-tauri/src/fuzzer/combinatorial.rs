@@ -1,77 +1,9 @@
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 
 use crate::ares_utils::http_connection::HttpConnection;
-use crate::fuzzer::engine::{run_fuzz_targets, FuzzRunConfig, FuzzTarget};
-use crate::fuzzer::preprocessing::{apply_pipeline, get_active_rules};
-use crate::fuzzer::utils::{building_raw_request, format_fuzz_request};
-use crate::types::{FuzzerParameter, FuzzerSession};
-
-fn generate_combinations(parameters: &[FuzzerParameter]) -> Vec<Vec<String>> {
-    if parameters.is_empty() {
-        return vec![vec![]];
-    }
-
-    let mut result = vec![vec![]];
-
-    for param in parameters {
-        let mut new_result = Vec::new();
-
-        for existing_combination in &result {
-            for value in &param.values {
-                let mut new_combination = existing_combination.clone();
-                new_combination.push(value.clone());
-                new_result.push(new_combination);
-            }
-        }
-
-        result = new_result;
-    }
-
-    result
-}
-
-fn build_combinatorial_fuzz_requests(session: &FuzzerSession) -> Vec<FuzzTarget> {
-    let mut targets = Vec::new();
-    let keep_alive = session.fuzz_config.set_connection_keep_alive.unwrap_or(true);
-    let update_cl = session.fuzz_config.update_content_length.unwrap_or(true);
-
-    if session.fuzz_config.parameters.is_empty() {
-        return targets;
-    }
-
-    let combinations = generate_combinations(&session.fuzz_config.parameters);
-
-    let mut sorted_params: Vec<_> = session.fuzz_config.parameters.iter().enumerate().collect();
-    sorted_params.sort_by(|a, b| b.1.highlight_range.from.cmp(&a.1.highlight_range.from));
-
-    for (combo_idx, combination) in combinations.iter().enumerate() {
-        let mut modified_request = session.fuzz_config.raw_request.clone();
-        let mut transformed_combo = Vec::with_capacity(combination.len());
-
-        for (idx, value) in combination.iter().enumerate() {
-            let param = &session.fuzz_config.parameters[idx];
-            let rules = get_active_rules(session, param);
-            transformed_combo.push(apply_pipeline(value, rules));
-        }
-
-        for (param_idx, param) in &sorted_params {
-            let transformed_value = &transformed_combo[*param_idx];
-            modified_request =
-                building_raw_request(&modified_request, transformed_value, &param.highlight_range);
-        }
-
-        let formatted_request = format_fuzz_request(&modified_request, keep_alive, update_cl);
-
-        targets.push(FuzzTarget {
-            id: format!("{}", combo_idx),
-            sort_order: combo_idx,
-            request: formatted_request,
-            payload: serde_json::to_string(&transformed_combo).ok(),
-        });
-    }
-
-    targets
-}
+use crate::fuzzer::engine::{run_fuzz_targets, FuzzRunConfig, FuzzRunStartResult};
+use crate::fuzzer::utils::calculate_total_targets;
+use crate::types::FuzzerSession;
 
 #[tauri::command]
 pub async fn execute_combinatorial_fuzzing(
@@ -80,14 +12,20 @@ pub async fn execute_combinatorial_fuzzing(
     num_tasks: usize,
     selected_session: u32,
     fuzz_history: u32,
-) -> Result<Vec<FuzzTarget>, String> {
+) -> Result<FuzzRunStartResult, String> {
     if session.fuzz_config.parameters.is_empty() {
         return Err("Please add at least one parameter first".to_string());
     }
 
-    let targets = build_combinatorial_fuzz_requests(&session);
-    if targets.is_empty() {
+    let total = calculate_total_targets(&session.fuzz_config);
+    if total == 0 {
         return Err("Please add payload values to the parameter first".to_string());
+    }
+
+    if let Some(db_state) = app.try_state::<crate::ares_utils::database::DbState>() {
+        if let Ok(pool) = db_state.pool().await {
+            crate::fuzzer::utils::validate_session_files(&pool, &session.fuzz_config).await?;
+        }
     }
 
     let url = session.fuzz_config.metadata.target_url.clone();
@@ -95,8 +33,6 @@ pub async fn execute_combinatorial_fuzzing(
         .await
         .map_err(|e| format!("Connection failed: {e}"))?;
     let _ = test_conn.close().await;
-
-    let returned = targets.clone();
 
     let config_snapshot = serde_json::to_string(&session.fuzz_config).ok();
 
@@ -111,8 +47,10 @@ pub async fn execute_combinatorial_fuzzing(
     };
 
     tokio::spawn(async move {
-        run_fuzz_targets(app, config, targets).await;
+        run_fuzz_targets(app, config, total as u32).await;
     });
 
-    Ok(returned)
+    Ok(FuzzRunStartResult {
+        total_targets: total as u32,
+    })
 }

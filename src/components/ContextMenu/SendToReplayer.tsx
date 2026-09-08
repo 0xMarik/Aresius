@@ -27,7 +27,13 @@ function getUrlFromRawRequest(rawRequest?: string): { url: string; urlIsValid: b
     return { url: 'https://', urlIsValid: false };
 }
 
-export function SendToRepeaterSubmenu({ rawRequest }: { rawRequest: string }) {
+export function SendToRepeaterSubmenu({
+    rawRequest = '',
+    getRawRequest,
+}: {
+    rawRequest?: string;
+    getRawRequest?: () => Promise<string> | string;
+}) {
     const dispatch = useAppDispatch();
     const projectId = useProjectId();
     const projectReplayer = useAppSelector(selectReplayerProjectState(projectId));
@@ -38,12 +44,25 @@ export function SendToRepeaterSubmenu({ rawRequest }: { rawRequest: string }) {
         dispatch(fetchReplayerDataForProject(projectId));
     }, [dispatch, isLoaded, isLoading, projectId]);
 
+    const resolveRawRequest = async (): Promise<string> => {
+        if (rawRequest && rawRequest.trim().length > 0) return rawRequest;
+        if (getRawRequest) {
+            try {
+                const fetched = await getRawRequest();
+                if (fetched && fetched.trim().length > 0) return fetched;
+            } catch (err) {
+                console.error('Failed to resolve raw request:', err);
+            }
+        }
+        return rawRequest || 'GET / HTTP/1.1\r\n\r\n';
+    };
+
     const sendToExisting = async (collectionId: string, sessionCount: number) => {
         if (!projectId) return;
-        const { url, urlIsValid } = getUrlFromRawRequest(rawRequest);
+        const requestTmp = await resolveRawRequest();
+        const { url, urlIsValid } = getUrlFromRawRequest(requestTmp);
         const newSessId = crypto.randomUUID();
         const name = `Session ${sessionCount + 1}`;
-        const requestTmp = rawRequest || 'GET / HTTP/1.1\r\n\r\n';
 
         dispatch(createSessionSuccess({
             projectId,
@@ -76,11 +95,11 @@ export function SendToRepeaterSubmenu({ rawRequest }: { rawRequest: string }) {
 
     const sendToNew = async () => {
         if (!projectId) return;
-        const { url, urlIsValid } = getUrlFromRawRequest(rawRequest);
+        const requestTmp = await resolveRawRequest();
+        const { url, urlIsValid } = getUrlFromRawRequest(requestTmp);
         const newColId = crypto.randomUUID();
         const newSessId = crypto.randomUUID();
         const colName = `Collection ${collections.length + 1}`;
-        const requestTmp = rawRequest || 'GET / HTTP/1.1\r\n\r\n';
 
         dispatch(createCollectionSuccess({
             projectId,
@@ -125,18 +144,34 @@ export function SendToRepeaterSubmenu({ rawRequest }: { rawRequest: string }) {
 
     return (
         <>
-            {collections.map((col) => (
-                <ContextMenuItem key={col.id} onSelect={() => sendToExisting(col.id, col.sessions.length)}>
+            <ContextMenuSub>
+                <ContextMenuSubTrigger disabled={collections.length === 0}>
                     <Layers className="mr-2 h-3.5 w-3.5" />
-                    {col.name}
-                    {col.sessions.length > 0 && (
-                        <span className="ml-auto text-[11px] text-muted-foreground">
-                            {col.sessions.length} session{col.sessions.length !== 1 ? 's' : ''}
-                        </span>
+                    Choose from collections
+                </ContextMenuSubTrigger>
+                <ContextMenuSubContent className="w-48">
+                    {collections.length === 0 ? (
+                        <ContextMenuItem disabled className="text-[11px] text-muted-foreground">
+                            No collections found
+                        </ContextMenuItem>
+                    ) : (
+                        collections.map((col) => (
+                            <ContextMenuItem key={col.id} onSelect={() => sendToExisting(col.id, col.sessions.length)}>
+                                <Layers className="mr-2 h-3.5 w-3.5" />
+                                <span className="truncate">{col.name}</span>
+                                {col.sessions.length > 0 && (
+                                    <span className="ml-auto text-[11px] text-muted-foreground tabular-nums">
+                                        {col.sessions.length}
+                                    </span>
+                                )}
+                            </ContextMenuItem>
+                        ))
                     )}
-                </ContextMenuItem>
-            ))}
-            {collections.length > 0 && <ContextMenuSeparator />}
+                </ContextMenuSubContent>
+            </ContextMenuSub>
+
+            <ContextMenuSeparator />
+
             <ContextMenuItem onSelect={sendToNew}>
                 <FolderPlus className="mr-2 h-3.5 w-3.5" />
                 New collection
@@ -145,7 +180,15 @@ export function SendToRepeaterSubmenu({ rawRequest }: { rawRequest: string }) {
     );
 }
 
-const SendToReplayer = ({ rawRequest, isMultiple = false }: { rawRequest: string; isMultiple?: boolean }) => {
+const SendToReplayer = ({
+    rawRequest = '',
+    getRawRequest,
+    isMultiple = false,
+}: {
+    rawRequest?: string;
+    getRawRequest?: () => Promise<string> | string;
+    isMultiple?: boolean;
+}) => {
     return (
         <ContextMenuSub>
             <ContextMenuSubTrigger disabled={isMultiple}>
@@ -153,7 +196,7 @@ const SendToReplayer = ({ rawRequest, isMultiple = false }: { rawRequest: string
                 Send to Replayer
             </ContextMenuSubTrigger>
             <ContextMenuSubContent>
-                <SendToRepeaterSubmenu rawRequest={rawRequest} />
+                <SendToRepeaterSubmenu rawRequest={rawRequest} getRawRequest={getRawRequest} />
             </ContextMenuSubContent>
         </ContextMenuSub>
     );

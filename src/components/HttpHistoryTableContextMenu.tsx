@@ -11,7 +11,7 @@ import { RowContextMenuContext } from './Table';
 import { useAppDispatch } from '@/hooks/redux';
 import { useProjectId } from '@/hooks/useProjectId';
 import { addFuzzSession, DEFAULT_FUZZER_RAW_REQUEST } from '@/store/slices/fuzzerSlice';
-import { SendToRepeaterSubmenu } from './ContextMenu/SendToReplayer';
+import SendToReplayer from './ContextMenu/SendToReplayer';
 import { invoke } from '@tauri-apps/api/core';
 import { HttpHistory } from '@/types/http.type';
 
@@ -87,7 +87,11 @@ export function renderHttpHistoryTableContextMenu(
 
             <ContextMenuSendToFuzzer row={row} />
 
-            <SendToRepeaterSubmenu rawRequest={row.rawRequest || ''} />
+            <SendToReplayer
+                rawRequest={row.rawRequest || ''}
+                getRawRequest={async () => (await getFullItemPayload(row)).rawRequest}
+                isMultiple={isMultiple}
+            />
 
             <ContextMenuSub>
                 <ContextMenuSubTrigger>

@@ -1,5 +1,5 @@
 import { FuzzProgressUpdate } from '@/App';
-import { FuzzingHistory, FuzzerParameter, FuzzerSession, FuzzerState, HighlightRange, FuzzingAttackType, PipelineScope, PreprocessingRule, PayloadSource, NumbersPayloadConfig, NullPayloadConfig } from '@/types/fuzzer.type';
+import { FuzzingHistory, FuzzerParameter, FuzzerSession, FuzzerState, HighlightRange, FuzzingAttackType, PipelineScope, PreprocessingRule, PayloadSource, NumbersPayloadConfig, NullPayloadConfig, FilePayloadConfig } from '@/types/fuzzer.type';
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 import type { RootState } from '@/store';
 import { deleteProject, setcurrentProjectId } from './projectSlice';
@@ -253,9 +253,15 @@ export const fuzzerSlice = createSlice({
 
     setFuzzRunTargets: (
       state,
-      action: PayloadAction<{ sessionIndex: number; historyIndex: number; targets: { id: string; request: string }[]; projectId: string }>
+      action: PayloadAction<{
+        sessionIndex: number;
+        historyIndex: number;
+        total?: number;
+        targets?: { id: string; request: string }[];
+        projectId: string;
+      }>
     ) => {
-      const { sessionIndex, historyIndex, targets, projectId } = action.payload;
+      const { sessionIndex, historyIndex, total, targets, projectId } = action.payload;
       const bucket = getBucket(state, projectId);
       const history = bucket.fuzzerSessions[sessionIndex]?.fuzzingHistory[historyIndex];
       if (!history) return;
@@ -263,7 +269,7 @@ export const fuzzerSlice = createSlice({
       history.requests = [];
       history.runState = {
         status: 'running',
-        total: targets.length,
+        total: total ?? targets?.length ?? 0,
         completed: 0,
         failed: 0,
         connectionDropped: false,
@@ -424,6 +430,17 @@ export const fuzzerSlice = createSlice({
         bucket.fuzzerSessions[bucket.activeSessionIndex].fuzzConfig.parameters[paramIndex]
       ) {
         bucket.fuzzerSessions[bucket.activeSessionIndex].fuzzConfig.parameters[paramIndex].nullPayloadConfig = config;
+      }
+    },
+
+    setFileConfig: (state, action: PayloadAction<{ paramIndex: number; config: FilePayloadConfig; projectId: string }>) => {
+      const { paramIndex, config, projectId } = action.payload;
+      const bucket = getBucket(state, projectId);
+      if (bucket.activeSessionIndex !== null &&
+        bucket.fuzzerSessions[bucket.activeSessionIndex] &&
+        bucket.fuzzerSessions[bucket.activeSessionIndex].fuzzConfig.parameters[paramIndex]
+      ) {
+        bucket.fuzzerSessions[bucket.activeSessionIndex].fuzzConfig.parameters[paramIndex].fileConfig = config;
       }
     },
 
@@ -627,6 +644,7 @@ export const {
   setPayloadSource,
   setNumbersConfig,
   setNullPayloadConfig,
+  setFileConfig,
   setSelectedParameter,
   setParameters,
   removeParameter,

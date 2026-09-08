@@ -162,6 +162,87 @@ pub fn reconstruct_fuzzer_request(
     format_fuzz_request(&modified, keep_alive, update_cl)
 }
 
+fn get_parameter_target_count(p: &crate::types::FuzzerParameter) -> usize {
+    if !p.values.is_empty() {
+        p.values.len()
+    } else if let Some(ref fc) = p.file_config {
+        fc.line_count.unwrap_or(0)
+    } else {
+        0
+    }
+}
+
+/// Calculates the total number of fuzzer target requests for a given configuration in O(1) time.
+pub fn calculate_total_targets(config: &SessionPayload) -> usize {
+    if config.parameters.is_empty() {
+        return 0;
+    }
+
+    let attack_type = config
+        .fuzzing_attack_type
+        .as_deref()
+        .unwrap_or("rotator")
+        .to_lowercase();
+
+    match attack_type.as_str() {
+        "rotator" => {
+            let num_vals = config.parameters.first().map(get_parameter_target_count).unwrap_or(0);
+            config.parameters.len() * num_vals
+        }
+        "echo" => {
+            config.parameters.first().map(get_parameter_target_count).unwrap_or(0)
+        }
+        "zipped" => {
+            config.parameters.iter().map(get_parameter_target_count).min().unwrap_or(0)
+        }
+        "combinatorial" => {
+            if config.parameters.iter().any(|p| get_parameter_target_count(p) == 0) {
+                0
+            } else {
+                let mut total: usize = 1;
+                for p in &config.parameters {
+                    match total.checked_mul(get_parameter_target_count(p)) {
+                        Some(t) => total = t,
+                        None => return usize::MAX,
+                    }
+                }
+                total
+            }
+        }
+        _ => {
+            config.parameters.first().map(get_parameter_target_count).unwrap_or(0)
+        }
+    }
+}
+
+/// Validates that any workspace files required by the fuzzer parameters exist and are not empty.
+pub async fn validate_session_files(
+    pool: &sqlx::SqlitePool,
+    config: &SessionPayload,
+) -> Result<(), String> {
+    for param in &config.parameters {
+        if param.payload_source == "file" {
+            if let Some(ref fc) = param.file_config {
+                let file_name = fc.file_name.as_deref().unwrap_or("unknown");
+                match crate::ares_utils::database::files::get_project_file_lines(pool, &fc.file_id).await {
+                    Ok(lines) if !lines.is_empty() => {},
+                    Ok(_) => {
+                        return Err(format!("Workspace file '{file_name}' is empty."));
+                    }
+                    Err(_) => {
+                        return Err(format!(
+                            "Workspace file '{file_name}' was not found in project database. Please re-import or reselect the file."
+                        ));
+                    }
+                }
+            } else {
+                return Err("Parameter configured for file payload but no file was selected.".to_string());
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Generates the target id and payload string dynamically for a given sort_order index.
 pub fn generate_payload_for_sort_order(
     config: &SessionPayload,
@@ -195,7 +276,30 @@ pub fn generate_payload_for_sort_order(
             }
             (format!("{sort_order}"), None)
         }
-        "zipped" | "combinatorial" => {
+        "echo" => {
+            if let Some(first_param) = config.parameters.first() {
+                let rules = crate::fuzzer::preprocessing::get_active_rules_for_config(config, first_param);
+                if let Some(val) = first_param.values.get(sort_order) {
+                    let transformed = crate::fuzzer::preprocessing::apply_pipeline(val, rules);
+                    return (format!("{sort_order}"), Some(transformed));
+                }
+            }
+            (format!("{sort_order}"), None)
+        }
+        "zipped" => {
+            let min_len = config.parameters.iter().map(|p| p.values.len()).min().unwrap_or(0);
+            if sort_order >= min_len {
+                return (format!("{sort_order}"), None);
+            }
+            let mut combo = Vec::with_capacity(config.parameters.len());
+            for param in &config.parameters {
+                let rules = crate::fuzzer::preprocessing::get_active_rules_for_config(config, param);
+                let val = param.values.get(sort_order).map(|s| s.as_str()).unwrap_or("");
+                combo.push(crate::fuzzer::preprocessing::apply_pipeline(val, rules));
+            }
+            (format!("{sort_order}"), serde_json::to_string(&combo).ok())
+        }
+        "combinatorial" => {
             let sizes: Vec<usize> = config.parameters.iter().map(|p| p.values.len()).collect();
             if sizes.is_empty() || sizes.iter().any(|&s| s == 0) {
                 return (format!("{sort_order}"), None);
@@ -285,6 +389,7 @@ mod tests {
                     is_active: true,
                 },
                 pipeline_rules: None,
+                file_config: None,
             }],
             metadata: PayloadMetadata {
                 target_url: "http://example.com".to_string(),
@@ -325,6 +430,7 @@ mod tests {
                         is_active: true,
                     },
                     pipeline_rules: None,
+                    file_config: None,
                 },
                 FuzzerParameter {
                     payload_source: "manual".to_string(),
@@ -339,6 +445,7 @@ mod tests {
                         is_active: true,
                     },
                     pipeline_rules: None,
+                    file_config: None,
                 },
             ],
             metadata: PayloadMetadata {
@@ -379,6 +486,7 @@ mod tests {
                         is_active: true,
                     },
                     pipeline_rules: None,
+                    file_config: None,
                 },
                 FuzzerParameter {
                     payload_source: "manual".to_string(),
@@ -393,6 +501,7 @@ mod tests {
                         is_active: true,
                     },
                     pipeline_rules: None,
+                    file_config: None,
                 },
             ],
             metadata: PayloadMetadata {
@@ -447,6 +556,7 @@ mod tests {
                         is_active: true,
                     },
                     pipeline_rules: None,
+                    file_config: None,
                 },
                 FuzzerParameter {
                     payload_source: "manual".to_string(),
@@ -461,6 +571,7 @@ mod tests {
                         is_active: true,
                     },
                     pipeline_rules: None,
+                    file_config: None,
                 },
             ],
             metadata: PayloadMetadata {
@@ -496,5 +607,77 @@ mod tests {
         let (id5, p5) = generate_payload_for_sort_order(&config, 5);
         assert_eq!(id5, "5");
         assert_eq!(p5, serde_json::to_string(&vec!["B", "3"]).ok());
+
+        assert_eq!(calculate_total_targets(&config), 6);
+    }
+
+    #[test]
+    fn test_calculate_total_and_zipped() {
+        let mut config = SessionPayload {
+            raw_request: "GET /api?a=1&b=2 HTTP/1.1\r\nHost: example.com\r\n\r\n".to_string(),
+            parameters: vec![
+                FuzzerParameter {
+                    payload_source: "manual".to_string(),
+                    values: vec!["A".to_string(), "B".to_string(), "C".to_string()],
+                    highlight_range: HighlightRange {
+                        id: "p1".to_string(),
+                        from: 11,
+                        to: 12,
+                        byte_from: 11,
+                        byte_to: 12,
+                        original_text: "1".to_string(),
+                        is_active: true,
+                    },
+                    pipeline_rules: None,
+                    file_config: None,
+                },
+                FuzzerParameter {
+                    payload_source: "manual".to_string(),
+                    values: vec!["1".to_string(), "2".to_string()],
+                    highlight_range: HighlightRange {
+                        id: "p2".to_string(),
+                        from: 15,
+                        to: 16,
+                        byte_from: 15,
+                        byte_to: 16,
+                        original_text: "2".to_string(),
+                        is_active: true,
+                    },
+                    pipeline_rules: None,
+                    file_config: None,
+                },
+            ],
+            metadata: PayloadMetadata {
+                target_url: "http://example.com".to_string(),
+                url_is_valid: Some(true),
+            },
+            delay_ms: 0,
+            fuzzing_attack_type: Some("zipped".to_string()),
+            num_threads: Some(1),
+            pipeline_scope: Some("all".to_string()),
+            pipeline_rules: None,
+            set_connection_keep_alive: Some(true),
+            update_content_length: Some(true),
+        };
+
+        // Zipped min length is min(3, 2) = 2
+        assert_eq!(calculate_total_targets(&config), 2);
+
+        let (z0_id, z0_payload) = generate_payload_for_sort_order(&config, 0);
+        assert_eq!(z0_id, "0");
+        assert_eq!(z0_payload, serde_json::to_string(&vec!["A", "1"]).ok());
+
+        let (z1_id, z1_payload) = generate_payload_for_sort_order(&config, 1);
+        assert_eq!(z1_id, "1");
+        assert_eq!(z1_payload, serde_json::to_string(&vec!["B", "2"]).ok());
+
+        // Test Rotator
+        config.fuzzing_attack_type = Some("rotator".to_string());
+        // 2 params * 3 values in first = 6
+        assert_eq!(calculate_total_targets(&config), 6);
+
+        // Test Echo
+        config.fuzzing_attack_type = Some("echo".to_string());
+        assert_eq!(calculate_total_targets(&config), 3);
     }
 }

@@ -10,6 +10,7 @@ import scopeReducer from './slices/scopeSlice'
 import matchReplaceReducer from './slices/matchReplaceSlice'
 import filtersReducer from './slices/filtersSlice'
 import appStateReducer from './slices/appStateSlice'
+import filesReducer from './slices/filesSlice'
 
 import { projectDataMiddleware } from './projectDataMiddleware';
 
@@ -36,6 +37,7 @@ const store = configureStore({
     matchReplace: matchReplaceReducer,
     filters: filtersReducer,
     appState: appStateReducer,
+    files: filesReducer,
   },
   middleware: (getDefaultMiddleware) =>
     getDefaultMiddleware({

@@ -71,6 +71,18 @@ pub struct PayloadMetadata {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
+pub struct FilePayloadConfig {
+    pub file_id: String,
+    #[serde(default)]
+    pub file_name: Option<String>,
+    #[serde(default)]
+    pub line_count: Option<usize>,
+    #[serde(default)]
+    pub size_bytes: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct FuzzerParameter {
     #[serde(default)]
     pub payload_source: String,
@@ -80,6 +92,8 @@ pub struct FuzzerParameter {
     pub highlight_range: HighlightRange,
     #[serde(default)]
     pub pipeline_rules: Option<Vec<PreprocessingRule>>,
+    #[serde(default)]
+    pub file_config: Option<FilePayloadConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

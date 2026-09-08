@@ -76,6 +76,10 @@ use crate::ares_utils::database::preset_filters::{
     delete_preset_filter_db, get_preset_filters_db, reset_default_preset_filters_db,
     save_preset_filter_db, sync_interception_filters_db, toggle_preset_filter_interception_db,
 };
+use crate::ares_utils::database::files::{
+    create_project_file_db, delete_project_file_db, get_project_file_db,
+    get_project_file_preview_db, list_project_files_db, rename_project_file_db,
+};
 
 use crate::ares_utils::logger::init_logging;
 use crate::commands::logs::{
@@ -225,6 +229,13 @@ pub fn run() {
             get_recent_logs,
             clear_memory_logs,
             open_log_directory,
+            // Project Files
+            list_project_files_db,
+            get_project_file_db,
+            get_project_file_preview_db,
+            create_project_file_db,
+            delete_project_file_db,
+            rename_project_file_db,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

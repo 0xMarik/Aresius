@@ -13,6 +13,7 @@ import { isInScope } from '@/lib/scopeMatcher';
 import { useMemo, useState, useEffect } from 'react';
 import { cn } from '@/lib/utils';
 import { getStatusBadgeStyle } from '@/components/Replayer/HistoryRequests';
+import { toast } from 'sonner';
 
 import { stripPath } from '@/components/ValidateUrlInput';
 
@@ -89,8 +90,9 @@ export function FuzzerRunToolbar({
                 alreadyCompleted: runState.completed,
                 overallTotal: runState.total,
             });
-        } catch (err) {
+        } catch (err: any) {
             console.error('Failed to resume requests:', err);
+            toast.error(typeof err === 'string' ? err : 'Failed to resume requests');
         }
     };
 

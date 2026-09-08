@@ -136,21 +136,22 @@ const FuzzRequestPayload: React.FC = () => {
         fuzzHistory: historyIndex,
       };
 
-      let targets: { id: string; request: string }[] = [];
+      let result: { totalTargets?: number; total_targets?: number } | null = null;
       switch (fuzzSession.fuzzConfig.fuzzingAttackType) {
         case FuzzingAttackType.ROTATOR:
-          targets = await invoke("execute_rotator_fuzzing", executeProps);
+          result = await invoke("execute_rotator_fuzzing", executeProps);
           break;
         case FuzzingAttackType.ECHO:
-          targets = await invoke("execute_echo_fuzzing", executeProps);
+          result = await invoke("execute_echo_fuzzing", executeProps);
           break;
         case FuzzingAttackType.ZIPPED:
-          targets = await invoke("execute_zipped_fuzzing", executeProps);
+          result = await invoke("execute_zipped_fuzzing", executeProps);
           break;
         case FuzzingAttackType.COMBINATORIAL:
-          targets = await invoke("execute_combinatorial_fuzzing", executeProps);
+          result = await invoke("execute_combinatorial_fuzzing", executeProps);
           break;
       }
+      const total = result?.totalTargets ?? result?.total_targets ?? 0;
 
       dispatch(setTargerUrl({ targetUrl: stripedUrl, urlIsValid: true, projectId }));
       dispatch(persistFuzzerSession(projectId, activeSessionIdx));
@@ -180,7 +181,7 @@ const FuzzRequestPayload: React.FC = () => {
       dispatch(setFuzzRunTargets({
         sessionIndex: activeSessionIdx,
         historyIndex,
-        targets,
+        total,
         projectId,
       }));
     } catch (err) {

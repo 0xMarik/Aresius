@@ -1,47 +1,9 @@
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 
 use crate::ares_utils::http_connection::HttpConnection;
-use crate::fuzzer::engine::{run_fuzz_targets, FuzzRunConfig, FuzzTarget};
-use crate::fuzzer::preprocessing::{apply_pipeline, get_active_rules};
-use crate::fuzzer::utils::{building_raw_request, format_fuzz_request};
+use crate::fuzzer::engine::{run_fuzz_targets, FuzzRunConfig, FuzzRunStartResult};
+use crate::fuzzer::utils::calculate_total_targets;
 use crate::types::FuzzerSession;
-
-fn build_echo_fuzz_requests(session: &FuzzerSession) -> Vec<FuzzTarget> {
-    let mut targets = Vec::new();
-    let keep_alive = session.fuzz_config.set_connection_keep_alive.unwrap_or(true);
-    let update_cl = session.fuzz_config.update_content_length.unwrap_or(true);
-
-    let Some(first_param) = session.fuzz_config.parameters.first() else {
-        return targets;
-    };
-
-    let mut sorted_params: Vec<_> = session.fuzz_config.parameters.iter().collect();
-    sorted_params.sort_by(|a, b| b.highlight_range.from.cmp(&a.highlight_range.from));
-
-    for (value_idx, value) in first_param.values.iter().enumerate() {
-        let mut modified_request = session.fuzz_config.raw_request.clone();
-        let first_rules = get_active_rules(session, first_param);
-        let display_payload = apply_pipeline(value, first_rules);
-
-        for param in &sorted_params {
-            let rules = get_active_rules(session, param);
-            let transformed_value = apply_pipeline(value, rules);
-            modified_request =
-                building_raw_request(&modified_request, &transformed_value, &param.highlight_range);
-        }
-
-        let formatted_request = format_fuzz_request(&modified_request, keep_alive, update_cl);
-
-        targets.push(FuzzTarget {
-            id: format!("{}", value_idx),
-            sort_order: value_idx,
-            request: formatted_request,
-            payload: Some(display_payload),
-        });
-    }
-
-    targets
-}
 
 #[tauri::command]
 pub async fn execute_echo_fuzzing(
@@ -50,14 +12,20 @@ pub async fn execute_echo_fuzzing(
     num_tasks: usize,
     selected_session: u32,
     fuzz_history: u32,
-) -> Result<Vec<FuzzTarget>, String> {
+) -> Result<FuzzRunStartResult, String> {
     if session.fuzz_config.parameters.is_empty() {
         return Err("Please add at least one parameter first".to_string());
     }
 
-    let targets = build_echo_fuzz_requests(&session);
-    if targets.is_empty() {
+    let total = calculate_total_targets(&session.fuzz_config);
+    if total == 0 {
         return Err("Please add payload values to the parameter first".to_string());
+    }
+
+    if let Some(db_state) = app.try_state::<crate::ares_utils::database::DbState>() {
+        if let Ok(pool) = db_state.pool().await {
+            crate::fuzzer::utils::validate_session_files(&pool, &session.fuzz_config).await?;
+        }
     }
 
     let url = session.fuzz_config.metadata.target_url.clone();
@@ -65,8 +33,6 @@ pub async fn execute_echo_fuzzing(
         .await
         .map_err(|e| format!("Connection failed: {e}"))?;
     let _ = test_conn.close().await;
-
-    let returned = targets.clone();
 
     let config_snapshot = serde_json::to_string(&session.fuzz_config).ok();
 
@@ -81,8 +47,10 @@ pub async fn execute_echo_fuzzing(
     };
 
     tokio::spawn(async move {
-        run_fuzz_targets(app, config, targets).await;
+        run_fuzz_targets(app, config, total as u32).await;
     });
 
-    Ok(returned)
+    Ok(FuzzRunStartResult {
+        total_targets: total as u32,
+    })
 }

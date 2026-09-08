@@ -1824,6 +1824,7 @@ mod tests {
                     is_active: true,
                 },
                 pipeline_rules: None,
+                file_config: None,
             }],
             metadata: crate::types::PayloadMetadata {
                 target_url: "https://example.com/search?q=%C2%A7FUZZ%C2%A7".to_string(),

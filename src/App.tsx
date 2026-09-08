@@ -48,6 +48,7 @@ import Fuzzer from "./pages/fuzzer/fuzzer";
 import MatchAndReplace from "./pages/match-replace/MatchAndReplace.page";
 import FiltersPage from "./pages/filters/Filters.page";
 import SettingsPage from "./pages/settings/Settings.page";
+import FilesPage from "./pages/files/Files.page";
 
 interface ReqRes {
     request: string;
@@ -324,6 +325,7 @@ function AppInner() {
                             <Route path="/fuzzer" element={<Fuzzer />} />
                             <Route path="/match-replace" element={<MatchAndReplace />} />
                             <Route path="/filters" element={<FiltersPage />} />
+                            <Route path="/files" element={<FilesPage />} />
                             <Route path="/settings" element={<SettingsPage />} />
                         </Routes>
                     </SidebarInset>

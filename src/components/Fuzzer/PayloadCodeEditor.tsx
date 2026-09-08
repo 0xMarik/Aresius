@@ -9,6 +9,7 @@ interface PayloadCodeEditorProps {
     value: string;
     onChange: (value: string) => void;
     height?: string;
+    readOnly?: boolean;
 }
 
 const createEditorTheme = (isDark: boolean) => [
@@ -44,6 +45,7 @@ export const PayloadCodeEditor: React.FC<PayloadCodeEditorProps> = ({
     value,
     onChange,
     height = "200px",
+    readOnly = false,
 }) => {
     const editorRef = useRef<HTMLDivElement | null>(null);
     const viewRef = useRef<EditorView | null>(null);
@@ -69,7 +71,7 @@ export const PayloadCodeEditor: React.FC<PayloadCodeEditorProps> = ({
         }
 
         const updateListener = EditorView.updateListener.of((update) => {
-            if (update.docChanged) {
+            if (update.docChanged && !readOnly) {
                 const text = update.state.doc.toString();
                 if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
                 debounceTimerRef.current = setTimeout(() => {
@@ -84,7 +86,7 @@ export const PayloadCodeEditor: React.FC<PayloadCodeEditorProps> = ({
                 basicSetup,
                 ...(isDark ? [oneDark] : []),
                 ...createEditorTheme(isDark),
-                updateListener,
+                ...(readOnly ? [EditorState.readOnly.of(true)] : [updateListener]),
                 EditorView.lineWrapping,
             ],
         });
@@ -103,7 +105,7 @@ export const PayloadCodeEditor: React.FC<PayloadCodeEditorProps> = ({
                 viewRef.current = null;
             }
         };
-    }, [isDark]);
+    }, [isDark, readOnly]);
 
     // Update doc if external value changes (e.g. file upload or selecting a different payload)
     useEffect(() => {

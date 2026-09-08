@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useEffect } from "react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -7,11 +7,12 @@ import { useAppDispatch, useAppSelector } from "@/hooks/redux";
 import { useProjectId } from "@/hooks/useProjectId";
 import { PayloadCodeEditor } from "./PayloadCodeEditor";
 import { Checkbox } from "@/components/ui/checkbox";
-import { loadValuesParam, setDelayMs, setNumThreads, setSelectedParameter, selectFuzzerState, persistFuzzerSession, setPipelineScope, addPipelineRule, updatePipelineRule, removePipelineRule, reorderPipelineRules, setPayloadSource, setNumbersConfig, setNullPayloadConfig, setConnectionKeepAlive, setUpdateContentLength } from "@/store/slices/fuzzerSlice";
-import { FuzzingAttackType, PreprocessingRule, PayloadSource, NumbersPayloadConfig, NullPayloadConfig } from "@/types/fuzzer.type";
+import { loadValuesParam, setDelayMs, setNumThreads, setSelectedParameter, selectFuzzerState, persistFuzzerSession, setPipelineScope, addPipelineRule, updatePipelineRule, removePipelineRule, reorderPipelineRules, setPayloadSource, setNumbersConfig, setNullPayloadConfig, setFileConfig, setConnectionKeepAlive, setUpdateContentLength } from "@/store/slices/fuzzerSlice";
+import { FuzzingAttackType, PreprocessingRule, PayloadSource, NumbersPayloadConfig, NullPayloadConfig, FilePayloadConfig } from "@/types/fuzzer.type";
+import { selectAllProjectFiles, fetchProjectFiles, importProjectFile } from "@/store/slices/filesSlice";
 import { IconUpload } from "@tabler/icons-react";
 import { EmptyState } from "../ui/empty-state";
-import { ArrowRight, MousePointerClick, Hash, CircleOff, FileText } from "lucide-react";
+import { ArrowRight, MousePointerClick, Hash, CircleOff, FileText, FolderArchive } from "lucide-react";
 import { PipelineProcessorTable } from "./PipelineProcessorTable";
 import { generateNumberPayloads } from "@/lib/fuzzerPreprocessing";
 import { cn } from "@/lib/utils";
@@ -60,6 +61,14 @@ export default function PayloadConfigurator() {
         return generateNumberPayloads(cfg);
     }, [selectedParam?.numbersConfig]);
 
+    const projectFiles = useAppSelector(selectAllProjectFiles(projectId));
+
+    useEffect(() => {
+        if (projectId) {
+            dispatch(fetchProjectFiles(projectId));
+        }
+    }, [projectId, dispatch]);
+
     const getParamEffectiveCount = (param: (typeof parameters)[0] | undefined): number => {
         if (!param) return 0;
         if (param.payloadSource === 'numbers') {
@@ -69,6 +78,9 @@ export default function PayloadConfigurator() {
         if (param.payloadSource === 'null_payload') {
             return param.nullPayloadConfig?.count ?? 10;
         }
+        if (param.payloadSource === 'file') {
+            return param.fileConfig?.lineCount ?? 0;
+        }
         return param.values.length;
     };
 
@@ -76,6 +88,50 @@ export default function PayloadConfigurator() {
         if (paramIndex === -1 || !projectId) return;
         dispatch(loadValuesParam({ paramIndex, values: val, projectId }));
         dispatch(persistFuzzerSession(projectId, activeSessionIndex));
+    };
+
+    const handleFileSelect = (fileId: string) => {
+        if (paramIndex === -1 || !projectId) return;
+        const target = projectFiles.find((f) => f.id === fileId);
+        if (target) {
+            const cfg: FilePayloadConfig = {
+                fileId: target.id,
+                fileName: target.name,
+                lineCount: Number(target.lineCount),
+                sizeBytes: Number(target.sizeBytes),
+            };
+            dispatch(setFileConfig({ paramIndex, config: cfg, projectId }));
+            dispatch(persistFuzzerSession(projectId, activeSessionIndex));
+        }
+    };
+
+    const handleFuzzerFileImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file || paramIndex === -1 || !projectId) return;
+        try {
+            const text = await file.text();
+            const actionResult = await dispatch(
+                importProjectFile({
+                    projectId,
+                    name: file.name,
+                    content: text,
+                    path: (file as any).path || '',
+                })
+            ).unwrap();
+            if (actionResult.file) {
+                const cfg: FilePayloadConfig = {
+                    fileId: actionResult.file.id,
+                    fileName: actionResult.file.name,
+                    lineCount: Number(actionResult.file.lineCount),
+                    sizeBytes: Number(actionResult.file.sizeBytes),
+                };
+                dispatch(setFileConfig({ paramIndex, config: cfg, projectId }));
+                dispatch(persistFuzzerSession(projectId, activeSessionIndex));
+            }
+        } catch (err) {
+            console.error("Failed to import file in fuzzer:", err);
+        }
+        e.target.value = '';
     };
 
     const handlePayloadSourceChange = (newSource: PayloadSource) => {
@@ -88,6 +144,15 @@ export default function PayloadConfigurator() {
         } else if (newSource === 'null_payload' && !selectedParam.nullPayloadConfig) {
             const cfg: NullPayloadConfig = { count: 10 };
             dispatch(setNullPayloadConfig({ paramIndex, config: cfg, projectId }));
+        } else if (newSource === 'file' && !selectedParam.fileConfig && projectFiles.length > 0) {
+            const first = projectFiles[0];
+            const cfg: FilePayloadConfig = {
+                fileId: first.id,
+                fileName: first.name,
+                lineCount: Number(first.lineCount),
+                sizeBytes: Number(first.sizeBytes),
+            };
+            dispatch(setFileConfig({ paramIndex, config: cfg, projectId }));
         }
         dispatch(persistFuzzerSession(projectId, activeSessionIndex));
     };
@@ -228,6 +293,12 @@ export default function PayloadConfigurator() {
                                     <span>Null Payload (Repeater)</span>
                                 </div>
                             </SelectItem>
+                            <SelectItem value="file" className="text-xs">
+                                <div className="flex items-center gap-2">
+                                    <FolderArchive className="w-3.5 h-3.5 text-blue-500" />
+                                    <span>From File (Workspace Files)</span>
+                                </div>
+                            </SelectItem>
                         </SelectContent>
                     </Select>
                 </div>
@@ -356,9 +427,103 @@ export default function PayloadConfigurator() {
                             Generates empty (null) payloads. Ideal for blind timing attacks, load generation, or repeatedly replaying requests.
                         </p>
                     </div>
+                ) : selectedParam.payloadSource === 'file' ? (
+                    <div className="space-y-3 p-3 bg-muted/20 border rounded-lg">
+                        <div className="flex items-center justify-between">
+                            <span className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5 uppercase tracking-wider">
+                                <FolderArchive className="w-3.5 h-3.5 text-blue-500" />
+                                Workspace File Wordlist
+                            </span>
+                            <span className="text-[11px] font-mono text-muted-foreground">
+                                {selectedParam.fileConfig ? `${selectedParam.fileConfig.lineCount.toLocaleString()} lines` : 'No file selected'}
+                            </span>
+                        </div>
+
+                        <div className="space-y-1.5">
+                            <Label htmlFor="fuzzerFileSelect" className="text-xs">Select Wordlist File</Label>
+                            {projectFiles.length > 0 ? (
+                                <Select
+                                    value={selectedParam.fileConfig?.fileId || ''}
+                                    onValueChange={handleFileSelect}
+                                >
+                                    <SelectTrigger id="fuzzerFileSelect" className="w-full h-8 text-xs font-mono">
+                                        <SelectValue placeholder="Choose a file..." />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {projectFiles.map((file) => (
+                                            <SelectItem key={file.id} value={file.id} className="text-xs">
+                                                <div className="flex items-center justify-between w-full gap-4">
+                                                    <span className="font-mono">{file.name}</span>
+                                                    <span className="text-[10px] text-muted-foreground">
+                                                        {file.lineCount.toLocaleString()} lines ({(file.sizeBytes / 1024).toFixed(1)} KB)
+                                                    </span>
+                                                </div>
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            ) : (
+                                <div className="text-xs text-muted-foreground bg-muted/40 p-2 rounded border">
+                                    No files imported in this workspace yet. You can import one below or visit the Files page.
+                                </div>
+                            )}
+                        </div>
+
+                        {selectedParam.fileConfig && (
+                            <div className="rounded border bg-background/50 p-2 space-y-1 text-xs font-mono">
+                                <div className="flex justify-between text-muted-foreground text-[11px]">
+                                    <span>Selected File:</span>
+                                    <span className="text-foreground font-semibold">{selectedParam.fileConfig.fileName}</span>
+                                </div>
+                                <div className="flex justify-between text-muted-foreground text-[11px]">
+                                    <span>Total Lines (Payloads):</span>
+                                    <span className="text-foreground">{selectedParam.fileConfig.lineCount.toLocaleString()}</span>
+                                </div>
+                                <div className="flex justify-between text-muted-foreground text-[11px]">
+                                    <span>File Size:</span>
+                                    <span className="text-foreground">{(selectedParam.fileConfig.sizeBytes / 1024).toFixed(1)} KB</span>
+                                </div>
+                            </div>
+                        )}
+
+                        <div className="flex gap-2 w-full pt-1">
+                            <label
+                                htmlFor="fuzzer-quick-file-import"
+                                className="inline-flex items-center justify-center rounded-md text-xs font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 border border-input bg-background hover:bg-accent hover:text-accent-foreground h-8 px-3 cursor-pointer w-full"
+                            >
+                                <IconUpload className="mr-1.5 w-3.5 h-3.5" />
+                                Import New File into Workspace
+                            </label>
+                            <input
+                                id="fuzzer-quick-file-import"
+                                type="file"
+                                accept=".txt,.csv,.lst,.wordlist"
+                                onChange={handleFuzzerFileImport}
+                                className="hidden"
+                            />
+                        </div>
+
+                        <p className="text-[11px] text-muted-foreground">
+                            Payloads are loaded directly by the backend engine during fuzzing without slowing down the UI.
+                        </p>
+                    </div>
                 ) : (
                     <div className="space-y-2">
-                        <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Selected Payload List</Label>
+                        <div className="flex items-center justify-between">
+                            <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                                Selected Payload List ({selectedParam.values.length.toLocaleString()} items)
+                            </Label>
+                            {selectedParam.values.length > 0 && (
+                                <button
+                                    type="button"
+                                    onClick={() => handleValuesChange("")}
+                                    className="text-[11px] text-muted-foreground hover:text-destructive transition-colors cursor-pointer"
+                                >
+                                    Clear all
+                                </button>
+                            )}
+                        </div>
+
                         <PayloadCodeEditor
                             value={selectedParam.values.join("\n") || ""}
                             onChange={handleValuesChange}
