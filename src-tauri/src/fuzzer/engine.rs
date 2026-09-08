@@ -1,6 +1,6 @@
 use serde::Serialize;
 use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::Mutex;
@@ -1777,11 +1777,16 @@ pub struct FuzzRunConfig {
 }
 
 static FUZZ_CANCELLATIONS: OnceLock<Mutex<HashMap<String, Arc<AtomicBool>>>> = OnceLock::new();
+static FUZZ_CONCURRENCY_CHANNELS: OnceLock<Mutex<HashMap<String, tokio::sync::mpsc::UnboundedSender<usize>>>> = OnceLock::new();
 
 const TIME_TO_UPDATE: Duration = Duration::from_millis(300);
 
 fn cancellations() -> &'static Mutex<HashMap<String, Arc<AtomicBool>>> {
     FUZZ_CANCELLATIONS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn concurrency_channels() -> &'static Mutex<HashMap<String, tokio::sync::mpsc::UnboundedSender<usize>>> {
+    FUZZ_CONCURRENCY_CHANNELS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 fn run_key(session: u32, history: u32) -> String {
@@ -1798,6 +1803,19 @@ pub async fn register_run(session: u32, history: u32) -> Arc<AtomicBool> {
     let flag = Arc::new(AtomicBool::new(false));
     cancellations().lock().await.insert(key, Arc::clone(&flag));
     flag
+}
+
+pub async fn register_concurrency_channel(session: u32, history: u32, tx: tokio::sync::mpsc::UnboundedSender<usize>) {
+    let key = run_key(session, history);
+    concurrency_channels().lock().await.insert(key, tx);
+}
+
+pub async fn get_concurrency_channel(session: u32, history: u32) -> Option<tokio::sync::mpsc::UnboundedSender<usize>> {
+    concurrency_channels()
+        .lock()
+        .await
+        .get(&run_key(session, history))
+        .cloned()
 }
 
 async fn get_cancel_flag(session: u32, history: u32) -> Option<Arc<AtomicBool>> {
@@ -1829,6 +1847,8 @@ impl Drop for CleanupGuard {
             {
                 map.remove(&key);
             }
+            drop(map);
+            concurrency_channels().lock().await.remove(&key);
         });
     }
 }
@@ -1872,6 +1892,284 @@ fn emit_progress(
     );
 }
 
+enum ChunkWorkerMessage {
+    Completed {
+        id: String,
+        sort_order: i64,
+        payload: Option<String>,
+        request_date: i64,
+        raw_response: String,
+        status_code: Option<i64>,
+        response_length: i64,
+        response_time_ms: i64,
+        worker_id: Option<u32>,
+    },
+    Error {
+        id: String,
+        sort_order: i64,
+        payload: Option<String>,
+        request_date: i64,
+        worker_id: Option<u32>,
+        message: String,
+        connection_dropped: bool,
+    },
+}
+
+fn spawn_worker(
+    worker_idx: usize,
+    queue: Arc<std::sync::Mutex<VecDeque<FuzzTarget>>>,
+    completed: Arc<AtomicU32>,
+    failed: Arc<AtomicU32>,
+    cancel: Arc<AtomicBool>,
+    any_worker_dropped: Arc<AtomicBool>,
+    target_workers: Arc<AtomicUsize>,
+    active_workers: Arc<AtomicUsize>,
+    url: String,
+    delay_ms: u64,
+    chunk_tx_w: tokio::sync::mpsc::Sender<ChunkWorkerMessage>,
+    selected_session: u32,
+    fuzz_history: u32,
+    join_set: &mut tokio::task::JoinSet<()>,
+    startup_jitter: bool,
+) {
+    let queue_clone = Arc::clone(&queue);
+    let completed_clone = Arc::clone(&completed);
+    let failed_clone = Arc::clone(&failed);
+    let cancel_clone = Arc::clone(&cancel);
+    let dropped_clone = Arc::clone(&any_worker_dropped);
+    let target_workers_clone = Arc::clone(&target_workers);
+    let active_workers_clone = Arc::clone(&active_workers);
+
+    join_set.spawn(async move {
+        // Jitter / staggering on startup to avoid thundering-herd SYN burst
+        if startup_jitter {
+            let startup_jitter_ms = ((worker_idx as u64) * 8).min(200) + (worker_idx as u64 % 7);
+            if startup_jitter_ms > 0 {
+                sleep(Duration::from_millis(startup_jitter_ms)).await;
+            }
+        }
+
+        let mut conn: Option<HttpConnection> = None;
+        let mut consecutive_conn_failures = 0usize;
+        let mut retired_by_scaling = false;
+
+        loop {
+            if cancel_clone.load(Ordering::Relaxed) {
+                break;
+            }
+
+            // Check dynamic scale-down
+            let desired = target_workers_clone.load(Ordering::Relaxed);
+            let mut current = active_workers_clone.load(Ordering::Relaxed);
+            while current > desired {
+                match active_workers_clone.compare_exchange_weak(
+                    current,
+                    current - 1,
+                    Ordering::SeqCst,
+                    Ordering::Relaxed,
+                ) {
+                    Ok(_) => {
+                        retired_by_scaling = true;
+                        break;
+                    }
+                    Err(actual) => current = actual,
+                }
+            }
+            if retired_by_scaling {
+                break;
+            }
+
+            let target = {
+                let mut q = match queue_clone.lock() {
+                    Ok(g) => g,
+                    Err(poisoned) => poisoned.into_inner(),
+                };
+                q.pop_front()
+            };
+
+            let target = match target {
+                Some(t) => t,
+                None => break, // Queue exhausted, worker finished!
+            };
+
+            // Lazy connection setup
+            if conn.is_none() {
+                match HttpConnection::new(&url).await {
+                    Ok(c) => {
+                        conn = Some(c);
+                        consecutive_conn_failures = 0;
+                    }
+                    Err(e) => {
+                        consecutive_conn_failures += 1;
+                        tracing::warn!(
+                            "Worker {} connect failed (attempt {}): {}",
+                            worker_idx,
+                            consecutive_conn_failures,
+                            e
+                        );
+
+                        // Push target back to front of the queue so another worker or retry can process it
+                        {
+                            let mut q = match queue_clone.lock() {
+                                Ok(g) => g,
+                                Err(p) => p.into_inner(),
+                            };
+                            q.push_front(target);
+                        }
+
+                        if consecutive_conn_failures >= 5 {
+                            dropped_clone.store(true, Ordering::Relaxed);
+                            break;
+                        }
+                        sleep(Duration::from_millis(100 * consecutive_conn_failures as u64)).await;
+                        continue;
+                    }
+                }
+            }
+
+            let c = conn.as_mut().unwrap();
+            let dispatch_time = chrono::Utc::now().timestamp_millis();
+
+            match c.send_request(target.request.as_bytes()).await {
+                Ok(response) => {
+                    consecutive_conn_failures = 0;
+                    let raw_resp = response.as_text_lossy();
+                    let status_code = crate::ares_utils::database::fuzzer::parse_status_code(&raw_resp);
+                    let resp_len = raw_resp.len() as i64;
+                    let resp_time = response.elapsed.as_millis();
+
+                    update_store_completed(
+                        selected_session,
+                        fuzz_history,
+                        &target.id,
+                        dispatch_time,
+                        status_code.map(|c| c as u16),
+                        Some(resp_len as usize),
+                        Some(resp_time),
+                        Some(raw_resp.clone()),
+                        Some(worker_idx as u32),
+                    ).await;
+
+                    let _ = chunk_tx_w.send(ChunkWorkerMessage::Completed {
+                        id: target.id.clone(),
+                        sort_order: target.sort_order as i64,
+                        payload: target.payload.clone(),
+                        request_date: dispatch_time,
+                        raw_response: raw_resp,
+                        status_code,
+                        response_length: resp_len,
+                        response_time_ms: resp_time as i64,
+                        worker_id: Some(worker_idx as u32),
+                    }).await;
+
+                    completed_clone.fetch_add(1, Ordering::Relaxed);
+                }
+                Err(e) => {
+                    let msg = e.to_string();
+                    let is_conn_err = is_connection_error(&msg);
+
+                    if is_conn_err {
+                        // Attempt reconnect & retry
+                        let mut reconnected_and_sent = false;
+                        if c.reconnect().await.is_ok() {
+                            let retry_dispatch_time = chrono::Utc::now().timestamp_millis();
+                            match c.send_request(target.request.as_bytes()).await {
+                                Ok(response) => {
+                                    consecutive_conn_failures = 0;
+                                    let raw_resp = response.as_text_lossy();
+                                    let status_code = crate::ares_utils::database::fuzzer::parse_status_code(&raw_resp);
+                                    let resp_len = raw_resp.len() as i64;
+                                    let resp_time = response.elapsed.as_millis();
+
+                                    update_store_completed(
+                                        selected_session,
+                                        fuzz_history,
+                                        &target.id,
+                                        retry_dispatch_time,
+                                        status_code.map(|c| c as u16),
+                                        Some(resp_len as usize),
+                                        Some(resp_time),
+                                        Some(raw_resp.clone()),
+                                        Some(worker_idx as u32),
+                                    ).await;
+
+                                    let _ = chunk_tx_w.send(ChunkWorkerMessage::Completed {
+                                        id: target.id.clone(),
+                                        sort_order: target.sort_order as i64,
+                                        payload: target.payload.clone(),
+                                        request_date: retry_dispatch_time,
+                                        raw_response: raw_resp,
+                                        status_code,
+                                        response_length: resp_len,
+                                        response_time_ms: resp_time as i64,
+                                        worker_id: Some(worker_idx as u32),
+                                    }).await;
+
+                                    completed_clone.fetch_add(1, Ordering::Relaxed);
+                                    reconnected_and_sent = true;
+                                }
+                                Err(retry_err) => {
+                                    tracing::warn!("Worker {} request retry failed: {}", worker_idx, retry_err);
+                                }
+                            }
+                        }
+
+                        if reconnected_and_sent {
+                            if delay_ms > 0 {
+                                sleep(Duration::from_millis(delay_ms)).await;
+                            }
+                            continue;
+                        }
+
+                        // Connection dropped: invalidate socket and push target back to front of queue
+                        conn = None;
+                        consecutive_conn_failures += 1;
+
+                        {
+                            let mut q = match queue_clone.lock() {
+                                Ok(g) => g,
+                                Err(p) => p.into_inner(),
+                            };
+                            q.push_front(target);
+                        }
+
+                        if consecutive_conn_failures >= 5 {
+                            dropped_clone.store(true, Ordering::Relaxed);
+                            break;
+                        }
+                        sleep(Duration::from_millis(100 * consecutive_conn_failures as u64)).await;
+                        continue;
+                    } else {
+                        // Non-connection error (HTTP / parsing error)
+                        update_store_error(selected_session, fuzz_history, &target.id, dispatch_time, msg.clone(), false, Some(worker_idx as u32)).await;
+
+                        let _ = chunk_tx_w.send(ChunkWorkerMessage::Error {
+                            id: target.id.clone(),
+                            sort_order: target.sort_order as i64,
+                            payload: target.payload.clone(),
+                            request_date: dispatch_time,
+                            worker_id: Some(worker_idx as u32),
+                            message: msg.clone(),
+                            connection_dropped: false,
+                        }).await;
+
+                        failed_clone.fetch_add(1, Ordering::Relaxed);
+                        completed_clone.fetch_add(1, Ordering::Relaxed);
+                    }
+                }
+            }
+
+            if delay_ms > 0 {
+                sleep(Duration::from_millis(delay_ms)).await;
+            }
+        }
+
+        if !retired_by_scaling {
+            active_workers_clone.fetch_sub(1, Ordering::Relaxed);
+        }
+    });
+}
+
 /// Core dynamic worker execution engine using a shared producer-consumer queue.
 async fn run_dynamic_fuzzer(
     app: AppHandle,
@@ -1885,7 +2183,12 @@ async fn run_dynamic_fuzzer(
     let fuzz_history = config.fuzz_history;
     let total = overall_total;
     let run_id = format!("{}-{}", selected_session, fuzz_history);
-    let num_workers = config.num_tasks.max(1);
+    let num_workers = config.num_tasks.clamp(1, 100);
+    let target_workers = Arc::new(AtomicUsize::new(num_workers));
+    let active_workers = Arc::new(AtomicUsize::new(num_workers));
+
+    let (concurrency_tx, mut concurrency_rx) = tokio::sync::mpsc::unbounded_channel::<usize>();
+    register_concurrency_channel(selected_session, fuzz_history, concurrency_tx).await;
 
     if targets.is_empty() {
         emit_progress(&app, selected_session, fuzz_history, initial_completed, total, 0, "completed", false);
@@ -1964,29 +2267,6 @@ async fn run_dynamic_fuzzer(
             }
         }
     });
-
-    enum ChunkWorkerMessage {
-        Completed {
-            id: String,
-            sort_order: i64,
-            payload: Option<String>,
-            request_date: i64,
-            raw_response: String,
-            status_code: Option<i64>,
-            response_length: i64,
-            response_time_ms: i64,
-            worker_id: Option<u32>,
-        },
-        Error {
-            id: String,
-            sort_order: i64,
-            payload: Option<String>,
-            request_date: i64,
-            worker_id: Option<u32>,
-            message: String,
-            connection_dropped: bool,
-        },
-    }
 
     let (chunk_tx, mut chunk_rx) = tokio::sync::mpsc::channel::<ChunkWorkerMessage>(2048);
     let flusher_pool = db_pool.clone();
@@ -2154,220 +2434,76 @@ async fn run_dynamic_fuzzer(
         }
     });
 
-    // Spawn dynamic consumer workers
-    let mut handles = Vec::with_capacity(num_workers);
+    // Spawn dynamic consumer workers using JoinSet and dynamic supervisor
+    let mut join_set = tokio::task::JoinSet::new();
 
     for worker_idx in 0..num_workers {
-        let queue_clone = Arc::clone(&queue);
-        let completed_clone = Arc::clone(&completed);
-        let failed_clone = Arc::clone(&failed);
-        let cancel_clone = Arc::clone(&cancel);
-        let dropped_clone = Arc::clone(&any_worker_dropped);
-        let url = config.url.clone();
-        let delay_ms = config.delay_ms;
-        let chunk_tx_w = chunk_tx.clone();
-
-        let handle = tokio::spawn(async move {
-            // Jitter / staggering on startup to avoid thundering-herd SYN burst
-            let startup_jitter_ms = ((worker_idx as u64) * 8).min(200) + (worker_idx as u64 % 7);
-            if startup_jitter_ms > 0 {
-                sleep(Duration::from_millis(startup_jitter_ms)).await;
-            }
-
-            let mut conn: Option<HttpConnection> = None;
-            let mut consecutive_conn_failures = 0usize;
-
-            loop {
-                if cancel_clone.load(Ordering::Relaxed) {
-                    break;
-                }
-
-                let target = {
-                    let mut q = match queue_clone.lock() {
-                        Ok(g) => g,
-                        Err(poisoned) => poisoned.into_inner(),
-                    };
-                    q.pop_front()
-                };
-
-                let target = match target {
-                    Some(t) => t,
-                    None => break, // Queue exhausted, worker finished!
-                };
-
-                // Lazy connection setup
-                if conn.is_none() {
-                    match HttpConnection::new(&url).await {
-                        Ok(c) => {
-                            conn = Some(c);
-                            consecutive_conn_failures = 0;
-                        }
-                        Err(e) => {
-                            consecutive_conn_failures += 1;
-                            tracing::warn!("Worker {} connect failed (attempt {}): {}", worker_idx, consecutive_conn_failures, e);
-
-                            // Push target back to front of the queue so another worker or retry can process it
-                            {
-                                let mut q = match queue_clone.lock() {
-                                    Ok(g) => g,
-                                    Err(p) => p.into_inner(),
-                                };
-                                q.push_front(target);
-                            }
-
-                            if consecutive_conn_failures >= 5 {
-                                dropped_clone.store(true, Ordering::Relaxed);
-                                break;
-                            }
-                            sleep(Duration::from_millis(100 * consecutive_conn_failures as u64)).await;
-                            continue;
-                        }
-                    }
-                }
-
-                let c = conn.as_mut().unwrap();
-                let dispatch_time = chrono::Utc::now().timestamp_millis();
-
-                match c.send_request(target.request.as_bytes()).await {
-                    Ok(response) => {
-                        consecutive_conn_failures = 0;
-                        let raw_resp = response.as_text_lossy();
-                        let status_code = crate::ares_utils::database::fuzzer::parse_status_code(&raw_resp);
-                        let resp_len = raw_resp.len() as i64;
-                        let resp_time = response.elapsed.as_millis();
-
-                        update_store_completed(
-                            selected_session,
-                            fuzz_history,
-                            &target.id,
-                            dispatch_time,
-                            status_code.map(|c| c as u16),
-                            Some(resp_len as usize),
-                            Some(resp_time),
-                            Some(raw_resp.clone()),
-                            Some(worker_idx as u32),
-                        ).await;
-
-                        let _ = chunk_tx_w.send(ChunkWorkerMessage::Completed {
-                            id: target.id.clone(),
-                            sort_order: target.sort_order as i64,
-                            payload: target.payload.clone(),
-                            request_date: dispatch_time,
-                            raw_response: raw_resp,
-                            status_code,
-                            response_length: resp_len,
-                            response_time_ms: resp_time as i64,
-                            worker_id: Some(worker_idx as u32),
-                        }).await;
-
-                        completed_clone.fetch_add(1, Ordering::Relaxed);
-                    }
-                    Err(e) => {
-                        let msg = e.to_string();
-                        let is_conn_err = is_connection_error(&msg);
-
-                        if is_conn_err {
-                            // Attempt reconnect & retry
-                            let mut reconnected_and_sent = false;
-                            if c.reconnect().await.is_ok() {
-                                let retry_dispatch_time = chrono::Utc::now().timestamp_millis();
-                                match c.send_request(target.request.as_bytes()).await {
-                                    Ok(response) => {
-                                        consecutive_conn_failures = 0;
-                                        let raw_resp = response.as_text_lossy();
-                                        let status_code = crate::ares_utils::database::fuzzer::parse_status_code(&raw_resp);
-                                        let resp_len = raw_resp.len() as i64;
-                                        let resp_time = response.elapsed.as_millis();
-
-                                        update_store_completed(
-                                            selected_session,
-                                            fuzz_history,
-                                            &target.id,
-                                            retry_dispatch_time,
-                                            status_code.map(|c| c as u16),
-                                            Some(resp_len as usize),
-                                            Some(resp_time),
-                                            Some(raw_resp.clone()),
-                                            Some(worker_idx as u32),
-                                        ).await;
-
-                                        let _ = chunk_tx_w.send(ChunkWorkerMessage::Completed {
-                                            id: target.id.clone(),
-                                            sort_order: target.sort_order as i64,
-                                            payload: target.payload.clone(),
-                                            request_date: retry_dispatch_time,
-                                            raw_response: raw_resp,
-                                            status_code,
-                                            response_length: resp_len,
-                                            response_time_ms: resp_time as i64,
-                                            worker_id: Some(worker_idx as u32),
-                                        }).await;
-
-                                        completed_clone.fetch_add(1, Ordering::Relaxed);
-                                        reconnected_and_sent = true;
-                                    }
-                                    Err(retry_err) => {
-                                        tracing::warn!("Worker {} request retry failed: {}", worker_idx, retry_err);
-                                    }
-                                }
-                            }
-
-                            if reconnected_and_sent {
-                                if delay_ms > 0 {
-                                    sleep(Duration::from_millis(delay_ms)).await;
-                                }
-                                continue;
-                            }
-
-                            // Connection dropped: invalidate socket and push target back to front of queue
-                            conn = None;
-                            consecutive_conn_failures += 1;
-
-                            {
-                                let mut q = match queue_clone.lock() {
-                                    Ok(g) => g,
-                                    Err(p) => p.into_inner(),
-                                };
-                                q.push_front(target);
-                            }
-
-                            if consecutive_conn_failures >= 5 {
-                                dropped_clone.store(true, Ordering::Relaxed);
-                                break;
-                            }
-                            sleep(Duration::from_millis(100 * consecutive_conn_failures as u64)).await;
-                            continue;
-                        } else {
-                            // Non-connection error (HTTP / parsing error)
-                            update_store_error(selected_session, fuzz_history, &target.id, dispatch_time, msg.clone(), false, Some(worker_idx as u32)).await;
-
-                            let _ = chunk_tx_w.send(ChunkWorkerMessage::Error {
-                                id: target.id.clone(),
-                                sort_order: target.sort_order as i64,
-                                payload: target.payload.clone(),
-                                request_date: dispatch_time,
-                                worker_id: Some(worker_idx as u32),
-                                message: msg.clone(),
-                                connection_dropped: false,
-                            }).await;
-
-                            failed_clone.fetch_add(1, Ordering::Relaxed);
-                            completed_clone.fetch_add(1, Ordering::Relaxed);
-                        }
-                    }
-                }
-
-                if delay_ms > 0 {
-                    sleep(Duration::from_millis(delay_ms)).await;
-                }
-            }
-        });
-
-        handles.push(handle);
+        spawn_worker(
+            worker_idx,
+            Arc::clone(&queue),
+            Arc::clone(&completed),
+            Arc::clone(&failed),
+            Arc::clone(&cancel),
+            Arc::clone(&any_worker_dropped),
+            Arc::clone(&target_workers),
+            Arc::clone(&active_workers),
+            config.url.clone(),
+            config.delay_ms,
+            chunk_tx.clone(),
+            selected_session,
+            fuzz_history,
+            &mut join_set,
+            true,
+        );
     }
 
-    for handle in handles {
-        let _ = handle.await;
+    let mut next_worker_id = num_workers;
+
+    loop {
+        tokio::select! {
+            Some(new_threads) = concurrency_rx.recv() => {
+                let clamped = new_threads.clamp(1, 100);
+                target_workers.store(clamped, Ordering::Relaxed);
+                let current_active = active_workers.load(Ordering::Relaxed);
+                if clamped > current_active {
+                    let to_spawn = clamped - current_active;
+                    active_workers.fetch_add(to_spawn, Ordering::Relaxed);
+                    for _ in 0..to_spawn {
+                        let wid = next_worker_id;
+                        next_worker_id += 1;
+                        spawn_worker(
+                            wid,
+                            Arc::clone(&queue),
+                            Arc::clone(&completed),
+                            Arc::clone(&failed),
+                            Arc::clone(&cancel),
+                            Arc::clone(&any_worker_dropped),
+                            Arc::clone(&target_workers),
+                            Arc::clone(&active_workers),
+                            config.url.clone(),
+                            config.delay_ms,
+                            chunk_tx.clone(),
+                            selected_session,
+                            fuzz_history,
+                            &mut join_set,
+                            false,
+                        );
+                    }
+                }
+            }
+            res = join_set.join_next() => {
+                match res {
+                    Some(_) => {
+                        if join_set.is_empty() {
+                            break;
+                        }
+                    }
+                    None => {
+                        break;
+                    }
+                }
+            }
+        }
     }
 
     drop(chunk_tx);
@@ -2596,6 +2732,75 @@ pub async fn cancel_fuzzing(
     } else {
         Err("No active fuzz run found".to_string())
     }
+}
+
+#[tauri::command]
+pub async fn set_fuzzer_threads(
+    app: AppHandle,
+    selected_session: u32,
+    fuzz_history: u32,
+    num_threads: usize,
+) -> Result<(), String> {
+    let clamped = num_threads.clamp(1, 100);
+
+    // 1. If actively running, notify the supervisor
+    if let Some(tx) = get_concurrency_channel(selected_session, fuzz_history).await {
+        let _ = tx.send(clamped);
+    }
+
+    // 2. Update in-memory fuzz_store if exists
+    let key = run_key(selected_session, fuzz_history);
+    {
+        let mut store = fuzz_store().lock().await;
+        if let Some(run_data) = store.get_mut(&key) {
+            if let Some(ref mut snap) = run_data.config_snapshot {
+                snap.num_threads = Some(clamped);
+            }
+        }
+    }
+
+    // 3. Persist in database
+    if let Some(db_state) = app.try_state::<crate::ares_utils::database::DbState>() {
+        if let Ok(pool) = db_state.pool().await {
+            let run_id = crate::ares_utils::database::fuzzer::resolve_fuzzer_run_id(
+                &pool,
+                selected_session as usize,
+                fuzz_history as usize,
+            )
+            .await;
+
+            // Update config_snapshot in fuzzer_runs
+            if let Ok(Some(existing_snap)) = sqlx::query_scalar::<_, String>(
+                "SELECT config_snapshot FROM fuzzer_runs WHERE id = ?"
+            )
+            .bind(&run_id)
+            .fetch_optional(&pool)
+            .await {
+                if let Ok(mut json) = serde_json::from_str::<serde_json::Value>(&existing_snap) {
+                    json["numThreads"] = serde_json::json!(clamped);
+                    let updated_str = json.to_string();
+                    let _ = sqlx::query("UPDATE fuzzer_runs SET config_snapshot = ? WHERE id = ?")
+                        .bind(&updated_str)
+                        .bind(&run_id)
+                        .execute(&pool)
+                        .await;
+                }
+            }
+
+            // Also update fuzzer_sessions so future runs inherit the thread count
+            let _ = sqlx::query(
+                "UPDATE fuzzer_sessions SET num_threads = ? WHERE id = (
+                    SELECT session_id FROM fuzzer_runs WHERE id = ?
+                )"
+            )
+            .bind(clamped as i64)
+            .bind(&run_id)
+            .execute(&pool)
+            .await;
+        }
+    }
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -2945,10 +3150,17 @@ pub async fn resend_failed_fuzz_requests(
             .await;
     }
 
+    let parsed_threads = config_snapshot_str
+        .as_ref()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+        .and_then(|v| v.get("numThreads").and_then(|t| t.as_u64()))
+        .map(|t| t as usize)
+        .unwrap_or(4);
+
     let config = FuzzRunConfig {
         url,
         delay_ms,
-        num_tasks: 4,
+        num_tasks: parsed_threads,
         selected_session,
         fuzz_history,
         register_cancel: true,

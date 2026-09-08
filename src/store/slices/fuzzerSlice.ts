@@ -436,6 +436,18 @@ export const fuzzerSlice = createSlice({
       }
     },
 
+    updateHistoryNumThreads: (state, action: PayloadAction<{ projectId: string; sessionIndex: number; historyIndex: number; numThreads: number }>) => {
+      const bucket = getBucket(state, action.payload.projectId);
+      const session = bucket.fuzzerSessions[action.payload.sessionIndex];
+      if (session) {
+        session.fuzzConfig.numThreads = action.payload.numThreads;
+        const hist = session.fuzzingHistory[action.payload.historyIndex];
+        if (hist && hist.fuzzConfigSnapshot) {
+          hist.fuzzConfigSnapshot.numThreads = action.payload.numThreads;
+        }
+      }
+    },
+
     setDelayMs: (state, action: PayloadAction<{ delayMs: number; projectId: string }>) => {
       const bucket = getBucket(state, action.payload.projectId);
       if (bucket.activeSessionIndex !== null && bucket.fuzzerSessions[bucket.activeSessionIndex]) {
@@ -620,6 +632,7 @@ export const {
   removeParameter,
   setContent,
   setNumThreads,
+  updateHistoryNumThreads,
   setDelayMs,
   setTargerUrl,
   setSelectedFuzz,
