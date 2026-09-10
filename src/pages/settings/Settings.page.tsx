@@ -22,6 +22,7 @@ import {
     Radio,
     Waves,
     Terminal,
+    Folder,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -29,6 +30,13 @@ import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Badge } from "@/components/ui/badge"
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select"
 import {
     Card,
     CardContent,
@@ -39,14 +47,18 @@ import {
 } from "@/components/ui/card"
 import { ProxySettings, ProxyStatus } from "@/types/proxySettings.type"
 import { FuzzerSettings } from "@/types/fuzzerSettings.type"
+import { StartupProjectMode } from "@/types/settings.type"
+import { Project } from "@/types/project.type"
 import { useAppDispatch, useAppSelector } from "@/hooks/redux"
 import {
     setFuzzerSettings,
     setShowSplashscreen,
+    setStartupProjectSettings,
     increaseFontSize,
     decreaseFontSize,
     resetFontSize,
 } from "@/store/slices/appStateSlice"
+import { setProjects } from "@/store/slices/projectSlice"
 import InstallCertificateDialog from "@/components/InstallCert"
 import LogViewer from "@/components/LogViewer"
 import { cn } from "@/lib/utils"
@@ -55,12 +67,92 @@ type SettingsTab = "general" | "proxy" | "certificates" | "fuzzer" | "logs" | "s
 
 const PRESET_PORTS = [8080, 8081, 8443, 8888, 9090]
 
+function RadioCircle({ checked }: { checked: boolean }) {
+    return (
+        <span
+            className={cn(
+                "relative flex items-center justify-center w-4 h-4 rounded-full border transition-all shrink-0",
+                checked
+                    ? "border-primary bg-transparent"
+                    : "border-muted-foreground/40 group-hover:border-muted-foreground/70"
+            )}
+        >
+            {checked && (
+                <span className="w-2 h-2 rounded-full bg-primary" />
+            )}
+        </span>
+    )
+}
+
 export default function SettingsPage() {
     const [activeTab, setActiveTab] = useState<SettingsTab>("general")
     const dispatch = useAppDispatch()
     const showSplashscreen = useAppSelector((s) => s.appState.showSplashscreen ?? true)
     const fontSizeScale = useAppSelector((s) => s.appState.fontSizeScale ?? 1.0)
     const fuzzerSettings = useAppSelector((s) => s.appState.fuzzerSettings) || { showUncompletedRequests: false }
+    const startupProjectMode = useAppSelector((s) => s.appState.startupProjectMode ?? "last_used")
+    const startupProjectSpecificId = useAppSelector((s) => s.appState.startupProjectSpecificId ?? null)
+    const currentProjectId = useAppSelector((s) => s.workspacestate.currentProjectId)
+    const allProjects = useAppSelector((s) => s.workspacestate.projects)
+    const availableProjects = allProjects.filter((p) => !p.temporary && p.exists !== false)
+    const nonTemporaryProjects = allProjects.filter((p) => !p.temporary)
+    const specificProject = allProjects.find((p) => p.id === startupProjectSpecificId)
+    const isSpecificProjectMissing = Boolean(
+        startupProjectMode === "specific" &&
+        startupProjectSpecificId &&
+        (!specificProject || specificProject.exists === false)
+    )
+
+    useEffect(() => {
+        if (allProjects.length === 0) {
+            invoke<Project[]>("list_projects")
+                .then((raw) => {
+                    const list = raw.map((p) => ({
+                        ...p,
+                        description: p.description ?? "",
+                        temporary: p.temporary ?? false,
+                    }))
+                    dispatch(setProjects(list))
+                })
+                .catch(console.error)
+        }
+    }, [allProjects.length, dispatch])
+
+    const handleSetStartupMode = async (mode: StartupProjectMode, specificId?: string | null) => {
+        let finalSpecificId = specificId !== undefined ? specificId : startupProjectSpecificId
+
+        if (mode === "specific") {
+            if (!finalSpecificId && availableProjects.length > 0) {
+                const activeProj = availableProjects.find((p) => p.id === currentProjectId)
+                finalSpecificId = activeProj ? activeProj.id : availableProjects[0].id
+            }
+        }
+
+        dispatch(setStartupProjectSettings({ mode, specificId: finalSpecificId }))
+
+        try {
+            await invoke("set_startup_project_mode", {
+                mode,
+                specificId: finalSpecificId,
+            })
+
+            if (mode === "none") {
+                toast.success("Default startup project set to None")
+            } else if (mode === "last_used") {
+                toast.success("Default startup project set to Last Used Project")
+            } else if (mode === "specific") {
+                const projName = availableProjects.find((p) => p.id === finalSpecificId)?.name || "Specific Project"
+                toast.success(`Default startup project set to "${projName}"`)
+            }
+        } catch (err) {
+            console.error("Failed to save startup project setting:", err)
+            toast.error("Failed to save startup project setting")
+        }
+    }
+
+    const handleSelectSpecificProject = async (projectId: string) => {
+        await handleSetStartupMode("specific", projectId)
+    }
 
     const handleToggleShowSplashscreen = async (checked: boolean) => {
         dispatch(setShowSplashscreen(checked))
@@ -382,38 +474,179 @@ export default function SettingsPage() {
                     {/* ════════════════════════════════════════════════════════════ */}
                     {activeTab === "general" && (
                         <div className="max-w-4xl space-y-6">
-                            {/* Startup & Window Preferences */}
+                            {/* Startup Preferences */}
                             <Card className="border-border/60 bg-card shadow-xs">
-                                <CardHeader>
-                                    <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                                <CardHeader className="pb-3">
+                                    <CardTitle className="text-base font-semibold tracking-tight text-foreground flex items-center gap-2">
                                         <Sparkles className="w-4 h-4 text-primary" />
-                                        Startup & Launch Preferences
+                                        Startup
                                     </CardTitle>
                                     <CardDescription className="text-xs">
-                                        Configure how Aresius initializes when opened.
+                                        Configure the startup behavior of Aresius.
                                     </CardDescription>
                                 </CardHeader>
-                                <CardContent className="space-y-4">
-                                    <div className="flex items-center justify-between p-4 rounded-lg border border-border/50 bg-muted/10 hover:bg-muted/20 transition-colors">
-                                        <div className="space-y-1 pr-6">
-                                            <Label
-                                                htmlFor="show-splashscreen-toggle"
-                                                className="text-xs font-semibold cursor-pointer text-foreground flex items-center gap-2"
-                                            >
-                                                Show Splash Screen on Startup
-                                                <Badge variant={showSplashscreen ? "default" : "secondary"} className="text-[10px] h-4 px-1.5 font-mono">
-                                                    {showSplashscreen ? "Enabled" : "Disabled"}
-                                                </Badge>
-                                            </Label>
-                                            <p className="text-[11px] text-muted-foreground leading-relaxed">
-                                                Display the animated Aresius splash screen and security initialization sequence when launching the application. Disable this to skip the splash screen and launch directly into your workspace.
+                                <CardContent className="space-y-6">
+                                    {/* Default project */}
+                                    <div className="space-y-3">
+                                        <div className="space-y-1">
+                                            <h3 className="text-xs font-semibold text-foreground">
+                                                Default project
+                                            </h3>
+                                            <p className="text-[11px] text-muted-foreground">
+                                                Choose which project is opened by default when starting up Aresius
                                             </p>
                                         </div>
-                                        <Switch
-                                            id="show-splashscreen-toggle"
-                                            checked={showSplashscreen}
-                                            onCheckedChange={handleToggleShowSplashscreen}
-                                        />
+
+                                        <div className="space-y-3 pt-1" role="radiogroup" aria-label="Default project">
+                                            {/* None */}
+                                            <div
+                                                role="radio"
+                                                aria-checked={startupProjectMode === "none"}
+                                                tabIndex={0}
+                                                onClick={() => handleSetStartupMode("none")}
+                                                onKeyDown={(e) => (e.key === " " || e.key === "Enter") && handleSetStartupMode("none")}
+                                                className="flex items-center gap-3 cursor-pointer group select-none w-fit outline-none focus-visible:ring-1 focus-visible:ring-primary rounded-sm"
+                                            >
+                                                <RadioCircle checked={startupProjectMode === "none"} />
+                                                <span className={cn(
+                                                    "text-xs transition-colors",
+                                                    startupProjectMode === "none"
+                                                        ? "font-medium text-foreground"
+                                                        : "text-muted-foreground group-hover:text-foreground"
+                                                )}>
+                                                    None
+                                                </span>
+                                            </div>
+
+                                            {/* Last Used Project */}
+                                            <div
+                                                role="radio"
+                                                aria-checked={startupProjectMode === "last_used"}
+                                                tabIndex={0}
+                                                onClick={() => handleSetStartupMode("last_used")}
+                                                onKeyDown={(e) => (e.key === " " || e.key === "Enter") && handleSetStartupMode("last_used")}
+                                                className="flex items-center gap-3 cursor-pointer group select-none w-fit outline-none focus-visible:ring-1 focus-visible:ring-primary rounded-sm"
+                                            >
+                                                <RadioCircle checked={startupProjectMode === "last_used"} />
+                                                <span className={cn(
+                                                    "text-xs transition-colors",
+                                                    startupProjectMode === "last_used"
+                                                        ? "font-medium text-foreground"
+                                                        : "text-muted-foreground group-hover:text-foreground"
+                                                )}>
+                                                    Last Used Project
+                                                </span>
+                                            </div>
+
+                                            {/* Specific Project */}
+                                            <div className="flex flex-wrap items-center gap-3">
+                                                <div
+                                                    role="radio"
+                                                    aria-checked={startupProjectMode === "specific"}
+                                                    tabIndex={0}
+                                                    onClick={() => handleSetStartupMode("specific")}
+                                                    onKeyDown={(e) => (e.key === " " || e.key === "Enter") && handleSetStartupMode("specific")}
+                                                    className="flex items-center gap-3 cursor-pointer group select-none outline-none focus-visible:ring-1 focus-visible:ring-primary rounded-sm"
+                                                >
+                                                    <RadioCircle checked={startupProjectMode === "specific"} />
+                                                    <span className={cn(
+                                                        "text-xs transition-colors whitespace-nowrap",
+                                                        startupProjectMode === "specific"
+                                                            ? "font-medium text-foreground"
+                                                            : "text-muted-foreground group-hover:text-foreground"
+                                                    )}>
+                                                        Specific Project
+                                                    </span>
+                                                </div>
+
+                                                <div className="w-56">
+                                                    <Select
+                                                        value={startupProjectSpecificId || ""}
+                                                        onValueChange={handleSelectSpecificProject}
+                                                        disabled={availableProjects.length === 0 && nonTemporaryProjects.length === 0}
+                                                    >
+                                                        <SelectTrigger className={cn(
+                                                            "h-8 text-xs bg-muted/20 border-border/60",
+                                                            isSpecificProjectMissing && "border-amber-500/50 text-amber-500"
+                                                        )}>
+                                                            <SelectValue placeholder={
+                                                                isSpecificProjectMissing
+                                                                    ? "Project missing from disk"
+                                                                    : availableProjects.length === 0
+                                                                        ? "No projects available"
+                                                                        : "Select a project"
+                                                            } />
+                                                        </SelectTrigger>
+                                                        <SelectContent>
+                                                            {nonTemporaryProjects.map((p) => {
+                                                                const isMissing = p.exists === false
+                                                                return (
+                                                                    <SelectItem
+                                                                        key={p.id}
+                                                                        value={p.id}
+                                                                        disabled={isMissing}
+                                                                        className="text-xs"
+                                                                    >
+                                                                        <div className="flex items-center gap-2 w-full">
+                                                                            <Folder className={cn(
+                                                                                "w-3.5 h-3.5 shrink-0",
+                                                                                isMissing ? "text-muted-foreground/40" : "text-muted-foreground"
+                                                                            )} />
+                                                                            <span className={cn("truncate", isMissing && "text-muted-foreground line-through")}>
+                                                                                {p.name}
+                                                                            </span>
+                                                                            {isMissing && (
+                                                                                <span className="text-[10px] text-amber-500 ml-auto font-mono shrink-0">
+                                                                                    (Missing)
+                                                                                </span>
+                                                                            )}
+                                                                        </div>
+                                                                    </SelectItem>
+                                                                )
+                                                            })}
+                                                        </SelectContent>
+                                                    </Select>
+                                                </div>
+                                            </div>
+
+                                            {/* Warning if the configured specific project is missing from disk */}
+                                            {isSpecificProjectMissing && (
+                                                <div className="flex items-start gap-2.5 p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400 text-xs">
+                                                    <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                                                    <div className="space-y-0.5">
+                                                        <p className="font-semibold">Selected Project Missing from Disk</p>
+                                                        <p className="text-[11px] text-muted-foreground">
+                                                            The configured default project ({specificProject ? `"${specificProject.name}"` : "ID: " + startupProjectSpecificId}) no longer exists on disk. Please select an available project from the list.
+                                                        </p>
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    {/* Divider */}
+                                    <div className="pt-4 border-t border-border/50">
+                                        <div className="flex items-center justify-between p-4 rounded-lg border border-border/50 bg-muted/10 hover:bg-muted/20 transition-colors">
+                                            <div className="space-y-1 pr-6">
+                                                <Label
+                                                    htmlFor="show-splashscreen-toggle"
+                                                    className="text-xs font-semibold cursor-pointer text-foreground flex items-center gap-2"
+                                                >
+                                                    Show Splash Screen on Startup
+                                                    <Badge variant={showSplashscreen ? "default" : "secondary"} className="text-[10px] h-4 px-1.5 font-mono">
+                                                        {showSplashscreen ? "Enabled" : "Disabled"}
+                                                    </Badge>
+                                                </Label>
+                                                <p className="text-[11px] text-muted-foreground leading-relaxed">
+                                                    Display the animated Aresius splash screen and security initialization sequence when launching the application. Disable this to skip the splash screen and launch directly into your workspace.
+                                                </p>
+                                            </div>
+                                            <Switch
+                                                id="show-splashscreen-toggle"
+                                                checked={showSplashscreen}
+                                                onCheckedChange={handleToggleShowSplashscreen}
+                                            />
+                                        </div>
                                     </div>
                                 </CardContent>
                             </Card>

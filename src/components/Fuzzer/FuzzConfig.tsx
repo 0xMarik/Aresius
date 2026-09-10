@@ -9,7 +9,7 @@ import { PayloadCodeEditor } from "./PayloadCodeEditor";
 import { Checkbox } from "@/components/ui/checkbox";
 import { loadValuesParam, setDelayMs, setNumThreads, setSelectedParameter, selectFuzzerState, persistFuzzerSession, setPipelineScope, addPipelineRule, updatePipelineRule, removePipelineRule, reorderPipelineRules, setPayloadSource, setNumbersConfig, setNullPayloadConfig, setFileConfig, setConnectionKeepAlive, setUpdateContentLength } from "@/store/slices/fuzzerSlice";
 import { FuzzingAttackType, PreprocessingRule, PayloadSource, NumbersPayloadConfig, NullPayloadConfig, FilePayloadConfig } from "@/types/fuzzer.type";
-import { selectAllProjectFiles, fetchProjectFiles, importProjectFile } from "@/store/slices/filesSlice";
+import { selectAllProjectFiles, fetchProjectFiles } from "@/store/slices/filesSlice";
 import { IconUpload } from "@tabler/icons-react";
 import { EmptyState } from "../ui/empty-state";
 import { ArrowRight, MousePointerClick, Hash, CircleOff, FileText, FolderArchive } from "lucide-react";
@@ -103,35 +103,6 @@ export default function PayloadConfigurator() {
             dispatch(setFileConfig({ paramIndex, config: cfg, projectId }));
             dispatch(persistFuzzerSession(projectId, activeSessionIndex));
         }
-    };
-
-    const handleFuzzerFileImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
-        if (!file || paramIndex === -1 || !projectId) return;
-        try {
-            const text = await file.text();
-            const actionResult = await dispatch(
-                importProjectFile({
-                    projectId,
-                    name: file.name,
-                    content: text,
-                    path: (file as any).path || '',
-                })
-            ).unwrap();
-            if (actionResult.file) {
-                const cfg: FilePayloadConfig = {
-                    fileId: actionResult.file.id,
-                    fileName: actionResult.file.name,
-                    lineCount: Number(actionResult.file.lineCount),
-                    sizeBytes: Number(actionResult.file.sizeBytes),
-                };
-                dispatch(setFileConfig({ paramIndex, config: cfg, projectId }));
-                dispatch(persistFuzzerSession(projectId, activeSessionIndex));
-            }
-        } catch (err) {
-            console.error("Failed to import file in fuzzer:", err);
-        }
-        e.target.value = '';
     };
 
     const handlePayloadSourceChange = (newSource: PayloadSource) => {
@@ -464,48 +435,10 @@ export default function PayloadConfigurator() {
                                 </Select>
                             ) : (
                                 <div className="text-xs text-muted-foreground bg-muted/40 p-2 rounded border">
-                                    No files imported in this workspace yet. You can import one below or visit the Files page.
+                                    No files imported in this workspace yet. You can import files in the Files page.
                                 </div>
                             )}
                         </div>
-
-                        {selectedParam.fileConfig && (
-                            <div className="rounded border bg-background/50 p-2 space-y-1 text-xs font-mono">
-                                <div className="flex justify-between text-muted-foreground text-[11px]">
-                                    <span>Selected File:</span>
-                                    <span className="text-foreground font-semibold">{selectedParam.fileConfig.fileName}</span>
-                                </div>
-                                <div className="flex justify-between text-muted-foreground text-[11px]">
-                                    <span>Total Lines (Payloads):</span>
-                                    <span className="text-foreground">{selectedParam.fileConfig.lineCount.toLocaleString()}</span>
-                                </div>
-                                <div className="flex justify-between text-muted-foreground text-[11px]">
-                                    <span>File Size:</span>
-                                    <span className="text-foreground">{(selectedParam.fileConfig.sizeBytes / 1024).toFixed(1)} KB</span>
-                                </div>
-                            </div>
-                        )}
-
-                        <div className="flex gap-2 w-full pt-1">
-                            <label
-                                htmlFor="fuzzer-quick-file-import"
-                                className="inline-flex items-center justify-center rounded-md text-xs font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 border border-input bg-background hover:bg-accent hover:text-accent-foreground h-8 px-3 cursor-pointer w-full"
-                            >
-                                <IconUpload className="mr-1.5 w-3.5 h-3.5" />
-                                Import New File into Workspace
-                            </label>
-                            <input
-                                id="fuzzer-quick-file-import"
-                                type="file"
-                                accept=".txt,.csv,.lst,.wordlist"
-                                onChange={handleFuzzerFileImport}
-                                className="hidden"
-                            />
-                        </div>
-
-                        <p className="text-[11px] text-muted-foreground">
-                            Payloads are loaded directly by the backend engine during fuzzing without slowing down the UI.
-                        </p>
                     </div>
                 ) : (
                     <div className="space-y-2">

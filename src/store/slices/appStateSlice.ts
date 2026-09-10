@@ -3,6 +3,7 @@ import {
   defaultAppState,
   defaultFuzzerSettings,
   FuzzerSettings,
+  StartupProjectMode,
 } from '@/types/settings.type';
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 import { invoke } from '@tauri-apps/api/core';
@@ -63,6 +64,19 @@ const appStateSlice = createSlice({
     setShowSplashscreen(state, action: PayloadAction<boolean>) {
       state.showSplashscreen = action.payload;
     },
+    setStartupProjectMode(state, action: PayloadAction<StartupProjectMode>) {
+      state.startupProjectMode = action.payload;
+    },
+    setStartupProjectSpecificId(state, action: PayloadAction<string | null>) {
+      state.startupProjectSpecificId = action.payload;
+    },
+    setStartupProjectSettings(
+      state,
+      action: PayloadAction<{ mode: StartupProjectMode; specificId: string | null }>,
+    ) {
+      state.startupProjectMode = action.payload.mode;
+      state.startupProjectSpecificId = action.payload.specificId;
+    },
     setFuzzerSettings(state, action: PayloadAction<FuzzerSettings>) {
       state.fuzzerSettings = action.payload;
     },
@@ -75,6 +89,8 @@ const appStateSlice = createSlice({
         ...action.payload,
         fontSizeScale: scale,
         showSplashscreen: action.payload.showSplashscreen ?? true,
+        startupProjectMode: action.payload.startupProjectMode ?? 'last_used',
+        startupProjectSpecificId: action.payload.startupProjectSpecificId ?? null,
       };
     },
   },
@@ -89,6 +105,9 @@ export const {
   decreaseFontSize,
   resetFontSize,
   setShowSplashscreen,
+  setStartupProjectMode,
+  setStartupProjectSpecificId,
+  setStartupProjectSettings,
   setFuzzerSettings,
   hydrateAppState,
 } = appStateSlice.actions;

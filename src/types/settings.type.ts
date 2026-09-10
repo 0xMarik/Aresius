@@ -1,9 +1,13 @@
+export type StartupProjectMode = 'none' | 'last_used' | 'specific';
+
 export interface AppState {
     sidebarCollapsed: boolean;
     activeProjectId: string | null;
     lastPage: string;
     fontSizeScale?: number;
     showSplashscreen?: boolean;
+    startupProjectMode?: StartupProjectMode;
+    startupProjectSpecificId?: string | null;
 }
 
 export interface ProxySettings {
@@ -28,6 +32,8 @@ export const defaultAppState: AppState = {
     lastPage: '/projects',
     fontSizeScale: 1.0,
     showSplashscreen: true,
+    startupProjectMode: 'last_used',
+    startupProjectSpecificId: null,
 };
 
 export const defaultProxySettings: ProxySettings = {

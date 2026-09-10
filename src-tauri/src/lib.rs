@@ -26,7 +26,7 @@ use crate::ares_utils::database::projects_catalog::{
 use crate::ares_utils::database::settings::{
     export_settings, get_app_state, get_fuzzer_settings_db, get_proxy_settings_db,
     import_settings, save_app_state, save_fuzzer_settings_db, save_proxy_settings_db,
-    set_show_splashscreen,
+    set_show_splashscreen, set_startup_project_mode,
 };
 use crate::ares_utils::database::DbState;
 use crate::commands::{cancel_replayer_request, replay_request};
@@ -110,6 +110,7 @@ pub fn run() {
             get_app_state,
             save_app_state,
             set_show_splashscreen,
+            set_startup_project_mode,
             get_proxy_settings_db,
             save_proxy_settings_db,
             get_fuzzer_settings_db,

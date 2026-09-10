@@ -95,6 +95,8 @@ function AppInner() {
                 lastPage: s.appState.lastPage,
                 fontSizeScale: s.appState.fontSizeScale,
                 showSplashscreen: s.appState.showSplashscreen ?? true,
+                startupProjectMode: s.appState.startupProjectMode ?? 'last_used',
+                startupProjectSpecificId: s.appState.startupProjectSpecificId ?? null,
                 ...partial,
             });
         }, 400);
@@ -142,43 +144,81 @@ function AppInner() {
                 console.warn("Failed to load fuzzer settings:", err);
             }
 
-            // 3. Restore active project (if the file still exists on disk)
-            if (saved?.activeProjectId) {
-                const projectStillExists = projects.some(p => p.id === saved!.activeProjectId && p.exists !== false);
+            // 3. Restore active project based on startup preferences
+            const startupMode = saved?.startupProjectMode ?? 'last_used';
+            let targetProjectId: string | null = null;
+
+            if (startupMode === 'last_used') {
+                targetProjectId = saved?.activeProjectId ?? null;
+            } else if (startupMode === 'specific') {
+                targetProjectId = saved?.startupProjectSpecificId ?? null;
+            } else if (startupMode === 'none') {
+                targetProjectId = null;
+            }
+
+            let projectRestored = false;
+
+            if (targetProjectId) {
+                const matchedProject = projects.find(p => p.id === targetProjectId);
+                const projectStillExists = matchedProject && matchedProject.exists !== false;
+
                 if (projectStillExists) {
                     try {
-                        const updated = await invoke<Project>("select_project", { id: saved.activeProjectId });
-                        dispatch(setcurrentProjectId(saved.activeProjectId));
+                        const updated = await invoke<Project>("select_project", { id: targetProjectId });
+                        dispatch(setcurrentProjectId(targetProjectId));
                         dispatch(updateProject(updated));
 
                         // Pre-load ancillary data
                         try {
                             const summaries = await invoke<HttpHistorySummaryRow[]>(
-                                "get_http_history_summaries", { projectId: saved.activeProjectId }
+                                "get_http_history_summaries", { projectId: targetProjectId }
                             );
-                            dispatch(setSiteMapBulk({ items: summaries, projectId: saved.activeProjectId }));
+                            dispatch(setSiteMapBulk({ items: summaries, projectId: targetProjectId }));
                         } catch { /* best-effort */ }
 
-                        try { dispatch(fetchScopeDataForProject(saved.activeProjectId) as any); } catch { }
-                        try { dispatch(fetchSitemapStateForProject(saved.activeProjectId) as any); } catch { }
-                        try { dispatch(fetchMatchReplaceDataForProject(saved.activeProjectId) as any); } catch { }
+                        try { dispatch(fetchScopeDataForProject(targetProjectId) as any); } catch { }
+                        try { dispatch(fetchSitemapStateForProject(targetProjectId) as any); } catch { }
+                        try { dispatch(fetchMatchReplaceDataForProject(targetProjectId) as any); } catch { }
+                        projectRestored = true;
                     } catch (err) {
-                        // File missing or corrupt — silently clear the saved project id
-                        console.warn("Could not restore last active project:", err);
+                        console.warn("Could not restore startup project:", err);
+                        projectRestored = false;
+                    }
+                }
+
+                // If target project was specified but couldn't be opened (deleted from disk or corrupted)
+                if (!projectRestored) {
+                    if (startupMode === 'specific') {
+                        toast.warning(
+                            "Startup project could not be opened because the file was moved or deleted from disk. Redirected to projects.",
+                            { id: "startup-project-missing", duration: 6000 }
+                        );
+                    } else if (startupMode === 'last_used' && saved) {
+                        // Silently clear stale activeProjectId so next launch doesn't attempt to load ghost project
                         persistAppState({
                             sidebarCollapsed: saved.sidebarCollapsed,
                             activeProjectId: null,
                             lastPage: saved.lastPage,
                             fontSizeScale: saved.fontSizeScale,
                             showSplashscreen: saved.showSplashscreen ?? true,
+                            startupProjectMode: saved.startupProjectMode ?? 'last_used',
+                            startupProjectSpecificId: saved.startupProjectSpecificId ?? null,
                         });
                     }
                 }
             }
 
-            // 4. Navigate to last page
-            if (saved?.lastPage && saved.lastPage !== "/") {
+            // 4. Navigate to last page or fallback to projects if no project restored
+            const publicRoutes = ["/projects", "/settings", "/"];
+            if (projectRestored && saved?.lastPage && saved.lastPage !== "/") {
                 navigate(saved.lastPage, { replace: true });
+            } else if (!projectRestored) {
+                // If no project is active, only allow public routes (e.g. /settings), otherwise navigate to /projects
+                if (saved?.lastPage && publicRoutes.includes(saved.lastPage) && saved.lastPage !== "/") {
+                    navigate(saved.lastPage, { replace: true });
+                } else {
+                    navigate("/projects", { replace: true });
+                }
             }
         };
 

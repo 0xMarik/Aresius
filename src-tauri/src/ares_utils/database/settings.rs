@@ -30,6 +30,10 @@ fn default_show_splashscreen() -> bool {
     true
 }
 
+fn default_startup_project_mode() -> String {
+    "last_used".to_string()
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppState {
@@ -39,6 +43,9 @@ pub struct AppState {
     pub font_size_scale: Option<f64>,
     #[serde(default = "default_show_splashscreen")]
     pub show_splashscreen: bool,
+    #[serde(default = "default_startup_project_mode")]
+    pub startup_project_mode: String,
+    pub startup_project_specific_id: Option<String>,
 }
 
 impl Default for AppState {
@@ -49,6 +56,8 @@ impl Default for AppState {
             last_page: "/projects".to_string(),
             font_size_scale: None,
             show_splashscreen: true,
+            startup_project_mode: "last_used".to_string(),
+            startup_project_specific_id: None,
         }
     }
 }
@@ -201,7 +210,7 @@ pub async fn save_fuzzer_settings_internal(pool: &SqlitePool, settings: &FuzzerS
 
 pub async fn get_app_state_internal(pool: &SqlitePool) -> Result<AppState, String> {
     let rows: Vec<(String, Option<String>)> =
-        sqlx::query_as("SELECT key, value FROM global_settings WHERE key IN ('sidebar_collapsed', 'active_project_id', 'last_page', 'font_size_scale', 'show_splashscreen')")
+        sqlx::query_as("SELECT key, value FROM global_settings WHERE key IN ('sidebar_collapsed', 'active_project_id', 'last_page', 'font_size_scale', 'show_splashscreen', 'startup_project_mode', 'startup_project_specific_id')")
             .fetch_all(pool)
             .await
             .map_err(|e| e.to_string())?;
@@ -211,6 +220,8 @@ pub async fn get_app_state_internal(pool: &SqlitePool) -> Result<AppState, Strin
     let mut last_page = "/projects".to_string();
     let mut font_size_scale: Option<f64> = None;
     let mut show_splashscreen = true;
+    let mut startup_project_mode = "last_used".to_string();
+    let mut startup_project_specific_id: Option<String> = None;
 
     for (key, value) in rows {
         match key.as_str() {
@@ -237,6 +248,16 @@ pub async fn get_app_state_internal(pool: &SqlitePool) -> Result<AppState, Strin
                     show_splashscreen = v != "false";
                 }
             }
+            "startup_project_mode" => {
+                if let Some(v) = value {
+                    if !v.is_empty() {
+                        startup_project_mode = v;
+                    }
+                }
+            }
+            "startup_project_specific_id" => {
+                startup_project_specific_id = value.filter(|v| !v.is_empty());
+            }
             _ => {}
         }
     }
@@ -247,6 +268,8 @@ pub async fn get_app_state_internal(pool: &SqlitePool) -> Result<AppState, Strin
         last_page,
         font_size_scale,
         show_splashscreen,
+        startup_project_mode,
+        startup_project_specific_id,
     })
 }
 
@@ -306,6 +329,26 @@ pub async fn save_app_state_internal(pool: &SqlitePool, state: &AppState) -> Res
     .await
     .map_err(|e| e.to_string())?;
 
+    sqlx::query(
+        "INSERT INTO global_settings (key, value) VALUES (?, ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    )
+    .bind("startup_project_mode")
+    .bind(&state.startup_project_mode)
+    .execute(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    sqlx::query(
+        "INSERT INTO global_settings (key, value) VALUES (?, ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    )
+    .bind("startup_project_specific_id")
+    .bind(&state.startup_project_specific_id)
+    .execute(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
     Ok(())
 }
 
@@ -319,6 +362,32 @@ pub async fn set_show_splashscreen_internal(pool: &SqlitePool, show: bool) -> Re
     .execute(pool)
     .await
     .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub async fn set_startup_project_mode_internal(
+    pool: &SqlitePool,
+    mode: &str,
+    specific_id: Option<&str>,
+) -> Result<(), String> {
+    sqlx::query(
+        "INSERT INTO global_settings (key, value) VALUES ('startup_project_mode', ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    )
+    .bind(mode)
+    .execute(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    sqlx::query(
+        "INSERT INTO global_settings (key, value) VALUES ('startup_project_specific_id', ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    )
+    .bind(specific_id)
+    .execute(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
     Ok(())
 }
 
@@ -347,6 +416,15 @@ pub async fn set_show_splashscreen(
     settings_state: tauri::State<'_, SettingsState>,
 ) -> Result<(), String> {
     set_show_splashscreen_internal(settings_state.pool(), show).await
+}
+
+#[tauri::command]
+pub async fn set_startup_project_mode(
+    mode: String,
+    specific_id: Option<String>,
+    settings_state: tauri::State<'_, SettingsState>,
+) -> Result<(), String> {
+    set_startup_project_mode_internal(settings_state.pool(), &mode, specific_id.as_deref()).await
 }
 
 #[tauri::command]
