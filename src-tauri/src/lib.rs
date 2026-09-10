@@ -86,6 +86,9 @@ use crate::commands::logs::{
     clear_memory_logs, get_log_settings, get_recent_logs, open_log_directory, set_custom_log_filter,
     set_log_level,
 };
+use crate::commands::websocket::{
+    clear_stream_messages, clear_ws_history, delete_ws_message, get_ws_messages, get_ws_streams,
+};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -239,6 +242,12 @@ pub fn run() {
             create_project_file_db,
             delete_project_file_db,
             rename_project_file_db,
+            // WebSocket History
+            get_ws_streams,
+            get_ws_messages,
+            clear_ws_history,
+            delete_ws_message,
+            clear_stream_messages,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

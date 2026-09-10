@@ -14,6 +14,7 @@ import {
   ArrowLeftRight,
   ListFilter,
   FolderArchive,
+  Cable,
 } from "lucide-react"
 
 // import { NavMain } from '@/components/nav-main'
@@ -157,6 +158,10 @@ const data = {
     name: "HTTP History",
     url: "/http-history",
     icon: Logs,
+  }, {
+    name: "WS History",
+    url: "/ws-history",
+    icon: Cable,
   }, {
     name: "Match & Replace",
     url: "/match-replace",

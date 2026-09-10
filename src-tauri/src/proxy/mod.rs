@@ -22,6 +22,7 @@ use uuid::Uuid;
 pub mod interceptor;
 pub mod match_replace;
 pub mod utils;
+pub mod websocket;
 
 use crate::ares_utils::database::settings::{
     get_proxy_settings_internal, save_proxy_settings_internal, ProxySettings, SettingsState,
@@ -579,6 +580,10 @@ async fn handle_connect(
         }
 
         let current_req_str = String::from_utf8_lossy(&outgoing_request_bytes).to_string();
+        let is_ws_upgrade_req = {
+            let lower = current_req_str.to_ascii_lowercase();
+            lower.contains("upgrade: websocket") || (lower.contains("upgrade:") && lower.contains("websocket"))
+        };
         let req_eval_ctx = InterceptEvalContext {
             method: &req_meta_init.method,
             host: &target,
@@ -716,6 +721,8 @@ async fn handle_connect(
         outgoing_response_bytes.extend_from_slice(&response.body);
 
         let req_meta = parse_request_line(&outgoing_request_bytes);
+        let req_path = req_meta.path.clone();
+        let response_status = parse_status_code(&response.headers);
         let is_res_in_scope = intercept_state.is_url_in_scope(&target, &req_meta.path).await;
 
         let has_body_mr = match_replace_engine.has_response_body_rules(is_res_in_scope).await;
@@ -1051,6 +1058,60 @@ async fn handle_connect(
                 }
             });
         }
+
+        if is_ws_upgrade_req && response_status == 101 {
+            let project_id = {
+                let db_state: tauri::State<DbState> = app_handle.state();
+                db_state.get_active_id().await.unwrap_or_default()
+            };
+            let destination = format!("wss://{}", target);
+            let path = req_path;
+            let ws_stream_id = {
+                let db_state: tauri::State<DbState> = app_handle.state();
+                if let Ok(pool) = db_state.pool().await {
+                    crate::ares_utils::database::ws_history::save_ws_stream(
+                        &pool,
+                        &project_id,
+                        &destination,
+                        &path,
+                        true,
+                        sent_at_ms as i64,
+                    )
+                    .await
+                    .unwrap_or(0)
+                } else {
+                    0
+                }
+            };
+
+            app_handle
+                .emit(
+                    "ws_stream_created",
+                    crate::proxy::websocket::WsStreamCreatedPayload {
+                        id: ws_stream_id,
+                        project_id: project_id.clone(),
+                        destination,
+                        path,
+                        is_tls: true,
+                        created_at: sent_at_ms as i64,
+                        status: "open".to_string(),
+                        message_count: 0,
+                    },
+                )
+                .ok();
+
+            if let Some(conn) = upstream.take() {
+                let upstream_conn = conn.into_connection();
+                tokio::spawn(crate::proxy::websocket::handle_websocket_tunnel(
+                    app_handle.clone(),
+                    ws_stream_id,
+                    project_id,
+                    client_tls,
+                    upstream_conn,
+                ));
+                return Ok(());
+            }
+        }
     }
 
     client_tls.shutdown().await.ok();
@@ -1157,6 +1218,10 @@ async fn handle_http_request(
         }
 
         let current_req_str = String::from_utf8_lossy(&outgoing_request_bytes).to_string();
+        let is_ws_upgrade_req = {
+            let lower = current_req_str.to_ascii_lowercase();
+            lower.contains("upgrade: websocket") || (lower.contains("upgrade:") && lower.contains("websocket"))
+        };
         let req_eval_ctx = InterceptEvalContext {
             method: &req_meta_init.method,
             host: &target,
@@ -1282,6 +1347,8 @@ async fn handle_http_request(
         outgoing_response_bytes.extend_from_slice(&response.body);
 
         let req_meta = parse_request_line(&outgoing_request_bytes);
+        let req_path = req_meta.path.clone();
+        let response_status = parse_status_code(&response.headers);
         let is_res_in_scope = intercept_state.is_url_in_scope(&target, &req_meta.path).await;
 
         let has_body_mr = match_replace_engine.has_response_body_rules(is_res_in_scope).await;
@@ -1619,6 +1686,60 @@ async fn handle_http_request(
                     }
                 }
             });
+        }
+
+        if is_ws_upgrade_req && response_status == 101 {
+            let project_id = {
+                let db_state: tauri::State<DbState> = app_handle.state();
+                db_state.get_active_id().await.unwrap_or_default()
+            };
+            let destination = format!("ws://{}", target);
+            let path = req_path;
+            let ws_stream_id = {
+                let db_state: tauri::State<DbState> = app_handle.state();
+                if let Ok(pool) = db_state.pool().await {
+                    crate::ares_utils::database::ws_history::save_ws_stream(
+                        &pool,
+                        &project_id,
+                        &destination,
+                        &path,
+                        false,
+                        sent_at_ms as i64,
+                    )
+                    .await
+                    .unwrap_or(0)
+                } else {
+                    0
+                }
+            };
+
+            app_handle
+                .emit(
+                    "ws_stream_created",
+                    crate::proxy::websocket::WsStreamCreatedPayload {
+                        id: ws_stream_id,
+                        project_id: project_id.clone(),
+                        destination,
+                        path,
+                        is_tls: false,
+                        created_at: sent_at_ms as i64,
+                        status: "open".to_string(),
+                        message_count: 0,
+                    },
+                )
+                .ok();
+
+            if let Some(conn) = upstream.take() {
+                let upstream_conn = conn.into_connection();
+                tokio::spawn(crate::proxy::websocket::handle_websocket_tunnel(
+                    app_handle.clone(),
+                    ws_stream_id,
+                    project_id,
+                    client_stream,
+                    upstream_conn,
+                ));
+                return Ok(());
+            }
         }
     }
     Ok(())

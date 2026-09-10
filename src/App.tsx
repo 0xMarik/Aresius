@@ -50,6 +50,9 @@ import MatchAndReplace from "./pages/match-replace/MatchAndReplace.page";
 import FiltersPage from "./pages/filters/Filters.page";
 import SettingsPage from "./pages/settings/Settings.page";
 import FilesPage from "./pages/files/Files.page";
+import WsHistoryPage from "./pages/ws-history/WsHistory.page";
+import { onWsStreamCreated, onWsStreamClosed, onWsMessageReceived } from "./store/slices/wsHistorySlice";
+import { WsStream, WsMessage, WsStreamClosedEvent } from "./types/ws.type";
 
 interface ReqRes {
     request: string;
@@ -268,6 +271,33 @@ function AppInner() {
         return () => { unlisten.then((f) => f()); };
     }, []);
 
+    useEffect(() => {
+        const unlistenStreamCreated = listen<WsStream>("ws_stream_created", (event) => {
+            const projectId = store.getState().workspacestate.currentProjectId;
+            if (projectId) {
+                dispatch(onWsStreamCreated({ projectId, stream: event.payload }));
+            }
+        });
+        const unlistenStreamClosed = listen<WsStreamClosedEvent>("ws_stream_closed", (event) => {
+            const projectId = store.getState().workspacestate.currentProjectId;
+            if (projectId) {
+                dispatch(onWsStreamClosed({ projectId, event: event.payload }));
+            }
+        });
+        const unlistenMessage = listen<WsMessage>("ws_message_received", (event) => {
+            const projectId = store.getState().workspacestate.currentProjectId;
+            if (projectId) {
+                dispatch(onWsMessageReceived({ projectId, message: event.payload }));
+            }
+        });
+
+        return () => {
+            unlistenStreamCreated.then((f) => f());
+            unlistenStreamClosed.then((f) => f());
+            unlistenMessage.then((f) => f());
+        };
+    }, [dispatch]);
+
     // ------------------------------------------------------------------
     // Global Keyboard Shortcuts (Zoom / Font Size)
     // ------------------------------------------------------------------
@@ -364,6 +394,7 @@ function AppInner() {
                             <Route path="/interceptor" element={<Interceptor />} />
                             <Route path="/replayer" element={<Replayer />} />
                             <Route path="/http-history" element={<HTTPHisotry />} />
+                            <Route path="/ws-history" element={<WsHistoryPage />} />
                             <Route path="/fuzzer" element={<Fuzzer />} />
                             <Route path="/match-replace" element={<MatchAndReplace />} />
                             <Route path="/filters" element={<FiltersPage />} />

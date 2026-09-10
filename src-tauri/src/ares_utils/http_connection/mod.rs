@@ -22,7 +22,8 @@ use chunked::dechunk_or_fallback;
 use framing::{body_is_complete, locate_header_terminator, parse_response_framing, BodyFraming};
 use std::time::{Duration, Instant};
 use tokio::time::timeout;
-use transport::{connect_stream, Connection};
+use transport::connect_stream;
+pub use transport::Connection;
 
 #[derive(Clone, Debug)]
 pub struct ConnectionOptions {
@@ -126,6 +127,10 @@ impl HttpConnection {
         self.connection =
             connect_stream(&self.host, self.port, self.use_tls, &self.options).await?;
         Ok(())
+    }
+
+    pub fn into_connection(self) -> Connection {
+        self.connection
     }
 
     pub async fn send_request(&mut self, http_request: &[u8]) -> Result<HttpResponse> {

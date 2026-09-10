@@ -11,6 +11,7 @@ import matchReplaceReducer from './slices/matchReplaceSlice'
 import filtersReducer from './slices/filtersSlice'
 import appStateReducer from './slices/appStateSlice'
 import filesReducer from './slices/filesSlice'
+import wsHistoryReducer from './slices/wsHistorySlice'
 
 import { projectDataMiddleware } from './projectDataMiddleware';
 
@@ -38,6 +39,7 @@ const store = configureStore({
     filters: filtersReducer,
     appState: appStateReducer,
     files: filesReducer,
+    wsHistory: wsHistoryReducer,
   },
   middleware: (getDefaultMiddleware) =>
     getDefaultMiddleware({

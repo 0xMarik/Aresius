@@ -116,27 +116,73 @@ async fn connect_tcp(addrs: &[SocketAddr], connect_timeout: Duration) -> Result<
 
 /// A connected socket, either plaintext or wrapped in TLS. Lets the rest of
 /// `HttpConnection` read/write without caring which one it has.
-pub(super) enum Connection {
+pub enum Connection {
     Plain(TcpStream),
     Tls(Box<tokio_rustls::client::TlsStream<TcpStream>>),
 }
 
+impl tokio::io::AsyncRead for Connection {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            Connection::Plain(stream) => std::pin::Pin::new(stream).poll_read(cx, buf),
+            Connection::Tls(stream) => std::pin::Pin::new(stream.as_mut()).poll_read(cx, buf),
+        }
+    }
+}
+
+impl tokio::io::AsyncWrite for Connection {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        match self.get_mut() {
+            Connection::Plain(stream) => std::pin::Pin::new(stream).poll_write(cx, buf),
+            Connection::Tls(stream) => std::pin::Pin::new(stream.as_mut()).poll_write(cx, buf),
+        }
+    }
+
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            Connection::Plain(stream) => std::pin::Pin::new(stream).poll_flush(cx),
+            Connection::Tls(stream) => std::pin::Pin::new(stream.as_mut()).poll_flush(cx),
+        }
+    }
+
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            Connection::Plain(stream) => std::pin::Pin::new(stream).poll_shutdown(cx),
+            Connection::Tls(stream) => std::pin::Pin::new(stream.as_mut()).poll_shutdown(cx),
+        }
+    }
+}
+
 impl Connection {
-    pub(super) async fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
+    pub async fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
         match self {
             Connection::Plain(stream) => stream.write_all(buf).await,
             Connection::Tls(stream) => stream.write_all(buf).await,
         }
     }
 
-    pub(super) async fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+    pub async fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         match self {
             Connection::Plain(stream) => stream.read(buf).await,
             Connection::Tls(stream) => stream.read(buf).await,
         }
     }
 
-    pub(super) async fn shutdown(&mut self) -> std::io::Result<()> {
+    pub async fn shutdown(&mut self) -> std::io::Result<()> {
         match self {
             Connection::Plain(stream) => stream.shutdown().await,
             Connection::Tls(stream) => stream.shutdown().await,

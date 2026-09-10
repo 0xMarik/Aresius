@@ -15,6 +15,7 @@ pub mod replayer;
 pub mod scope;
 pub mod settings;
 pub mod sitemap;
+pub mod ws_history;
 
 /// 4-byte fingerprint written into every Aresius project file.
 /// Spells "ARES" in ASCII when you look at the bytes: 0x41 'A' 0x52 'R' 0x45 'E' 0x53 'S'.
