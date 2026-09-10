@@ -2,13 +2,14 @@ import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 import type { RootState } from "@/store";
 import { deleteProject, setcurrentProjectId, resetProjectData } from "./projectSlice";
 import { invoke } from "@tauri-apps/api/core";
-import { ReplayerHistoryItem, ReplayerFullData } from "@/types/replayer.type";
+import { ReplayerHistoryItem, ReplayerFullData, ReplayerWsMessage } from "@/types/replayer.type";
 
 export interface ReplayerSessionMeta {
     id: string;
     name: string;
     url: string;
     urlIsValid: boolean;
+    sessionType?: 'http' | 'ws';
 }
 
 export interface ReplayerCollectionMeta {
@@ -24,6 +25,7 @@ export interface ReplayerSessionCacheItem {
     urlIsValid: boolean;
     history: ReplayerHistoryItem[];
     selectedHistoryIndex: number | null;
+    sessionType?: 'http' | 'ws';
 }
 
 export interface ActiveSessionDraft {
@@ -33,6 +35,7 @@ export interface ActiveSessionDraft {
     url: string;
     urlIsValid: boolean;
     requestTmp: string;
+    sessionType?: 'http' | 'ws';
 }
 
 export interface ReplayerProjectState {
@@ -45,6 +48,8 @@ export interface ReplayerProjectState {
     sessionCache: Record<string, ReplayerSessionCacheItem>;
     pendingSessions: Record<string, string>; // sessionId -> reqId
     receivedSession: number;
+    activeWsStatus: Record<string, 'disconnected' | 'connecting' | 'connected' | 'closed' | 'error'>;
+    activeWsMessages: Record<string, ReplayerWsMessage[]>;
 }
 
 export const defaultReplayerProjectState = (): ReplayerProjectState => ({
@@ -57,6 +62,8 @@ export const defaultReplayerProjectState = (): ReplayerProjectState => ({
     sessionCache: {},
     pendingSessions: {},
     receivedSession: 0,
+    activeWsStatus: {},
+    activeWsMessages: {},
 });
 
 export type ReplayerStateByProject = Record<string, ReplayerProjectState>;
@@ -306,6 +313,62 @@ const replayerSlice = createSlice({
                 delete state[key];
             }
         },
+
+        setWsStatus: (state, action: PayloadAction<{ projectId: string; sessionId: string; status: 'disconnected' | 'connecting' | 'connected' | 'closed' | 'error' }>) => {
+            const { projectId, sessionId, status } = action.payload;
+            const bucket = getBucket(state, projectId);
+            if (!bucket.activeWsStatus) bucket.activeWsStatus = {};
+            bucket.activeWsStatus[sessionId] = status;
+        },
+
+        addWsMessage: (state, action: PayloadAction<{ projectId: string; sessionId: string; message: ReplayerWsMessage }>) => {
+            const { projectId, sessionId, message } = action.payload;
+            const bucket = getBucket(state, projectId);
+            if (!bucket.activeWsMessages) bucket.activeWsMessages = {};
+            if (!bucket.activeWsMessages[sessionId]) bucket.activeWsMessages[sessionId] = [];
+            bucket.activeWsMessages[sessionId].push(message);
+        },
+
+        setWsMessages: (state, action: PayloadAction<{ projectId: string; sessionId: string; messages: ReplayerWsMessage[] }>) => {
+            const { projectId, sessionId, messages } = action.payload;
+            const bucket = getBucket(state, projectId);
+            if (!bucket.activeWsMessages) bucket.activeWsMessages = {};
+            bucket.activeWsMessages[sessionId] = messages;
+        },
+
+        clearWsMessages: (state, action: PayloadAction<{ projectId: string; sessionId: string }>) => {
+            const { projectId, sessionId } = action.payload;
+            const bucket = getBucket(state, projectId);
+            if (bucket.activeWsMessages) {
+                bucket.activeWsMessages[sessionId] = [];
+            }
+        },
+
+        updateSessionHistoryItemStatus: (state, action: PayloadAction<{
+            projectId: string;
+            sessionId: string;
+            historyId: string;
+            status: string;
+            duration?: number;
+            errorMessage?: string | null;
+        }>) => {
+            const { projectId, sessionId, historyId, status, duration, errorMessage } = action.payload;
+            const bucket = getBucket(state, projectId);
+            const cache = bucket.sessionCache[sessionId];
+            if (cache) {
+                const item = cache.history.find(h => h.id === historyId);
+                if (item) {
+                    item.status = status;
+                    if (duration !== undefined) {
+                        item.responseTime = duration;
+                        item.requestTime = duration;
+                    }
+                    if (errorMessage !== undefined) {
+                        item.errorMessage = errorMessage;
+                    }
+                }
+            }
+        },
     },
     extraReducers: (builder) => {
         // When switching/selecting another project, unmount and delete previous projects from memory
@@ -350,6 +413,11 @@ export const {
     resetReplayerReceivedSession,
     clearReplayerProjectState,
     clearAllReplayerState,
+    setWsStatus,
+    addWsMessage,
+    setWsMessages,
+    clearWsMessages,
+    updateSessionHistoryItemStatus,
 } = replayerSlice.actions;
 
 // ─── Selectors ───────────────────────────────────────────────────────────────
@@ -393,6 +461,20 @@ export const selectReplayerReceivedSession = (projectId: string | null) => (stat
     return state.replayerstate[projectId].receivedSession;
 };
 
+export const selectActiveWsStatus = (projectId: string | null, sessionId: string | null | undefined) => (state: RootState): 'disconnected' | 'connecting' | 'connected' | 'closed' | 'error' => {
+    if (!projectId || !sessionId || !state.replayerstate[projectId]?.activeWsStatus) {
+        return 'disconnected';
+    }
+    return state.replayerstate[projectId].activeWsStatus[sessionId] || 'disconnected';
+};
+
+export const selectActiveWsMessages = (projectId: string | null, sessionId: string | null | undefined) => (state: RootState): ReplayerWsMessage[] => {
+    if (!projectId || !sessionId || !state.replayerstate[projectId]?.activeWsMessages) {
+        return [];
+    }
+    return state.replayerstate[projectId].activeWsMessages[sessionId] || [];
+};
+
 export const fetchReplayerDataForProject = (projectId: string) => async (dispatch: (action: any) => void) => {
     if (!projectId) return;
     dispatch(setReplayerLoading({ projectId, isLoading: true }));
@@ -427,6 +509,7 @@ export const fetchReplayerDataForProject = (projectId: string) => async (dispatc
                     requestTmp: s.requestTmp,
                     url: s.url,
                     urlIsValid: s.urlIsValid,
+                    sessionType: s.sessionType || 'http',
                     history: s.history.map((h) => ({
                         id: h.id,
                         requestRaw: h.requestRaw,
@@ -447,6 +530,7 @@ export const fetchReplayerDataForProject = (projectId: string) => async (dispatc
                     name: s.name,
                     url: s.url,
                     urlIsValid: s.urlIsValid,
+                    sessionType: s.sessionType || 'http',
                 };
             });
 

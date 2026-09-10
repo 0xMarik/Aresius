@@ -1,4 +1,5 @@
 pub mod replayer;
+pub mod replayer_ws;
 pub mod match_replace;
 pub mod logs;
 pub mod websocket;

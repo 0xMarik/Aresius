@@ -16,12 +16,14 @@ import {
     Trash2,
     Layers,
     FileCode2,
+    Cable,
 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import {
     DropdownMenu,
     DropdownMenuContent,
     DropdownMenuItem,
+    DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import {
@@ -94,11 +96,16 @@ const ReplayerSession: React.FC = () => {
         const isExpanded = expandedIds.includes(colId);
 
         const children = collection.sessions.length > 0
-            ? collection.sessions.map((session, sessIndex) => ({
-                id: `sess::${colId}::${session.id}`,
-                label: session.name || `Session ${sessIndex + 1}`,
-                icon: <FileCode2 className="w-3.5 h-3.5 text-muted-foreground/70" />,
-            }))
+            ? collection.sessions.map((session, sessIndex) => {
+                const isWs = session.sessionType === 'ws';
+                return {
+                    id: `sess::${colId}::${session.id}`,
+                    label: session.name || `${isWs ? 'WS Session' : 'Session'} ${sessIndex + 1}`,
+                    icon: isWs
+                        ? <Cable className="w-3.5 h-3.5 text-muted-foreground/70" />
+                        : <FileCode2 className="w-3.5 h-3.5 text-muted-foreground/70" />,
+                };
+            })
             : [{
                 id: `create_sess::${colId}`,
                 label: 'Create a session',
@@ -228,6 +235,9 @@ const ReplayerSession: React.FC = () => {
             createSession(colId);
         };
 
+        const sess = col?.sessions.find(s => s.id === sessId);
+        const isWs = sess?.sessionType === 'ws';
+
         return (
             <div
                 className={cn(
@@ -244,6 +254,8 @@ const ReplayerSession: React.FC = () => {
                             ) : (
                                 <Folder className="w-3.5 h-3.5 text-primary shrink-0" />
                             )
+                        ) : isWs ? (
+                            <Cable className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                         ) : (
                             <FileCode2 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                         )}
@@ -266,6 +278,8 @@ const ReplayerSession: React.FC = () => {
                             ) : (
                                 <Folder className={cn("w-3.5 h-3.5 shrink-0 transition-colors", isCurrentActiveCollection ? "text-primary" : "text-muted-foreground/70")} />
                             )
+                        ) : isWs ? (
+                            <Cable className={cn("w-3.5 h-3.5 shrink-0 transition-colors", isSelectedSession ? "text-primary" : "text-muted-foreground/60")} />
                         ) : (
                             <FileCode2 className={cn("w-3.5 h-3.5 shrink-0 transition-colors", isSelectedSession ? "text-primary" : "text-muted-foreground/60")} />
                         )}
@@ -323,8 +337,18 @@ const ReplayerSession: React.FC = () => {
                                     <MoreHorizontal className="w-3 h-3" />
                                 </button>
                             </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end" className="w-36 text-xs">
-
+                            <DropdownMenuContent align="end" className="w-44 text-xs">
+                                {isCollection && (
+                                    <>
+                                        <DropdownMenuItem onClick={() => createSession(colId, { sessionType: 'http' })}>
+                                            <FileCode2 className="w-3.5 h-3.5 mr-2 text-muted-foreground" /> New HTTP Session
+                                        </DropdownMenuItem>
+                                        <DropdownMenuItem onClick={() => createSession(colId, { sessionType: 'ws' })}>
+                                            <Cable className="w-3.5 h-3.5 mr-2 text-muted-foreground" /> New WebSocket Session
+                                        </DropdownMenuItem>
+                                        <DropdownMenuSeparator />
+                                    </>
+                                )}
                                 <DropdownMenuItem onClick={handleEditClick}>
                                     <Pencil className="w-3.5 h-3.5 mr-2" /> Rename
                                 </DropdownMenuItem>
@@ -379,6 +403,44 @@ const ReplayerSession: React.FC = () => {
                         </Tooltip>
                     </TooltipProvider>
 
+                    <DropdownMenu>
+                        <TooltipProvider delayDuration={200}>
+                            <Tooltip>
+                                <TooltipTrigger asChild>
+                                    <DropdownMenuTrigger asChild>
+                                        <Button
+                                            variant="ghost"
+                                            size="icon"
+                                            className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                                        >
+                                            <Plus className="w-3.5 h-3.5" />
+                                        </Button>
+                                    </DropdownMenuTrigger>
+                                </TooltipTrigger>
+                                <TooltipContent side="bottom" className="text-[11px] py-0.5 px-2">
+                                    New Session
+                                </TooltipContent>
+                            </Tooltip>
+                        </TooltipProvider>
+                        <DropdownMenuContent align="end" className="w-44 text-xs">
+                            <DropdownMenuItem
+                                onClick={() => {
+                                    const targetColId = selectedCollectionId || collections[0]?.id;
+                                    if (targetColId) createSession(targetColId, { sessionType: 'http' });
+                                }}
+                            >
+                                <FileCode2 className="w-3.5 h-3.5 mr-2 text-muted-foreground" /> New HTTP Session
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                                onClick={() => {
+                                    const targetColId = selectedCollectionId || collections[0]?.id;
+                                    if (targetColId) createSession(targetColId, { sessionType: 'ws' });
+                                }}
+                            >
+                                <Cable className="w-3.5 h-3.5 mr-2 text-muted-foreground" /> New WebSocket Session
+                            </DropdownMenuItem>
+                        </DropdownMenuContent>
+                    </DropdownMenu>
                 </div>
             </div>
 

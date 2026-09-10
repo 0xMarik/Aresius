@@ -46,7 +46,7 @@ interface ReplayerTreeContextType {
     toggleExpand: (collectionId: string) => void;
     setExpandedIdsList: (newIds: string[]) => void;
     createCollection: () => Promise<string | null>;
-    createSession: (collectionId: string, initialData?: { name?: string; request?: string; url?: string; urlIsValid?: boolean }) => Promise<void>;
+    createSession: (collectionId: string, initialData?: { name?: string; request?: string; url?: string; urlIsValid?: boolean; sessionType?: 'http' | 'ws' }) => Promise<void>;
     renameCollection: (collectionId: string, name: string) => Promise<void>;
     renameSession: (collectionId: string, sessionId: string, name: string) => Promise<void>;
     deleteCollection: (collectionId: string) => Promise<void>;
@@ -78,6 +78,7 @@ interface ReplayerEditorContextType {
     errorMessage: string | null;
     updateContentLength: boolean;
     forceCloseConnection: boolean;
+    autoScroll: boolean;
     reqViewMode: 'raw' | 'pretty';
     resViewMode: 'raw' | 'pretty';
 
@@ -85,6 +86,7 @@ interface ReplayerEditorContextType {
     setResViewMode: (mode: 'raw' | 'pretty') => void;
     setUpdateContentLength: (val: boolean) => void;
     setForceCloseConnection: (val: boolean) => void;
+    setAutoScroll: (val: boolean) => void;
     updateDraftContent: (requestTmp: string) => void;
     updateDraftUrl: (url: string, urlIsValid: boolean) => void;
     selectHistoryIndex: (index: number) => void;
@@ -152,6 +154,16 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         return saved !== null ? saved === 'true' : true;
     });
 
+    const [autoScroll, setAutoScrollState] = React.useState<boolean>(() => {
+        const saved = localStorage.getItem('aresius_ws_autoscroll');
+        return saved !== null ? saved === 'true' : true;
+    });
+
+    const setAutoScroll = useCallback((val: boolean) => {
+        setAutoScrollState(val);
+        localStorage.setItem('aresius_ws_autoscroll', String(val));
+    }, []);
+
     // Dynamic responseLoading scoped strictly to the currently selected session
     const responseLoading = Boolean(selectedSessionId && pendingSessions[selectedSessionId]);
 
@@ -169,6 +181,7 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             url: activeCache.url,
             urlIsValid: activeCache.urlIsValid,
             requestTmp: activeCache.requestTmp || 'GET / HTTP/1.1\r\n\r\n',
+            sessionType: activeCache.sessionType || activeSessMeta?.sessionType || 'http',
         };
     }, [selectedSessionId, activeCache, activeCol, activeSessMeta]);
 
@@ -250,18 +263,26 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }, [collections.length, dispatch, projectId]);
 
     // Create Session
-    const createSession = useCallback(async (collectionId: string, initialData?: { name?: string; request?: string; url?: string; urlIsValid?: boolean }) => {
+    const createSession = useCallback(async (collectionId: string, initialData?: { name?: string; request?: string; url?: string; urlIsValid?: boolean; sessionType?: 'http' | 'ws' }) => {
         if (!projectId) return;
         const col = collections.find(c => c.id === collectionId);
         if (!col) return;
 
         const newSessId = crypto.randomUUID();
         const sessionCount = col.sessions.length;
-        const name = initialData?.name || `Session ${sessionCount + 1}`;
-        const rawUrl = initialData?.url || 'https://';
-        const url = rawUrl !== 'https://' && rawUrl.trim() && !rawUrl.includes('://') ? `https://${rawUrl}` : rawUrl;
-        const requestTmp = initialData?.request || 'GET / HTTP/1.1\r\n\r\n';
-        const urlIsValid = initialData?.urlIsValid !== undefined ? initialData.urlIsValid : (!url.startsWith('https://') || url.length > 8);
+        const sessionType = initialData?.sessionType || 'http';
+        const isWs = sessionType === 'ws';
+        const defaultName = isWs ? `WS Session ${sessionCount + 1}` : `Session ${sessionCount + 1}`;
+        const name = initialData?.name || defaultName;
+        const rawUrl = initialData?.url || (isWs ? 'wss://' : 'https://');
+        const url = rawUrl !== 'https://' && rawUrl !== 'wss://' && rawUrl.trim() && !rawUrl.includes('://')
+            ? (isWs ? `wss://${rawUrl}` : `https://${rawUrl}`)
+            : rawUrl;
+        const defaultWsReq = 'GET / HTTP/1.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\n\r\n';
+        const requestTmp = initialData?.request || (isWs ? defaultWsReq : 'GET / HTTP/1.1\r\n\r\n');
+        const urlIsValid = initialData?.urlIsValid !== undefined
+            ? initialData.urlIsValid
+            : (isWs ? (url.length > 6 && (url.startsWith('wss://') || url.startsWith('ws://'))) : (!url.startsWith('https://') || url.length > 8));
 
         try {
             await invoke('create_replayer_session', {
@@ -271,18 +292,20 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                 baseUrl: url,
                 requestTmp,
                 sortOrder: sessionCount,
+                sessionType,
             });
 
             dispatch(createSessionSuccess({
                 projectId,
                 collectionId,
-                session: { id: newSessId, name, url, urlIsValid },
+                session: { id: newSessId, name, url, urlIsValid, sessionType },
                 cacheItem: {
                     requestTmp,
                     url,
                     urlIsValid,
                     history: [],
                     selectedHistoryIndex: null,
+                    sessionType,
                 },
             }));
 
@@ -688,6 +711,7 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         errorMessage,
         updateContentLength,
         forceCloseConnection,
+        autoScroll,
         reqViewMode,
         resViewMode,
 
@@ -695,6 +719,7 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         setResViewMode,
         setUpdateContentLength,
         setForceCloseConnection,
+        setAutoScroll,
         updateDraftContent,
         updateDraftUrl,
         selectHistoryIndex,
@@ -714,12 +739,14 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         errorMessage,
         updateContentLength,
         forceCloseConnection,
+        autoScroll,
         reqViewMode,
         resViewMode,
         setReqViewMode,
         setResViewMode,
         setUpdateContentLength,
         setForceCloseConnection,
+        setAutoScroll,
         updateDraftContent,
         updateDraftUrl,
         selectHistoryIndex,

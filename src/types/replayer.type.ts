@@ -18,6 +18,7 @@ export interface ReplayerSession {
     url: string;
     urlIsValid: boolean;
     selectedHistoryIndex: number | null;
+    sessionType?: 'http' | 'ws';
 }
 
 export interface ReplayerCollection {
@@ -26,6 +27,16 @@ export interface ReplayerCollection {
     isExpanded?: boolean;
     sessions: ReplayerSession[];
     selectedSessionIndex: number | null;
+}
+
+export interface ReplayerWsMessage {
+    id: number;
+    historyId: string;
+    direction: 'ClientToServer' | 'ServerToClient';
+    messageType: 'Text' | 'Binary' | 'Ping' | 'Pong' | 'Close';
+    payload: string;
+    payloadLength: number;
+    sentAt: number;
 }
 
 export interface ReplayerFullData {
@@ -50,6 +61,7 @@ export interface ReplayerFullData {
             }>;
             selectedHistoryIndex?: number | null;
             urlIsValid: boolean;
+            sessionType?: 'http' | 'ws';
         }>;
         selectedSessionIndex?: number | null;
     }>;

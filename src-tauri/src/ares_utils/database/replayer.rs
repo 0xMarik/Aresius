@@ -25,6 +25,7 @@ pub struct ReplayerSessionFull {
     pub history: Vec<ReplayerHistoryItemFull>,
     pub selected_history_index: Option<usize>,
     pub url_is_valid: bool,
+    pub session_type: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -50,6 +51,7 @@ pub struct ReplayerFullJoinedRow {
     pub sess_request_tmp: Option<String>,
     pub sess_is_selected: Option<i64>,
     pub sess_selected_history_index: Option<i64>,
+    pub sess_session_type: Option<String>,
 
     pub hist_id: Option<String>,
     pub hist_request_raw: Option<String>,
@@ -91,6 +93,7 @@ pub async fn get_replayer_data(
             s.request_tmp AS sess_request_tmp,
             s.is_selected AS sess_is_selected,
             s.selected_history_index AS sess_selected_history_index,
+            s.session_type AS sess_session_type,
             
             h.id AS hist_id,
             h.request_raw AS hist_request_raw,
@@ -128,7 +131,7 @@ pub async fn get_replayer_data(
         .map_err(|e| e.to_string())?;
 
         sqlx::query(
-            "INSERT INTO replayer_sessions (id, collection_id, name, base_url, request_tmp, sort_order, is_selected) VALUES (?, ?, ?, ?, ?, 0, 1)",
+            "INSERT INTO replayer_sessions (id, collection_id, name, base_url, request_tmp, sort_order, is_selected, session_type) VALUES (?, ?, ?, ?, ?, 0, 1, 'http')",
         )
         .bind(&sess_id)
         .bind(&col_id)
@@ -152,6 +155,7 @@ pub async fn get_replayer_data(
                     history: vec![],
                     selected_history_index: None,
                     url_is_valid: false,
+                    session_type: "http".to_string(),
                 }],
                 selected_session_index: Some(0),
             }],
@@ -203,7 +207,8 @@ pub async fn get_replayer_data(
                         full_collections[col_idx].selected_session_index = Some(s_i);
                     }
                     let base_url = row.sess_base_url.unwrap_or_default();
-                    let url_is_valid = !base_url.is_empty() && base_url != "https://";
+                    let sess_type = row.sess_session_type.unwrap_or_else(|| "http".to_string());
+                    let url_is_valid = !base_url.is_empty() && base_url != "https://" && base_url != "wss://";
 
                     full_collections[col_idx]
                         .sessions
@@ -215,6 +220,7 @@ pub async fn get_replayer_data(
                             history: Vec::new(),
                             selected_history_index: None,
                             url_is_valid,
+                            session_type: sess_type,
                         });
                     sess_index_map.insert(sess_id.clone(), (col_idx, s_i));
                     (col_idx, s_i)
@@ -446,6 +452,7 @@ pub async fn create_replayer_session(
     base_url: String,
     request_tmp: String,
     sort_order: i64,
+    session_type: Option<String>,
 ) -> Result<(), String> {
     let pool = db.pool().await?;
     let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
@@ -464,8 +471,10 @@ pub async fn create_replayer_session(
         .await
         .map_err(|e| e.to_string())?;
 
+    let s_type = session_type.unwrap_or_else(|| "http".to_string());
+
     sqlx::query(
-        "INSERT INTO replayer_sessions (id, collection_id, name, base_url, request_tmp, sort_order, is_selected) VALUES (?, ?, ?, ?, ?, ?, 1)",
+        "INSERT INTO replayer_sessions (id, collection_id, name, base_url, request_tmp, sort_order, is_selected, session_type) VALUES (?, ?, ?, ?, ?, ?, 1, ?)",
     )
     .bind(&session_id)
     .bind(&collection_id)
@@ -473,6 +482,7 @@ pub async fn create_replayer_session(
     .bind(&base_url)
     .bind(&request_tmp)
     .bind(sort_order)
+    .bind(&s_type)
     .execute(&mut *tx)
     .await
     .map_err(|e| e.to_string())?;
@@ -581,5 +591,86 @@ pub async fn add_replayer_history_entry(
     .execute(&pool)
     .await
     .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct ReplayerWsMessageDb {
+    pub id: i64,
+    pub history_id: String,
+    pub direction: String,
+    pub message_type: String,
+    pub payload: String,
+    pub payload_length: i64,
+    pub sent_at: i64,
+}
+
+pub async fn save_replayer_ws_message_record(
+    pool: &sqlx::SqlitePool,
+    history_id: &str,
+    direction: &str,
+    message_type: &str,
+    payload: &str,
+    payload_length: i64,
+    sent_at: i64,
+) -> Result<i64, String> {
+    let res = sqlx::query(
+        r#"
+        INSERT INTO replayer_ws_messages (history_id, direction, message_type, payload, payload_length, sent_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        "#,
+    )
+    .bind(history_id)
+    .bind(direction)
+    .bind(message_type)
+    .bind(payload)
+    .bind(payload_length)
+    .bind(sent_at)
+    .execute(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    Ok(res.last_insert_rowid())
+}
+
+#[tauri::command]
+pub async fn get_replayer_ws_messages(
+    db: tauri::State<'_, DbState>,
+    history_id: String,
+) -> Result<Vec<ReplayerWsMessageDb>, String> {
+    let pool = db.pool().await?;
+    let rows = sqlx::query_as::<_, ReplayerWsMessageDb>(
+        r#"
+        SELECT id, history_id, direction, message_type, payload, payload_length, sent_at
+        FROM replayer_ws_messages
+        WHERE history_id = ?
+        ORDER BY sent_at ASC, id ASC
+        "#,
+    )
+    .bind(&history_id)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    Ok(rows)
+}
+
+pub async fn update_replayer_history_status(
+    pool: &sqlx::SqlitePool,
+    history_id: &str,
+    status: &str,
+    error_message: Option<&str>,
+) -> Result<(), String> {
+    sqlx::query(
+        "UPDATE replayer_history SET status = ?, error_message = ? WHERE id = ?",
+    )
+    .bind(status)
+    .bind(error_message)
+    .bind(history_id)
+    .execute(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
     Ok(())
 }

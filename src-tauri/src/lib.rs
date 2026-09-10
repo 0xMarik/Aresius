@@ -55,9 +55,11 @@ use crate::proxy::{
 use crate::ares_utils::database::replayer::{
     add_replayer_history_entry, create_replayer_collection, create_replayer_session,
     delete_replayer_collection, delete_replayer_session, get_replayer_data,
-    rename_replayer_collection, rename_replayer_session, set_replayer_active_selection,
-    set_replayer_collection_expanded, set_replayer_expanded_ids, update_replayer_session_draft,
+    get_replayer_ws_messages, rename_replayer_collection, rename_replayer_session,
+    set_replayer_active_selection, set_replayer_collection_expanded, set_replayer_expanded_ids,
+    update_replayer_session_draft,
 };
+use crate::commands::replayer_ws::{connect_replayer_ws, disconnect_replayer_ws, send_replayer_ws_message};
 
 use crate::ares_utils::database::scope::{
     add_scope_rule_db, batch_import_scope_rules_db, create_scope_db, delete_scope_db,
@@ -168,6 +170,10 @@ pub fn run() {
             update_replayer_session_draft,
             delete_replayer_session,
             add_replayer_history_entry,
+            get_replayer_ws_messages,
+            connect_replayer_ws,
+            disconnect_replayer_ws,
+            send_replayer_ws_message,
             // Interceptor
             get_intercept_settings,
             set_intercept_settings,

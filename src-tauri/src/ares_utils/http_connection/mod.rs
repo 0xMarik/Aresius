@@ -109,7 +109,9 @@ impl HttpConnection {
 
         let host = url_component.domain;
         let port = url_component.port;
-        let use_tls = !url.starts_with("http://");
+        let use_tls = url.starts_with("https://")
+            || url.starts_with("wss://")
+            || (!url.starts_with("http://") && !url.starts_with("ws://"));
 
         let connection = connect_stream(&host, port, use_tls, &options).await?;
 

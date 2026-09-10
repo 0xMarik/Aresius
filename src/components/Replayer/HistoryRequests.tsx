@@ -37,7 +37,8 @@ function formatHistoryTime(item: ReplayerHistoryItem): string {
 
 const HistoryRequests = () => {
     const [open, setOpen] = useState(false);
-    const { history, selectedHistoryIndex, selectHistoryIndex } = useReplayerEditor();
+    const { history, selectedHistoryIndex, selectHistoryIndex, activeDraft } = useReplayerEditor();
+    const isWs = activeDraft?.sessionType === 'ws';
 
     const goNewer = () => {
         if (selectedHistoryIndex === null || selectedHistoryIndex === 0) return;
@@ -72,27 +73,68 @@ const HistoryRequests = () => {
                         History <ChevronDown className="w-3.5 h-3.5" />
                     </Button>
                 </PopoverTrigger>
-                <PopoverContent className="w-[620px] p-0" align="start">
+                <PopoverContent className={isWs ? "w-[480px] p-0" : "w-[620px] p-0"} align="start">
                     <div className="max-h-80 overflow-auto">
                         <Table>
                             <TableHeader className="sticky top-0 bg-muted">
-                                <TableRow>
-                                    <TableHead>Status</TableHead>
-                                    <TableHead>Method</TableHead>
-                                    <TableHead>Base Url</TableHead>
-                                    <TableHead>Path</TableHead>
-                                    <TableHead>Time</TableHead>
-                                </TableRow>
+                                {isWs ? (
+                                    <TableRow>
+                                        <TableHead>Status</TableHead>
+                                        <TableHead>Target URL</TableHead>
+                                        <TableHead>Time</TableHead>
+                                    </TableRow>
+                                ) : (
+                                    <TableRow>
+                                        <TableHead>Status</TableHead>
+                                        <TableHead>Method</TableHead>
+                                        <TableHead>Base Url</TableHead>
+                                        <TableHead>Path</TableHead>
+                                        <TableHead>Time</TableHead>
+                                    </TableRow>
+                                )}
                             </TableHeader>
                             <TableBody>
                                 {history.length === 0 && (
                                     <TableRow>
-                                        <TableCell colSpan={5} className="text-center text-muted-foreground">
-                                            No requests replayed yet
+                                        <TableCell colSpan={isWs ? 3 : 5} className="text-center text-muted-foreground py-4 text-xs">
+                                            {isWs ? "No WebSocket connections yet" : "No requests replayed yet"}
                                         </TableCell>
                                     </TableRow>
                                 )}
                                 {history.map((item, index) => {
+                                    if (isWs) {
+                                        const status = item.status || 'Closed';
+                                        const is101 = status.includes('101') || status.toLowerCase().includes('connected');
+                                        const isClosed = status.toLowerCase().includes('closed');
+                                        return (
+                                            <TableRow
+                                                key={item.id ?? index}
+                                                onClick={() => handleSelect(index)}
+                                                className={`cursor-pointer ${selectedHistoryIndex === index ? 'bg-muted' : ''}`}
+                                            >
+                                                <TableCell className="py-1">
+                                                    <span
+                                                        className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono font-medium ${
+                                                            is101
+                                                                ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/30'
+                                                                : isClosed
+                                                                ? 'bg-muted text-muted-foreground border border-border/40'
+                                                                : 'bg-rose-500/10 text-rose-500 border border-rose-500/30'
+                                                        }`}
+                                                    >
+                                                        {status}
+                                                    </span>
+                                                </TableCell>
+                                                <TableCell className="text-xs truncate max-w-[280px] font-mono" title={item.baseUrl}>
+                                                    {item.baseUrl || '—'}
+                                                </TableCell>
+                                                <TableCell className="whitespace-nowrap text-xs text-muted-foreground font-mono">
+                                                    {formatHistoryTime(item)}
+                                                </TableCell>
+                                            </TableRow>
+                                        );
+                                    }
+
                                     const req = parseRequest(item.requestRaw);
                                     const parsedRes = item.responseRaw ? parseResponse(item.responseRaw) : null;
                                     const status = item.status || (parsedRes?.statusCode ? String(parsedRes.statusCode) : '');
