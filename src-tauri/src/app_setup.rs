@@ -1,4 +1,5 @@
-use tauri::Manager;
+use std::sync::atomic::{AtomicBool, Ordering};
+use tauri::{Emitter, Manager};
 
 use crate::ares_utils::database::projects_catalog::{catalog_db_path, CatalogState};
 use crate::ares_utils::database::settings::{
@@ -6,6 +7,16 @@ use crate::ares_utils::database::settings::{
 };
 use crate::ares_utils::database::{open_project_db, DatabaseType};
 use crate::ares_utils::shutdown_gracefully;
+
+static EXITING: AtomicBool = AtomicBool::new(false);
+
+pub fn set_exiting(val: bool) {
+    EXITING.store(val, Ordering::SeqCst);
+}
+
+pub fn is_exiting() -> bool {
+    EXITING.load(Ordering::SeqCst)
+}
 
 #[tauri::command]
 pub async fn close_splashscreen(app: tauri::AppHandle) -> Result<(), String> {
@@ -87,16 +98,38 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Hook into the close event for a graceful shutdown.
+    // Hook into the close event for a graceful shutdown or temporary project confirmation.
     if let Some(window) = app.get_webview_window("main") {
         let app_handle = app.handle().clone();
         window.on_window_event(move |event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if is_exiting() {
+                    return;
+                }
                 api.prevent_close();
                 let app_handle = app_handle.clone();
                 tauri::async_runtime::spawn(async move {
-                    shutdown_gracefully(&app_handle).await;
-                    app_handle.exit(0);
+                    let db = app_handle.state::<crate::ares_utils::database::DbState>();
+                    let catalog = app_handle.state::<CatalogState>();
+
+                    let is_temp = if let Some(active_id) = db.get_active_id().await {
+                        let row: Option<(bool,)> = sqlx::query_as("SELECT temporary FROM project_catalog WHERE id = ?")
+                            .bind(&active_id)
+                            .fetch_optional(catalog.pool())
+                            .await
+                            .unwrap_or(None);
+                        row.map(|(t,)| t).unwrap_or(false)
+                    } else {
+                        false
+                    };
+
+                    if is_temp {
+                        let _ = app_handle.emit("temp-project-close-requested", ());
+                    } else {
+                        set_exiting(true);
+                        shutdown_gracefully(&app_handle).await;
+                        app_handle.exit(0);
+                    }
                 });
             }
         });

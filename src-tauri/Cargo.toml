@@ -51,3 +51,5 @@ sha1 = "0.10"
 x509-parser = "0.17"
 p12 = "0.6.3"
 rfd = "0.15"
+tokio-tungstenite = { version = "0.26", default-features = false, features = ["connect"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink"] }

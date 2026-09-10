@@ -15,6 +15,7 @@ import { toast } from "sonner";
 import { addToHttpHistory } from "./store/slices/http-historySlice";
 import { useInterceptPoller } from "./hooks/useInterceptPoller";
 import MenubarDemo from "./components/MenuBar";
+import TempProjectExitDialog from "./components/TempProjectExitDialog";
 import { updateFuzzProgress } from "./store/slices/fuzzerSlice";
 import { updateSiteMap } from "./store/slices/sitemapSlice";
 import { HttpHistory } from "./types/http.type";
@@ -340,6 +341,7 @@ function AppInner() {
     return (
         <div className="flex flex-col h-screen w-full overflow-hidden">
             <MenubarDemo />
+            <TempProjectExitDialog />
             <div className="flex-1 min-h-0 relative">
                 <SidebarProvider
                     className="h-full min-h-0"

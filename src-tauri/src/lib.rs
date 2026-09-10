@@ -19,8 +19,8 @@ use crate::ares_utils::database::http_history::{
 };
 use crate::ares_utils::database::projects::create_project;
 use crate::ares_utils::database::projects_catalog::{
-    delete_project, get_default_project_dir, list_projects,
-    open_project_file, relocate_project, select_project,
+    delete_project, exit_app, get_default_project_dir, list_projects,
+    open_project_file, relocate_project, save_temporary_project, select_project,
     update_project_details,
 };
 use crate::ares_utils::database::settings::{
@@ -192,6 +192,8 @@ pub fn run() {
             relocate_project,
             update_project_details,
             delete_project,
+            save_temporary_project,
+            exit_app,
             get_default_project_dir,
             // HTTP History
             get_http_history,

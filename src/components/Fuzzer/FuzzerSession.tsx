@@ -121,32 +121,33 @@ const FuzzSession: React.FC = () => {
 
     const handleConfirmRemove = async () => {
         if (!removingItem || !projectId) return;
+        const item = removingItem;
+        setRemoveDialogOpen(false);
+        setRemovingItem(null);
+
         try {
-            if (removingItem.type === 'session') {
-                dispatch(deleteFuzzSession({ sessionIndex: removingItem.sessIdx, projectId }));
+            if (item.type === 'session') {
+                dispatch(deleteFuzzSession({ sessionIndex: item.sessIdx, projectId }));
                 await invoke('delete_fuzzer_session_db', {
                     projectId,
-                    sessionIndex: removingItem.sessIdx,
+                    sessionIndex: item.sessIdx,
                 });
-            } else if (removingItem.type === 'history' && removingItem.histIdx !== null) {
+            } else if (item.type === 'history' && item.histIdx !== null) {
                 dispatch(deleteFuzzHistory({
-                    sessionIndex: removingItem.sessIdx,
-                    historyIndex: removingItem.histIdx,
+                    sessionIndex: item.sessIdx,
+                    historyIndex: item.histIdx,
                     projectId,
                 }));
                 await invoke('delete_fuzzer_history_db', {
                     projectId,
-                    sessionIndex: removingItem.sessIdx,
-                    historyIndex: removingItem.histIdx,
+                    sessionIndex: item.sessIdx,
+                    historyIndex: item.histIdx,
                 });
             }
             dispatch(persistFuzzerUiState(projectId));
         } catch (err) {
             console.error('Failed to delete fuzzer item:', err);
             toast.error(typeof err === 'string' ? err : 'Failed to delete item', { position: 'top-center' });
-        } finally {
-            setRemoveDialogOpen(false);
-            setRemovingItem(null);
         }
     };
 

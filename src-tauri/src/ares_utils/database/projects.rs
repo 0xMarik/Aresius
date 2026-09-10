@@ -98,17 +98,18 @@ pub async fn create_project(
     // 4. Close the project pool (project is only mounted when selected)
     pool.close().await;
 
-    // 5. Register project in catalog database (including version)
+    // 5. Register project in catalog database (including version and temporary)
     let path_str = path_buf.to_string_lossy().to_string();
     sqlx::query(
-        "INSERT INTO project_catalog (id, name, path, version, created_at, updated_at, last_opened_at)
-         VALUES (?, ?, ?, ?, ?, ?, NULL)
-         ON CONFLICT(path) DO UPDATE SET updated_at = excluded.updated_at",
+        "INSERT INTO project_catalog (id, name, path, version, temporary, created_at, updated_at, last_opened_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, NULL)
+         ON CONFLICT(path) DO UPDATE SET updated_at = excluded.updated_at, temporary = excluded.temporary",
     )
     .bind(&id)
     .bind(&name)
     .bind(&path_str)
     .bind(PROJECT_VERSION)
+    .bind(is_temp)
     .bind(now)
     .bind(now)
     .execute(catalog.pool())

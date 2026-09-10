@@ -52,6 +52,7 @@ import { setSiteMapBulk, fetchSitemapStateForProject } from "@/store/slices/site
 import { fetchScopeDataForProject } from "@/store/slices/scopeSlice"
 import { fetchMatchReplaceDataForProject } from "@/store/slices/matchReplaceSlice"
 import AddProjectDialog from "@/components/add-project-dialog.component"
+import SaveProjectDialog from "@/components/SaveProjectDialog"
 import { invoke } from "@tauri-apps/api/core"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
@@ -69,6 +70,7 @@ import {
   MoreHorizontal,
   Copy,
   Pencil,
+  Save,
 } from "lucide-react"
 
 
@@ -246,6 +248,7 @@ export default function Projects() {
 
   const [projectToDelete, setProjectToDelete] = useState<Project | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
+  const [projectToSave, setProjectToSave] = useState<Project | null>(null)
 
   const [renamingProjectId, setRenamingProjectId] = useState<string | null>(null)
   const [renamingName, setRenamingName] = useState("")
@@ -393,9 +396,10 @@ export default function Projects() {
               {project.temporary && (
                 <Badge
                   variant="outline"
-                  className="h-4 px-1.5 text-[10px] leading-none border-muted-foreground/40 text-muted-foreground"
+                  className="h-4 px-1.5 text-[9.5px] leading-none border-amber-500/40 text-amber-500 bg-amber-500/10 gap-1 font-medium"
                 >
-                  temp
+                  <Clock className="size-2.5" />
+                  temporary
                 </Badge>
               )}
               {isActive && !isMissing && (
@@ -565,6 +569,15 @@ export default function Projects() {
                   <Copy className="size-3.5 text-muted-foreground" />
                   <span>Copy Path</span>
                 </DropdownMenuItem>
+                {project.temporary && (
+                  <DropdownMenuItem
+                    onClick={() => setProjectToSave(project)}
+                    className="gap-2 text-xs text-primary focus:text-primary focus:bg-primary/10"
+                  >
+                    <Save className="size-3.5" />
+                    <span>Save as Permanent...</span>
+                  </DropdownMenuItem>
+                )}
                 {isMissing && (
                   <DropdownMenuItem onClick={() => handleRelocateProject(project.id)} className="gap-2 text-xs text-amber-500">
                     <FileSearch className="size-3.5 text-amber-500" />
@@ -649,6 +662,27 @@ export default function Projects() {
           <AddProjectDialog />
         </div>
       </div>
+
+      {/* Active Temporary Project Warning Banner */}
+      {currentProject?.temporary && (
+        <div className="flex items-center justify-between gap-3 px-3.5 py-2 rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-500 text-xs">
+          <div className="flex items-center gap-2 min-w-0">
+            <AlertTriangle className="size-4 shrink-0 text-amber-500" />
+            <span className="text-[11.5px] leading-tight">
+              Active project <strong className="text-foreground font-semibold">&ldquo;{currentProject.name}&rdquo;</strong> is temporary. Data will be discarded upon quitting unless saved.
+            </span>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-6.5 px-2.5 text-[11px] gap-1.5 border-amber-500/40 text-amber-500 hover:bg-amber-500/20 hover:text-amber-400 shrink-0"
+            onClick={() => setProjectToSave(currentProject)}
+          >
+            <Save className="size-3" />
+            Save Project
+          </Button>
+        </div>
+      )}
 
       {/* Table */}
       <div className="rounded-lg border border-border overflow-hidden flex-1">
@@ -777,6 +811,13 @@ export default function Projects() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Save Project Dialog */}
+      <SaveProjectDialog
+        open={!!projectToSave}
+        onOpenChange={(open) => !open && setProjectToSave(null)}
+        project={projectToSave}
+      />
     </div>
   )
 }

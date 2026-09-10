@@ -16,6 +16,7 @@ pub struct ProjectSummary {
     pub name: String,
     pub path: String,
     pub version: String,
+    pub temporary: bool,
     pub created_at: i64,
     pub updated_at: i64,
     pub last_opened_at: Option<i64>,
@@ -69,7 +70,7 @@ pub async fn list_projects(
     catalog: tauri::State<'_, CatalogState>,
 ) -> Result<Vec<ProjectSummary>, String> {
     let mut rows = sqlx::query_as::<_, ProjectSummary>(
-        "SELECT id, name, path, version, created_at, updated_at, last_opened_at \
+        "SELECT id, name, path, version, temporary, created_at, updated_at, last_opened_at \
          FROM project_catalog ORDER BY updated_at DESC",
     )
     .fetch_all(catalog.pool())
@@ -93,7 +94,7 @@ pub async fn select_project(
     db: tauri::State<'_, DbState>,
 ) -> Result<ProjectSummary, String> {
     let mut summary = sqlx::query_as::<_, ProjectSummary>(
-        "SELECT id, name, path, version, created_at, updated_at, last_opened_at \
+        "SELECT id, name, path, version, temporary, created_at, updated_at, last_opened_at \
          FROM project_catalog WHERE id = ?",
     )
     .bind(&id)
@@ -195,14 +196,14 @@ pub async fn open_project_file(
     })?;
 
     // Read the project metadata from the project's own `projects` table
-    let meta_row: Option<(String, String, Option<String>, i64, i64)> = sqlx::query_as(
-        "SELECT id, name, version, created_at, updated_at FROM projects LIMIT 1",
+    let meta_row: Option<(String, String, Option<String>, i64, i64, bool)> = sqlx::query_as(
+        "SELECT id, name, version, created_at, updated_at, temporary FROM projects LIMIT 1",
     )
     .fetch_optional(&pool)
     .await
     .map_err(|e| format!("Failed to read project metadata from file: {e}"))?;
 
-    let (id, name, version_opt, created_at, _) = meta_row.ok_or_else(|| {
+    let (id, name, version_opt, created_at, _, is_temp) = meta_row.ok_or_else(|| {
         "Invalid project file: no project metadata found in database".to_string()
     })?;
 
@@ -219,13 +220,14 @@ pub async fn open_project_file(
 
     // Insert into project_catalog
     sqlx::query(
-        "INSERT INTO project_catalog (id, name, path, version, created_at, updated_at, last_opened_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO project_catalog (id, name, path, version, temporary, created_at, updated_at, last_opened_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&id)
     .bind(&name)
     .bind(&path_str)
     .bind(&version_str)
+    .bind(is_temp)
     .bind(created_at)
     .bind(now)
     .bind(now)
@@ -252,6 +254,7 @@ pub async fn open_project_file(
         name,
         path: path_str,
         version: version_str,
+        temporary: is_temp,
         created_at,
         updated_at: now,
         last_opened_at: Some(now),
@@ -312,14 +315,14 @@ pub async fn relocate_project(
     })?;
 
     // Read metadata inside the relocated database
-    let meta_row: Option<(String, String, Option<String>, i64, i64)> = sqlx::query_as(
-        "SELECT id, name, version, created_at, updated_at FROM projects LIMIT 1",
+    let meta_row: Option<(String, String, Option<String>, i64, i64, bool)> = sqlx::query_as(
+        "SELECT id, name, version, created_at, updated_at, temporary FROM projects LIMIT 1",
     )
     .fetch_optional(&pool)
     .await
     .map_err(|e| format!("Failed to read project metadata: {e}"))?;
 
-    let (file_id, name, version_opt, created_at, _) = meta_row.ok_or_else(|| {
+    let (file_id, name, version_opt, created_at, _, is_temp) = meta_row.ok_or_else(|| {
         "Invalid project file: no project metadata found in database".to_string()
     })?;
 
@@ -337,13 +340,14 @@ pub async fn relocate_project(
 
     // Insert updated record using the canonical file_id and new path
     sqlx::query(
-        "INSERT INTO project_catalog (id, name, path, version, created_at, updated_at, last_opened_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO project_catalog (id, name, path, version, temporary, created_at, updated_at, last_opened_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&file_id)
     .bind(&name)
     .bind(&path_str)
     .bind(&version_str)
+    .bind(is_temp)
     .bind(created_at)
     .bind(now)
     .bind(now)
@@ -370,6 +374,7 @@ pub async fn relocate_project(
         name,
         path: path_str,
         version: version_str,
+        temporary: is_temp,
         created_at,
         updated_at: now,
         last_opened_at: Some(now),
@@ -397,7 +402,7 @@ pub async fn update_project_details(
     let now = sqlx::types::chrono::Utc::now().timestamp_millis();
 
     let mut summary = sqlx::query_as::<_, ProjectSummary>(
-        "SELECT id, name, path, version, created_at, updated_at, last_opened_at \
+        "SELECT id, name, path, version, temporary, created_at, updated_at, last_opened_at \
          FROM project_catalog WHERE id = ?",
     )
     .bind(&id)
@@ -514,6 +519,159 @@ pub fn get_default_project_dir(app: tauri::AppHandle) -> Result<String, String> 
     let projects_dir = dir.join("Aresius").join("projects");
     std::fs::create_dir_all(&projects_dir).map_err(|e| e.to_string())?;
     Ok(projects_dir.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+pub async fn save_temporary_project(
+    id: String,
+    new_name: Option<String>,
+    new_path: Option<String>,
+    catalog: tauri::State<'_, CatalogState>,
+    db: tauri::State<'_, DbState>,
+) -> Result<ProjectSummary, String> {
+    let mut summary = sqlx::query_as::<_, ProjectSummary>(
+        "SELECT id, name, path, version, temporary, created_at, updated_at, last_opened_at \
+         FROM project_catalog WHERE id = ?",
+    )
+    .bind(&id)
+    .fetch_optional(catalog.pool())
+    .await
+    .map_err(|e| e.to_string())?
+    .ok_or_else(|| format!("Project with ID {} not found in catalog", id))?;
+
+    let trimmed_name = new_name
+        .map(|n| n.trim().to_string())
+        .filter(|n| !n.is_empty())
+        .unwrap_or_else(|| summary.name.clone());
+
+    let mut target_path = PathBuf::from(&summary.path);
+    if let Some(p) = new_path.filter(|p| !p.trim().is_empty()) {
+        let mut p_buf = PathBuf::from(p.trim());
+        if p_buf.extension().and_then(|e| e.to_str()) != Some("ares") {
+            p_buf.set_extension("ares");
+        }
+        target_path = p_buf;
+    }
+
+    let old_path = PathBuf::from(&summary.path);
+    let is_path_changed = target_path != old_path;
+
+    if is_path_changed {
+        if target_path.exists() {
+            return Err("A file already exists at the specified path".to_string());
+        }
+        if let Some(parent) = target_path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create destination directories: {e}"))?;
+        }
+    }
+
+    let is_active = db.get_active_id().await.as_deref() == Some(&id);
+
+    // If path changed and project is active, flush WAL and close active pool before moving
+    if is_path_changed && is_active {
+        if let Ok(pool) = db.pool().await {
+            let _ = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE);").execute(&pool).await;
+        }
+        db.close().await;
+    }
+
+    // Move file to new location if path changed
+    if is_path_changed {
+        if old_path.exists() {
+            std::fs::rename(&old_path, &target_path).or_else(|_| {
+                std::fs::copy(&old_path, &target_path).map(|_| {
+                    let _ = std::fs::remove_file(&old_path);
+                })
+            }).map_err(|e| format!("Failed to move project file to destination: {e}"))?;
+
+            let old_path_str = old_path.to_string_lossy().to_string();
+            let _ = std::fs::remove_file(format!("{}-wal", old_path_str));
+            let _ = std::fs::remove_file(format!("{}-shm", old_path_str));
+            let _ = std::fs::remove_file(format!("{}-journal", old_path_str));
+        }
+    }
+
+    let now = sqlx::types::chrono::Utc::now().timestamp_millis();
+    let target_path_str = target_path.to_string_lossy().to_string();
+
+    // If active, reopen db connection at the destination path
+    if is_active {
+        let pool = open_project_db(&target_path, DatabaseType::Project)
+            .await
+            .map_err(|e| format!("Failed to open project file at new path: {e}"))?;
+        db.set(id.clone(), pool).await;
+    }
+
+    // Update inside project file (set temporary = 0, name, path, updated_at)
+    if target_path.exists() && target_path.is_file() {
+        if is_active {
+            if let Ok(pool) = db.pool().await {
+                let _ = sqlx::query("UPDATE projects SET temporary = 0, name = ?, path = ?, updated_at = ? WHERE id = ?")
+                    .bind(&trimmed_name)
+                    .bind(&target_path_str)
+                    .bind(now)
+                    .bind(&id)
+                    .execute(&pool)
+                    .await;
+            }
+        } else if let Ok(temp_pool) = open_project_db(&target_path, DatabaseType::Project).await {
+            let _ = sqlx::query("UPDATE projects SET temporary = 0, name = ?, path = ?, updated_at = ? WHERE id = ?")
+                .bind(&trimmed_name)
+                .bind(&target_path_str)
+                .bind(now)
+                .bind(&id)
+                .execute(&temp_pool)
+                .await;
+            temp_pool.close().await;
+        }
+    }
+
+    // Update project_catalog
+    sqlx::query("UPDATE project_catalog SET temporary = 0, name = ?, path = ?, updated_at = ? WHERE id = ?")
+        .bind(&trimmed_name)
+        .bind(&target_path_str)
+        .bind(now)
+        .bind(&id)
+        .execute(catalog.pool())
+        .await
+        .map_err(|e| format!("Failed to update project catalog: {e}"))?;
+
+    summary.temporary = false;
+    summary.name = trimmed_name;
+    summary.path = target_path_str;
+    summary.updated_at = now;
+    summary.exists = target_path.is_file();
+    summary.size_bytes = if summary.exists { file_size_bytes(&summary.path) } else { 0 };
+
+    Ok(summary)
+}
+
+#[tauri::command]
+pub async fn exit_app(
+    discard_active_if_temp: bool,
+    app: tauri::AppHandle,
+    catalog: tauri::State<'_, CatalogState>,
+    db: tauri::State<'_, DbState>,
+) -> Result<(), String> {
+    if discard_active_if_temp {
+        if let Some(active_id) = db.get_active_id().await {
+            let row: Option<(bool,)> = sqlx::query_as("SELECT temporary FROM project_catalog WHERE id = ?")
+                .bind(&active_id)
+                .fetch_optional(catalog.pool())
+                .await
+                .map_err(|e| e.to_string())?;
+
+            if let Some((true,)) = row {
+                let _ = delete_project(active_id, catalog, db).await;
+            }
+        }
+    }
+
+    crate::app_setup::set_exiting(true);
+    crate::ares_utils::shutdown_gracefully(&app).await;
+    app.exit(0);
+    Ok(())
 }
 
 

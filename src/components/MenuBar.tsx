@@ -43,6 +43,7 @@ import {
     ZoomOut,
     Type,
     Settings,
+    Save,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
@@ -57,6 +58,7 @@ import { toast } from "sonner"
 import InstallCertificateDialog from "./InstallCert"
 import AddCustomCertDialog from "./AddCustomCertDialog"
 import AboutDialog from "./AboutDialog"
+import SaveProjectDialog from "./SaveProjectDialog"
 import { open } from "@tauri-apps/plugin-shell"
 import { useTheme } from "./theme-provider"
 import { useAppDispatch, useAppSelector } from "@/hooks/redux"
@@ -91,6 +93,7 @@ export default function MenubarDemo() {
     const [certDialogOpen, setCertDialogOpen] = useState(false)
     const [customCertDialogOpen, setCustomCertDialogOpen] = useState(false)
     const [aboutDialogOpen, setAboutDialogOpen] = useState(false)
+    const [saveProjectDialogOpen, setSaveProjectDialogOpen] = useState(false)
     const [regenerateConfirmOpen, setRegenerateConfirmOpen] = useState(false)
     const [isRegenerating, setIsRegenerating] = useState(false)
 
@@ -415,11 +418,19 @@ export default function MenubarDemo() {
             } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "o") {
                 e.preventDefault()
                 handleOpenProjectFile()
+            } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+                if (activeProject?.temporary) {
+                    e.preventDefault()
+                    setSaveProjectDialogOpen(true)
+                }
+            } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "q") {
+                e.preventDefault()
+                handleClose()
             }
         }
         window.addEventListener("keydown", handleKeyDown)
         return () => window.removeEventListener("keydown", handleKeyDown)
-    }, [projects])
+    }, [projects, activeProject])
 
     const handleMinimize = () => appWindow.minimize()
 
@@ -498,6 +509,9 @@ export default function MenubarDemo() {
                                                         {proj.exists === false && (
                                                             <span className="text-[9px] text-destructive shrink-0 font-normal">missing</span>
                                                         )}
+                                                        {proj.temporary && (
+                                                            <span className="text-[8.5px] text-amber-500 bg-amber-500/15 border border-amber-500/30 px-1 rounded font-normal shrink-0">temp</span>
+                                                        )}
                                                     </div>
                                                     {proj.id === currentProjectId && <Check className="w-3 h-3 text-primary shrink-0" />}
                                                 </MenubarItem>
@@ -506,6 +520,34 @@ export default function MenubarDemo() {
                                     </MenubarGroup>
                                 </MenubarSubContent>
                             </MenubarSub>
+                            {activeProject?.temporary && (
+                                <>
+                                    <MenubarSeparator />
+                                    <MenubarItem onClick={() => setSaveProjectDialogOpen(true)} className="gap-2 justify-between">
+                                        <span className="flex items-center gap-2 text-primary">
+                                            <Save className="h-3.5 w-3.5 text-primary" />
+                                            <span>Save Project...</span>
+                                        </span>
+                                        <KbdGroup>
+                                            <Kbd>{isMac ? "⌘" : "Ctrl"}</Kbd>
+                                            {!isMac && <span>+</span>}
+                                            <Kbd>S</Kbd>
+                                        </KbdGroup>
+                                    </MenubarItem>
+                                </>
+                            )}
+                            <MenubarSeparator />
+                            <MenubarItem onClick={handleClose} className="gap-2 justify-between text-destructive focus:text-destructive">
+                                <span className="flex items-center gap-2">
+                                    <X className="h-3.5 w-3.5" />
+                                    <span>Exit</span>
+                                </span>
+                                <KbdGroup>
+                                    <Kbd>{isMac ? "⌘" : "Ctrl"}</Kbd>
+                                    {!isMac && <span>+</span>}
+                                    <Kbd>Q</Kbd>
+                                </KbdGroup>
+                            </MenubarItem>
                         </MenubarGroup>
 
                     </MenubarContent>
@@ -913,6 +955,9 @@ export default function MenubarDemo() {
                         <span className={cn("max-w-[120px] truncate", activeProject ? "text-foreground" : "text-muted-foreground/60")}>
                             {activeProject ? activeProject.name : "Select Project"}
                         </span>
+                        {activeProject?.temporary && (
+                            <span className="text-[8.5px] text-amber-500 bg-amber-500/15 border border-amber-500/30 px-1 rounded font-normal shrink-0">temp</span>
+                        )}
                         <ChevronDown className="w-2.5 h-2.5 text-muted-foreground/60 shrink-0" />
                     </button>
 
@@ -942,6 +987,9 @@ export default function MenubarDemo() {
                                                 <span className={cn("truncate", proj.exists === false && "line-through text-muted-foreground")}>{proj.name}</span>
                                                 {proj.exists === false && (
                                                     <span className="text-[9px] text-destructive bg-destructive/10 px-1 rounded font-normal shrink-0">missing</span>
+                                                )}
+                                                {proj.temporary && (
+                                                    <span className="text-[8.5px] text-amber-500 bg-amber-500/15 border border-amber-500/30 px-1 rounded font-normal shrink-0">temp</span>
                                                 )}
                                             </div>
                                             {proj.description && (
@@ -1149,6 +1197,12 @@ export default function MenubarDemo() {
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
+
+            <SaveProjectDialog
+                open={saveProjectDialogOpen}
+                onOpenChange={setSaveProjectDialogOpen}
+                project={activeProject}
+            />
         </div>
     )
 }

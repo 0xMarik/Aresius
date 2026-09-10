@@ -14,7 +14,7 @@ import { Label } from "@/components/ui/label"
 import { Plus, AlertCircle } from "lucide-react"
 import { Checkbox } from "@/components/ui/checkbox"
 import { useAppDispatch } from "@/hooks/redux"
-import { addProject } from "@/store/slices/projectSlice"
+import { addProject, setcurrentProjectId, updateProject } from "@/store/slices/projectSlice"
 import { useState, useEffect } from "react"
 import { invoke } from "@tauri-apps/api/core"
 import { Project } from "@/types/project.type"
@@ -64,6 +64,13 @@ const AddProjectDialog = () => {
             })
 
             dispatch(addProject(project))
+            try {
+                const updated = await invoke<Project>("select_project", { id: project.id })
+                dispatch(updateProject(updated))
+                dispatch(setcurrentProjectId(project.id))
+            } catch (err) {
+                console.warn("Could not auto-select newly created project:", err)
+            }
             setOpen(false)
             setProjectName("New project")
             setIsTemporary(false)
@@ -124,15 +131,20 @@ const AddProjectDialog = () => {
                             </p>
                         </div>
 
-                        <div className="flex items-center gap-2 pt-1">
-                            <Checkbox
-                                id="temporary"
-                                checked={isTemporary}
-                                onCheckedChange={(checked) => setIsTemporary(!!checked)}
-                            />
-                            <Label htmlFor="temporary" className="text-xs cursor-pointer">
-                                Mark as temporary project
-                            </Label>
+                        <div className="flex flex-col gap-1 pt-1">
+                            <div className="flex items-center gap-2">
+                                <Checkbox
+                                    id="temporary"
+                                    checked={isTemporary}
+                                    onCheckedChange={(checked) => setIsTemporary(!!checked)}
+                                />
+                                <Label htmlFor="temporary" className="text-xs cursor-pointer font-medium">
+                                    Mark as temporary project
+                                </Label>
+                            </div>
+                            <p className="text-[11px] text-muted-foreground pl-6">
+                                Temporary projects are automatically discarded upon closing Aresius unless saved as permanent.
+                            </p>
                         </div>
                     </div>
 
