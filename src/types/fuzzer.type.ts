@@ -117,6 +117,8 @@ export interface FuzzerParameter {
     fileConfig?: FilePayloadConfig;
 }
 
+export type RedirectionMode = 'always' | 'in_scope' | 'never' | 'same_site';
+
 export interface FuzzConfig {
     rawRequest: string;
     parameters: FuzzerParameter[];
@@ -131,6 +133,10 @@ export interface FuzzConfig {
     pipelineRules?: PreprocessingRule[];
     setConnectionKeepAlive?: boolean;
     updateContentLength?: boolean;
+    redirectionMode?: RedirectionMode;
+    maxRedirects?: number;
+    retryDelayMs?: number;
+    maxRetries?: number;
 }
 
 export interface FuzzingHistory {

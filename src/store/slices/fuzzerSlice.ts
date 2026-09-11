@@ -1,5 +1,5 @@
 import { FuzzProgressUpdate } from '@/App';
-import { FuzzingHistory, FuzzerParameter, FuzzerSession, FuzzerState, HighlightRange, FuzzingAttackType, PipelineScope, PreprocessingRule, PayloadSource, NumbersPayloadConfig, NullPayloadConfig, FilePayloadConfig } from '@/types/fuzzer.type';
+import { FuzzingHistory, FuzzerParameter, FuzzerSession, FuzzerState, HighlightRange, FuzzingAttackType, PipelineScope, PreprocessingRule, PayloadSource, NumbersPayloadConfig, NullPayloadConfig, FilePayloadConfig, RedirectionMode } from '@/types/fuzzer.type';
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 import type { RootState } from '@/store';
 import { deleteProject, setcurrentProjectId } from './projectSlice';
@@ -86,6 +86,10 @@ export const fuzzerSlice = createSlice({
           pipelineRules: [],
           setConnectionKeepAlive: true,
           updateContentLength: true,
+          redirectionMode: 'always',
+          maxRedirects: 5,
+          retryDelayMs: 0,
+          maxRetries: 0,
         },
         selectedHighlightId: null,
       });
@@ -508,6 +512,34 @@ export const fuzzerSlice = createSlice({
       }
     },
 
+    setRedirectionMode: (state, action: PayloadAction<{ mode: RedirectionMode; projectId: string }>) => {
+      const bucket = getBucket(state, action.payload.projectId);
+      if (bucket.activeSessionIndex !== null && bucket.fuzzerSessions[bucket.activeSessionIndex]) {
+        bucket.fuzzerSessions[bucket.activeSessionIndex].fuzzConfig.redirectionMode = action.payload.mode;
+      }
+    },
+
+    setMaxRedirects: (state, action: PayloadAction<{ maxRedirects: number; projectId: string }>) => {
+      const bucket = getBucket(state, action.payload.projectId);
+      if (bucket.activeSessionIndex !== null && bucket.fuzzerSessions[bucket.activeSessionIndex]) {
+        bucket.fuzzerSessions[bucket.activeSessionIndex].fuzzConfig.maxRedirects = action.payload.maxRedirects;
+      }
+    },
+
+    setRetryDelayMs: (state, action: PayloadAction<{ delayMs: number; projectId: string }>) => {
+      const bucket = getBucket(state, action.payload.projectId);
+      if (bucket.activeSessionIndex !== null && bucket.fuzzerSessions[bucket.activeSessionIndex]) {
+        bucket.fuzzerSessions[bucket.activeSessionIndex].fuzzConfig.retryDelayMs = action.payload.delayMs;
+      }
+    },
+
+    setMaxRetries: (state, action: PayloadAction<{ maxRetries: number; projectId: string }>) => {
+      const bucket = getBucket(state, action.payload.projectId);
+      if (bucket.activeSessionIndex !== null && bucket.fuzzerSessions[bucket.activeSessionIndex]) {
+        bucket.fuzzerSessions[bucket.activeSessionIndex].fuzzConfig.maxRetries = action.payload.maxRetries;
+      }
+    },
+
     setPipelineScope: (state, action: PayloadAction<{ scope: PipelineScope; projectId: string }>) => {
       const bucket = getBucket(state, action.payload.projectId);
       if (bucket.activeSessionIndex !== null && bucket.fuzzerSessions[bucket.activeSessionIndex]) {
@@ -658,6 +690,10 @@ export const {
   setFuzzingAttackType,
   setConnectionKeepAlive,
   setUpdateContentLength,
+  setRedirectionMode,
+  setMaxRedirects,
+  setRetryDelayMs,
+  setMaxRetries,
   setPipelineScope,
   setPipelineRules,
   addPipelineRule,

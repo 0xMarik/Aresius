@@ -123,6 +123,11 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
     const activeRequestsRef = useRef<Map<string, string>>(new Map());
     const debounceDraftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const collectionsRef = useRef(collections);
+    useEffect(() => {
+        collectionsRef.current = collections;
+    }, [collections]);
+    const lastSessionCreateTimeRef = useRef<Map<string, number>>(new Map());
 
     const [reqViewMode, setReqViewModeState] = React.useState<'raw' | 'pretty'>(() => {
         const saved = localStorage.getItem('aresius_replayer_req_view_mode');
@@ -236,12 +241,20 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         };
     }, []);
 
-    // Create Collection
+    // Create Collection (Optimistic)
     const createCollection = useCallback(async (): Promise<string | null> => {
         if (!projectId) return null;
         const newColId = crypto.randomUUID();
-        const newName = `Collection ${collections.length + 1}`;
-        const sortOrder = collections.length;
+        const newName = `Collection ${collectionsRef.current.length + 1}`;
+        const sortOrder = collectionsRef.current.length;
+
+        // Optimistically update local ref and Redux immediately
+        const newCol: ReplayerCollectionMeta = { id: newColId, name: newName, isExpanded: true, sessions: [] };
+        collectionsRef.current = [...collectionsRef.current, newCol];
+        dispatch(createCollectionSuccess({
+            projectId,
+            collection: newCol,
+        }));
 
         try {
             await invoke('create_replayer_collection', {
@@ -250,22 +263,27 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                 name: newName,
                 sortOrder,
             });
-
-            dispatch(createCollectionSuccess({
-                projectId,
-                collection: { id: newColId, name: newName, isExpanded: true, sessions: [] },
-            }));
             return newColId;
         } catch (err) {
             console.error('Failed to create collection:', err);
+            collectionsRef.current = collectionsRef.current.filter(c => c.id !== newColId);
+            dispatch(deleteCollectionSuccess({ projectId, collectionId: newColId }));
+            toast.error('Failed to create collection');
             return null;
         }
-    }, [collections.length, dispatch, projectId]);
+    }, [dispatch, projectId]);
 
-    // Create Session
+    // Create Session (Optimistic with rapid-click guard)
     const createSession = useCallback(async (collectionId: string, initialData?: { name?: string; request?: string; url?: string; urlIsValid?: boolean; sessionType?: 'http' | 'ws' }) => {
         if (!projectId) return;
-        const col = collections.find(c => c.id === collectionId);
+
+        // Guard against rapid duplicate clicks (within 350ms) for the same collection
+        const now = Date.now();
+        const lastCreateTime = lastSessionCreateTimeRef.current.get(collectionId) || 0;
+        if (now - lastCreateTime < 350) return;
+        lastSessionCreateTimeRef.current.set(collectionId, now);
+
+        const col = collectionsRef.current.find(c => c.id === collectionId);
         if (!col) return;
 
         const newSessId = crypto.randomUUID();
@@ -284,6 +302,26 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             ? initialData.urlIsValid
             : (isWs ? (url.length > 6 && (url.startsWith('wss://') || url.startsWith('ws://'))) : (!url.startsWith('https://') || url.length > 8));
 
+        const session: ReplayerSessionMeta = { id: newSessId, name, url, urlIsValid, sessionType };
+        const cacheItem = {
+            requestTmp,
+            url,
+            urlIsValid,
+            history: [],
+            selectedHistoryIndex: null,
+            sessionType,
+        };
+
+        // 1. Optimistically update local ref and Redux immediately (0ms latency for user)
+        col.sessions = [...col.sessions, session];
+        dispatch(createSessionSuccess({
+            projectId,
+            collectionId,
+            session,
+            cacheItem,
+        }));
+
+        // 2. Persist to SQLite in background
         try {
             await invoke('create_replayer_session', {
                 collectionId,
@@ -295,20 +333,6 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                 sessionType,
             });
 
-            dispatch(createSessionSuccess({
-                projectId,
-                collectionId,
-                session: { id: newSessId, name, url, urlIsValid, sessionType },
-                cacheItem: {
-                    requestTmp,
-                    url,
-                    urlIsValid,
-                    history: [],
-                    selectedHistoryIndex: null,
-                    sessionType,
-                },
-            }));
-
             invoke('set_replayer_active_selection', {
                 projectId,
                 collectionId,
@@ -316,8 +340,12 @@ export const ReplayerProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             }).catch(console.error);
         } catch (err) {
             console.error('Failed to create session:', err);
+            // Revert optimistic update on failure
+            col.sessions = col.sessions.filter(s => s.id !== newSessId);
+            dispatch(deleteSessionSuccess({ projectId, collectionId, sessionId: newSessId }));
+            toast.error('Failed to save session to database');
         }
-    }, [collections, dispatch, projectId]);
+    }, [dispatch, projectId]);
 
     // Rename Collection
     const renameCollection = useCallback(async (collectionId: string, name: string) => {

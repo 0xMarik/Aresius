@@ -58,6 +58,14 @@ pub struct SessionPayload {
     pub set_connection_keep_alive: Option<bool>,
     #[serde(default)]
     pub update_content_length: Option<bool>,
+    #[serde(default)]
+    pub redirection_mode: Option<String>,
+    #[serde(default)]
+    pub max_redirects: Option<usize>,
+    #[serde(default)]
+    pub retry_delay_ms: Option<u64>,
+    #[serde(default)]
+    pub max_retries: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

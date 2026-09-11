@@ -1964,6 +1964,7 @@ fn spawn_worker(
     next_index: Arc<AtomicUsize>,
     total_targets: usize,
     config_snapshot: Arc<Option<crate::types::SessionPayload>>,
+    active_scope: Arc<Option<crate::proxy::interceptor::ActiveScope>>,
     completed: Arc<AtomicU32>,
     failed: Arc<AtomicU32>,
     cancel: Arc<AtomicBool>,
@@ -1981,6 +1982,7 @@ fn spawn_worker(
     let retry_queue_clone = Arc::clone(&retry_queue);
     let next_index_clone = Arc::clone(&next_index);
     let config_snapshot_clone = Arc::clone(&config_snapshot);
+    let active_scope_clone = Arc::clone(&active_scope);
     let completed_clone = Arc::clone(&completed);
     let failed_clone = Arc::clone(&failed);
     let cancel_clone = Arc::clone(&cancel);
@@ -2061,164 +2063,129 @@ fn spawn_worker(
                 "GET / HTTP/1.1\r\n\r\n".to_string()
             };
 
-            // Lazy connection setup
-            if conn.is_none() {
-                match HttpConnection::new(&url).await {
-                    Ok(c) => {
-                        conn = Some(c);
-                        consecutive_conn_failures = 0;
-                    }
-                    Err(e) => {
-                        consecutive_conn_failures += 1;
-                        tracing::warn!(
-                            "Worker {} connect failed (attempt {}): {}",
-                            worker_idx,
-                            consecutive_conn_failures,
-                            e
-                        );
+            let redirection_mode = config_snapshot_clone
+                .as_ref()
+                .as_ref()
+                .and_then(|c| c.redirection_mode.as_deref())
+                .unwrap_or("always");
+            let max_redirects = config_snapshot_clone
+                .as_ref()
+                .as_ref()
+                .and_then(|c| c.max_redirects)
+                .unwrap_or(5);
+            let retry_delay_ms = config_snapshot_clone
+                .as_ref()
+                .as_ref()
+                .and_then(|c| c.retry_delay_ms)
+                .unwrap_or(0);
+            let max_retries = config_snapshot_clone
+                .as_ref()
+                .as_ref()
+                .and_then(|c| c.max_retries)
+                .unwrap_or(0);
 
-                        // Push sort_order back to front of the retry queue so another worker or retry can process it
-                        {
-                            let mut q = match retry_queue_clone.lock() {
-                                Ok(g) => g,
-                                Err(p) => p.into_inner(),
-                            };
-                            q.push_front(sort_order);
-                        }
+            let mut current_url = url.clone();
+            let mut current_raw_req = raw_req.clone();
+            let mut redirect_count = 0usize;
+            let mut first_dispatch_time: Option<i64> = None;
 
-                        if consecutive_conn_failures >= 5 {
-                            dropped_clone.store(true, Ordering::Relaxed);
-                            break;
-                        }
-                        sleep(Duration::from_millis(100 * consecutive_conn_failures as u64)).await;
-                        continue;
-                    }
+            'redirect_chain: loop {
+                if cancel_clone.load(Ordering::Relaxed) {
+                    break 'redirect_chain;
                 }
-            }
 
-            let c = conn.as_mut().unwrap();
-            let dispatch_time = chrono::Utc::now().timestamp_millis();
-
-            match c.send_request(raw_req.as_bytes()).await {
-                Ok(response) => {
-                    consecutive_conn_failures = 0;
-                    let raw_resp = response.as_text_lossy();
-                    let status_code = crate::ares_utils::database::fuzzer::parse_status_code(&raw_resp);
-                    let resp_len = raw_resp.len() as i64;
-                    let resp_time = response.elapsed.as_millis();
-
-                    update_store_completed(
-                        selected_session,
-                        fuzz_history,
-                        &target_id,
-                        dispatch_time,
-                        status_code.map(|c| c as u16),
-                        Some(resp_len as usize),
-                        Some(resp_time),
-                        Some(raw_resp.clone()),
-                        Some(worker_idx as u32),
-                        payload.clone(),
-                    ).await;
-
-                    let _ = chunk_tx_w.send(ChunkWorkerMessage::Completed {
-                        id: target_id.clone(),
-                        sort_order: sort_order as i64,
-                        payload: payload.clone(),
-                        request_date: dispatch_time,
-                        raw_response: raw_resp,
-                        status_code,
-                        response_length: resp_len,
-                        response_time_ms: resp_time as i64,
-                        worker_id: Some(worker_idx as u32),
-                    }).await;
-
-                    completed_clone.fetch_add(1, Ordering::Relaxed);
+                let step_dispatch_time = chrono::Utc::now().timestamp_millis();
+                if first_dispatch_time.is_none() {
+                    first_dispatch_time = Some(step_dispatch_time);
                 }
-                Err(e) => {
-                    let msg = e.to_string();
-                    let is_conn_err = is_connection_error(&msg);
 
-                    if is_conn_err {
-                        // Attempt reconnect & retry
-                        let mut reconnected_and_sent = false;
-                        if c.reconnect().await.is_ok() {
-                            let retry_dispatch_time = chrono::Utc::now().timestamp_millis();
-                            match c.send_request(raw_req.as_bytes()).await {
-                                Ok(response) => {
-                                    consecutive_conn_failures = 0;
-                                    let raw_resp = response.as_text_lossy();
-                                    let status_code = crate::ares_utils::database::fuzzer::parse_status_code(&raw_resp);
-                                    let resp_len = raw_resp.len() as i64;
-                                    let resp_time = response.elapsed.as_millis();
+                let mut attempt = 0usize;
+                let mut last_error: Option<anyhow::Error> = None;
+                let mut send_resp: Option<crate::ares_utils::http_connection::HttpResponse> = None;
 
-                                    update_store_completed(
-                                        selected_session,
-                                        fuzz_history,
-                                        &target_id,
-                                        retry_dispatch_time,
-                                        status_code.map(|c| c as u16),
-                                        Some(resp_len as usize),
-                                        Some(resp_time),
-                                        Some(raw_resp.clone()),
-                                        Some(worker_idx as u32),
-                                        payload.clone(),
-                                    ).await;
+                while attempt <= max_retries {
+                    if cancel_clone.load(Ordering::Relaxed) {
+                        break 'redirect_chain;
+                    }
 
-                                    let _ = chunk_tx_w.send(ChunkWorkerMessage::Completed {
-                                        id: target_id.clone(),
-                                        sort_order: sort_order as i64,
-                                        payload: payload.clone(),
-                                        request_date: retry_dispatch_time,
-                                        raw_response: raw_resp,
-                                        status_code,
-                                        response_length: resp_len,
-                                        response_time_ms: resp_time as i64,
-                                        worker_id: Some(worker_idx as u32),
-                                    }).await;
+                    if attempt > 0 && retry_delay_ms > 0 {
+                        sleep(Duration::from_millis(retry_delay_ms)).await;
+                    }
 
-                                    completed_clone.fetch_add(1, Ordering::Relaxed);
-                                    reconnected_and_sent = true;
-                                }
-                                Err(retry_err) => {
-                                    tracing::warn!("Worker {} request retry failed: {}", worker_idx, retry_err);
-                                }
-                            }
+                    let need_new_conn = if let Some(ref c) = conn {
+                        if let Some(comp) = crate::ares_utils::url_parsing(&current_url) {
+                            let use_tls = current_url.starts_with("https://")
+                                || current_url.starts_with("wss://")
+                                || (!current_url.starts_with("http://") && !current_url.starts_with("ws://"));
+                            c.host != comp.domain || c.port != comp.port || c.use_tls != use_tls
+                        } else {
+                            true
                         }
-
-                        if reconnected_and_sent {
-                            if delay_ms > 0 {
-                                sleep(Duration::from_millis(delay_ms)).await;
-                            }
-                            continue;
-                        }
-
-                        // Connection dropped: invalidate socket and push sort_order back to front of retry queue
-                        conn = None;
-                        consecutive_conn_failures += 1;
-
-                        {
-                            let mut q = match retry_queue_clone.lock() {
-                                Ok(g) => g,
-                                Err(p) => p.into_inner(),
-                            };
-                            q.push_front(sort_order);
-                        }
-
-                        if consecutive_conn_failures >= 5 {
-                            dropped_clone.store(true, Ordering::Relaxed);
-                            break;
-                        }
-                        sleep(Duration::from_millis(100 * consecutive_conn_failures as u64)).await;
-                        continue;
                     } else {
-                        // Non-connection error (HTTP / parsing error)
+                        true
+                    };
+
+                    if need_new_conn {
+                        match HttpConnection::new(&current_url).await {
+                            Ok(c) => {
+                                conn = Some(c);
+                                consecutive_conn_failures = 0;
+                            }
+                            Err(e) => {
+                                consecutive_conn_failures += 1;
+                                tracing::warn!(
+                                    "Worker {} connect failed (attempt {}): {}",
+                                    worker_idx,
+                                    consecutive_conn_failures,
+                                    e
+                                );
+                                last_error = Some(e);
+                                attempt += 1;
+                                continue;
+                            }
+                        }
+                    }
+
+                    let c = conn.as_mut().unwrap();
+                    match c.send_request(current_raw_req.as_bytes()).await {
+                        Ok(response) => {
+                            consecutive_conn_failures = 0;
+                            send_resp = Some(response);
+                            break;
+                        }
+                        Err(e) => {
+                            let msg = e.to_string();
+                            let is_conn_err = is_connection_error(&msg);
+                            if is_conn_err {
+                                consecutive_conn_failures += 1;
+                            }
+                            conn = None;
+                            last_error = Some(e);
+                            attempt += 1;
+                        }
+                    }
+                }
+
+                let response = match send_resp {
+                    Some(resp) => resp,
+                    None => {
+                        let err_msg = last_error
+                            .map(|e| e.to_string())
+                            .unwrap_or_else(|| "Request cancelled or aborted".to_string());
+                        let is_conn_err = is_connection_error(&err_msg);
+
+                        if consecutive_conn_failures >= 5 {
+                            dropped_clone.store(true, Ordering::Relaxed);
+                        }
+
+                        let rec_time = first_dispatch_time.unwrap_or(step_dispatch_time);
                         update_store_error(
                             selected_session,
                             fuzz_history,
                             &target_id,
-                            dispatch_time,
-                            msg.clone(),
-                            false,
+                            rec_time,
+                            err_msg.clone(),
+                            is_conn_err,
                             Some(worker_idx as u32),
                             payload.clone(),
                         ).await;
@@ -2227,16 +2194,109 @@ fn spawn_worker(
                             id: target_id.clone(),
                             sort_order: sort_order as i64,
                             payload: payload.clone(),
-                            request_date: dispatch_time,
+                            request_date: rec_time,
                             worker_id: Some(worker_idx as u32),
-                            message: msg.clone(),
-                            connection_dropped: false,
+                            message: err_msg,
+                            connection_dropped: is_conn_err,
                         }).await;
 
                         failed_clone.fetch_add(1, Ordering::Relaxed);
                         completed_clone.fetch_add(1, Ordering::Relaxed);
+                        break 'redirect_chain;
+                    }
+                };
+
+                let raw_resp = response.as_text_lossy();
+                let status_code = crate::ares_utils::database::fuzzer::parse_status_code(&raw_resp);
+
+                // Check redirection
+                let is_redirect = matches!(status_code, Some(301 | 302 | 303 | 307 | 308));
+                let loc_header = if is_redirect && redirect_count < max_redirects {
+                    crate::fuzzer::utils::extract_location_header(&raw_resp)
+                } else {
+                    None
+                };
+
+                if let Some(loc) = loc_header {
+                    let next_url = match url::Url::parse(&current_url).and_then(|base| base.join(&loc)) {
+                        Ok(u) => u.to_string(),
+                        Err(e) => {
+                            tracing::warn!("Failed to resolve redirect Location '{}' from '{}': {}", loc, current_url, e);
+                            String::new()
+                        }
+                    };
+
+                    let should_follow = if next_url.is_empty() {
+                        false
+                    } else {
+                        match redirection_mode {
+                            "never" => false,
+                            "always" => true,
+                            "same_site" => crate::fuzzer::utils::is_same_site(&url, &next_url),
+                            "in_scope" => {
+                                if let Ok(parsed_next) = url::Url::parse(&next_url) {
+                                    let host = parsed_next.host_str().unwrap_or("");
+                                    let path = parsed_next.path();
+                                    crate::proxy::interceptor::is_in_scope(active_scope_clone.as_ref().as_ref(), host, path)
+                                } else {
+                                    false
+                                }
+                            }
+                            _ => true,
+                        }
+                    };
+
+                    if should_follow {
+                        if let Some(next_req) = crate::fuzzer::utils::build_redirect_request(
+                            &current_raw_req,
+                            &next_url,
+                            status_code.unwrap() as u16,
+                        ) {
+                            current_raw_req = next_req;
+                            current_url = next_url;
+                            redirect_count += 1;
+                            continue 'redirect_chain;
+                        }
                     }
                 }
+
+                // Final response in chain
+                let initial_time = first_dispatch_time.unwrap_or(step_dispatch_time);
+                let resp_len = raw_resp.len() as i64;
+                let total_elapsed = (chrono::Utc::now().timestamp_millis() - initial_time).max(0) as u128;
+
+                update_store_completed(
+                    selected_session,
+                    fuzz_history,
+                    &target_id,
+                    initial_time,
+                    status_code.map(|c| c as u16),
+                    Some(resp_len as usize),
+                    Some(total_elapsed),
+                    Some(raw_resp.clone()),
+                    Some(worker_idx as u32),
+                    payload.clone(),
+                ).await;
+
+                let _ = chunk_tx_w.send(ChunkWorkerMessage::Completed {
+                    id: target_id.clone(),
+                    sort_order: sort_order as i64,
+                    payload: payload.clone(),
+                    request_date: initial_time,
+                    raw_response: raw_resp,
+                    status_code,
+                    response_length: resp_len,
+                    response_time_ms: total_elapsed as i64,
+                    worker_id: Some(worker_idx as u32),
+                }).await;
+
+                completed_clone.fetch_add(1, Ordering::Relaxed);
+                break 'redirect_chain;
+            }
+
+            if consecutive_conn_failures >= 5 {
+                dropped_clone.store(true, Ordering::Relaxed);
+                break;
             }
 
             if delay_ms > 0 {
@@ -2534,6 +2594,15 @@ async fn run_dynamic_fuzzer(
         }
     });
 
+    // Retrieve active scope if configured in InterceptState
+    let active_scope = if let Some(intercept_state) = app.try_state::<crate::proxy::interceptor::InterceptState>() {
+        let settings = intercept_state.settings.read().await;
+        settings.active_scope.clone()
+    } else {
+        None
+    };
+    let active_scope = Arc::new(active_scope);
+
     // Spawn dynamic consumer workers using JoinSet and dynamic supervisor
     let mut join_set = tokio::task::JoinSet::new();
 
@@ -2544,6 +2613,7 @@ async fn run_dynamic_fuzzer(
             Arc::clone(&next_index),
             total as usize,
             Arc::clone(&parsed_snapshot),
+            Arc::clone(&active_scope),
             Arc::clone(&completed),
             Arc::clone(&failed),
             Arc::clone(&cancel),
@@ -2580,6 +2650,7 @@ async fn run_dynamic_fuzzer(
                             Arc::clone(&next_index),
                             total as usize,
                             Arc::clone(&parsed_snapshot),
+                            Arc::clone(&active_scope),
                             Arc::clone(&completed),
                             Arc::clone(&failed),
                             Arc::clone(&cancel),

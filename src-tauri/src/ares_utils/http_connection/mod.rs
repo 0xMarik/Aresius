@@ -92,10 +92,10 @@ impl HttpResponse {
 
 pub struct HttpConnection {
     connection: Connection,
-    host: String,
-    port: u16,
-    disconnected: bool,
-    use_tls: bool,
+    pub host: String,
+    pub port: u16,
+    pub disconnected: bool,
+    pub use_tls: bool,
     options: ConnectionOptions,
 }
 

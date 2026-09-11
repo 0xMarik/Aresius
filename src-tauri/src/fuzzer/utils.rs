@@ -243,6 +243,127 @@ pub async fn validate_session_files(
     Ok(())
 }
 
+/// Extracts the Location header value from an HTTP response, if present.
+pub fn extract_location_header(raw_response: &str) -> Option<String> {
+    for line in raw_response.lines() {
+        let trimmed = line.trim_end_matches('\r');
+        if trimmed.is_empty() {
+            break;
+        }
+        let lower = trimmed.to_ascii_lowercase();
+        if let Some(rest) = lower.strip_prefix("location:") {
+            let val = &trimmed[trimmed.len() - rest.len()..];
+            return Some(val.trim().to_string());
+        }
+    }
+    None
+}
+
+/// Checks if two hostnames belong to the same site (exact host match or same base domain).
+pub fn is_same_site(host_a: &str, host_b: &str) -> bool {
+    let clean_a = host_a.split(':').next().unwrap_or(host_a).trim().to_lowercase();
+    let clean_b = host_b.split(':').next().unwrap_or(host_b).trim().to_lowercase();
+    if clean_a == clean_b {
+        return true;
+    }
+    let parts_a: Vec<&str> = clean_a.split('.').collect();
+    let parts_b: Vec<&str> = clean_b.split('.').collect();
+    if parts_a.len() >= 2 && parts_b.len() >= 2 {
+        let domain_a = format!("{}.{}", parts_a[parts_a.len() - 2], parts_a[parts_a.len() - 1]);
+        let domain_b = format!("{}.{}", parts_b[parts_b.len() - 2], parts_b[parts_b.len() - 1]);
+        return domain_a == domain_b;
+    }
+    false
+}
+
+/// Reconstructs an HTTP request targeting a new URL following a redirect.
+/// Changes method to GET and strips body on 301, 302, 303.
+/// Preserves method and body on 307, 308.
+pub fn build_redirect_request(
+    original_raw_req: &str,
+    target_url_str: &str,
+    status_code: u16,
+) -> Option<String> {
+    let parsed_url = url::Url::parse(target_url_str).ok()?;
+    let host = parsed_url.host_str()?;
+    let host_header_val = match parsed_url.port() {
+        Some(p) => format!("{}:{}", host, p),
+        None => host.to_string(),
+    };
+    let path_and_query = match parsed_url.query() {
+        Some(q) => format!("{}?{}", parsed_url.path(), q),
+        None => parsed_url.path().to_string(),
+    };
+
+    let (headers_part, body_part) = if let Some(pos) = original_raw_req.find("\r\n\r\n") {
+        (&original_raw_req[..pos], &original_raw_req[pos + 4..])
+    } else if let Some(pos) = original_raw_req.find("\n\n") {
+        (&original_raw_req[..pos], &original_raw_req[pos + 2..])
+    } else {
+        (original_raw_req, "")
+    };
+
+    let line_delim = if original_raw_req.contains("\r\n") { "\r\n" } else { "\n" };
+    let mut header_lines: Vec<String> = headers_part.lines().map(|s| s.trim_end_matches('\r').to_string()).collect();
+    if header_lines.is_empty() {
+        return None;
+    }
+
+    // 1. Determine new method & body
+    let (new_method, new_body) = if status_code == 301 || status_code == 302 || status_code == 303 {
+        ("GET".to_string(), "")
+    } else {
+        let original_method = header_lines[0].split_whitespace().next().unwrap_or("GET").to_string();
+        (original_method, body_part)
+    };
+
+    // Update request line: METHOD path_and_query HTTP/1.1
+    let http_version = header_lines[0].split_whitespace().nth(2).unwrap_or("HTTP/1.1").to_string();
+    header_lines[0] = format!("{} {} {}", new_method, path_and_query, http_version);
+
+    // 2. Update Host header
+    let mut host_updated = false;
+    for line in &mut header_lines {
+        if line.to_ascii_lowercase().starts_with("host:") {
+            *line = format!("Host: {}", host_header_val);
+            host_updated = true;
+            break;
+        }
+    }
+    if !host_updated && header_lines.len() >= 1 {
+        header_lines.insert(1, format!("Host: {}", host_header_val));
+    }
+
+    // 3. Update or remove Content-Length / Content-Type if switched to GET
+    if new_method == "GET" && new_body.is_empty() {
+        header_lines.retain(|l| {
+            let lower = l.to_ascii_lowercase();
+            !lower.starts_with("content-length:") && !lower.starts_with("content-type:")
+        });
+    } else {
+        let body_len = new_body.as_bytes().len();
+        let mut cl_found = false;
+        for line in &mut header_lines {
+            if line.to_ascii_lowercase().starts_with("content-length:") {
+                *line = format!("Content-Length: {}", body_len);
+                cl_found = true;
+                break;
+            }
+        }
+        if !cl_found && body_len > 0 {
+            header_lines.push(format!("Content-Length: {}", body_len));
+        }
+    }
+
+    let joined_headers = header_lines.join(line_delim);
+    let double_delim = format!("{}{}", line_delim, line_delim);
+    if new_body.is_empty() {
+        Some(format!("{}{}", joined_headers, double_delim))
+    } else {
+        Some(format!("{}{}{}", joined_headers, double_delim, new_body))
+    }
+}
+
 /// Generates the target id and payload string dynamically for a given sort_order index.
 pub fn generate_payload_for_sort_order(
     config: &SessionPayload,
@@ -402,6 +523,7 @@ mod tests {
             pipeline_rules: None,
             set_connection_keep_alive: Some(true),
             update_content_length: Some(true),
+            ..Default::default()
         };
 
         let reconstructed = reconstruct_fuzzer_request(&config, Some("999"), "0-0");
@@ -459,6 +581,7 @@ mod tests {
             pipeline_rules: None,
             set_connection_keep_alive: Some(true),
             update_content_length: Some(true),
+            ..Default::default()
         };
 
         let json_payload = serde_json::to_string(&vec!["admin", "secret123"]).unwrap();
@@ -515,6 +638,7 @@ mod tests {
             pipeline_rules: None,
             set_connection_keep_alive: Some(true),
             update_content_length: Some(true),
+            ..Default::default()
         };
 
         // Param 0, val 0 -> index 0
@@ -585,6 +709,7 @@ mod tests {
             pipeline_rules: None,
             set_connection_keep_alive: Some(true),
             update_content_length: Some(true),
+            ..Default::default()
         };
 
         // Total 2 * 3 = 6 combos
@@ -658,6 +783,7 @@ mod tests {
             pipeline_rules: None,
             set_connection_keep_alive: Some(true),
             update_content_length: Some(true),
+            ..Default::default()
         };
 
         // Zipped min length is min(3, 2) = 2
@@ -679,5 +805,46 @@ mod tests {
         // Test Echo
         config.fuzzing_attack_type = Some("echo".to_string());
         assert_eq!(calculate_total_targets(&config), 3);
+    }
+
+    #[test]
+    fn test_extract_location_header() {
+        let resp1 = "HTTP/1.1 302 Found\r\nLocation: /dashboard\r\nContent-Length: 0\r\n\r\n";
+        assert_eq!(extract_location_header(resp1), Some("/dashboard".to_string()));
+
+        let resp2 = "HTTP/1.1 301 Moved\nlocation: https://example.com/api\n\n";
+        assert_eq!(extract_location_header(resp2), Some("https://example.com/api".to_string()));
+
+        let resp3 = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n";
+        assert_eq!(extract_location_header(resp3), None);
+    }
+
+    #[test]
+    fn test_is_same_site() {
+        assert!(is_same_site("example.com", "example.com"));
+        assert!(is_same_site("example.com:8080", "example.com:443"));
+        assert!(is_same_site("sub1.example.com", "sub2.example.com"));
+        assert!(is_same_site("api.test.org", "test.org"));
+        assert!(!is_same_site("example.com", "other.com"));
+        assert!(!is_same_site("example.com", "example.org"));
+    }
+
+    #[test]
+    fn test_build_redirect_request() {
+        let original_post = "POST /login HTTP/1.1\r\nHost: auth.example.com\r\nContent-Length: 11\r\n\r\nuser=admin";
+        
+        // 302 switches to GET and removes body
+        let req_302 = build_redirect_request(original_post, "https://app.example.com/dashboard?id=1", 302).unwrap();
+        assert!(req_302.starts_with("GET /dashboard?id=1 HTTP/1.1\r\n"));
+        assert!(req_302.contains("Host: app.example.com\r\n"));
+        assert!(!req_302.contains("Content-Length:"));
+        assert!(!req_302.contains("user=admin"));
+
+        // 307 preserves POST and body
+        let req_307 = build_redirect_request(original_post, "https://auth.example.com/v2/login", 307).unwrap();
+        assert!(req_307.starts_with("POST /v2/login HTTP/1.1\r\n"));
+        assert!(req_307.contains("Host: auth.example.com\r\n"));
+        assert!(req_307.contains("Content-Length: 10\r\n"));
+        assert!(req_307.ends_with("user=admin"));
     }
 }

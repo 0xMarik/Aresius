@@ -7,8 +7,8 @@ import { useAppDispatch, useAppSelector } from "@/hooks/redux";
 import { useProjectId } from "@/hooks/useProjectId";
 import { PayloadCodeEditor } from "./PayloadCodeEditor";
 import { Checkbox } from "@/components/ui/checkbox";
-import { loadValuesParam, setDelayMs, setNumThreads, setSelectedParameter, selectFuzzerState, persistFuzzerSession, setPipelineScope, addPipelineRule, updatePipelineRule, removePipelineRule, reorderPipelineRules, setPayloadSource, setNumbersConfig, setNullPayloadConfig, setFileConfig, setConnectionKeepAlive, setUpdateContentLength } from "@/store/slices/fuzzerSlice";
-import { FuzzingAttackType, PreprocessingRule, PayloadSource, NumbersPayloadConfig, NullPayloadConfig, FilePayloadConfig } from "@/types/fuzzer.type";
+import { loadValuesParam, setDelayMs, setNumThreads, setSelectedParameter, selectFuzzerState, persistFuzzerSession, setPipelineScope, addPipelineRule, updatePipelineRule, removePipelineRule, reorderPipelineRules, setPayloadSource, setNumbersConfig, setNullPayloadConfig, setFileConfig, setConnectionKeepAlive, setUpdateContentLength, setRedirectionMode, setMaxRedirects, setRetryDelayMs, setMaxRetries } from "@/store/slices/fuzzerSlice";
+import { FuzzingAttackType, PreprocessingRule, PayloadSource, NumbersPayloadConfig, NullPayloadConfig, FilePayloadConfig, RedirectionMode } from "@/types/fuzzer.type";
 import { selectAllProjectFiles, fetchProjectFiles } from "@/store/slices/filesSlice";
 import { IconUpload } from "@tabler/icons-react";
 import { EmptyState } from "../ui/empty-state";
@@ -716,6 +716,106 @@ export default function PayloadConfigurator() {
                                     Automatically recalculates and updates the <code>Content-Length</code> header to match the actual byte length of the body after payload substitution.
                                 </p>
                             </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="pt-3 border-t space-y-3">
+                    <div className="space-y-1">
+                        <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Redirections</h3>
+                    </div>
+
+                    <div className="space-y-2 pt-1">
+                        {(
+                            [
+                                { id: 'always', label: 'Always' },
+                                { id: 'in_scope', label: 'In-scope' },
+                                { id: 'never', label: 'Never' },
+                                { id: 'same_site', label: 'Same-site' },
+                            ] as { id: RedirectionMode; label: string }[]
+                        ).map((opt) => (
+                            <div key={opt.id} className="flex items-center space-x-2.5">
+                                <Checkbox
+                                    id={`redirect-mode-${opt.id}`}
+                                    checked={(session.fuzzConfig.redirectionMode ?? 'always') === opt.id}
+                                    onCheckedChange={() => {
+                                        if (projectId) {
+                                            dispatch(setRedirectionMode({ mode: opt.id, projectId }));
+                                            dispatch(persistFuzzerSession(projectId, activeSessionIndex));
+                                        }
+                                    }}
+                                />
+                                <Label
+                                    htmlFor={`redirect-mode-${opt.id}`}
+                                    className="text-xs font-normal cursor-pointer select-none"
+                                >
+                                    {opt.label}
+                                </Label>
+                            </div>
+                        ))}
+                    </div>
+
+                    <div className="flex items-center justify-between pt-1">
+                        <Label htmlFor="maxRedirects" className="text-xs font-normal">Max redirects</Label>
+                        <Input
+                            id="maxRedirects"
+                            type="number"
+                            min={0}
+                            max={100}
+                            value={session.fuzzConfig.maxRedirects ?? 5}
+                            onChange={(e) => {
+                                const val = parseInt(e.target.value);
+                                if (projectId && !isNaN(val)) {
+                                    dispatch(setMaxRedirects({ maxRedirects: Math.max(0, val), projectId }));
+                                    dispatch(persistFuzzerSession(projectId, activeSessionIndex));
+                                }
+                            }}
+                            className="h-8 font-mono text-xs w-36 text-left"
+                        />
+                    </div>
+                </div>
+
+                <div className="pt-3 border-t space-y-3">
+                    <div className="space-y-1">
+                        <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Error Handling</h3>
+                    </div>
+
+                    <div className="space-y-2 pt-1">
+                        <div className="flex items-center justify-between">
+                            <Label htmlFor="retryDelay" className="text-xs font-normal">Delay (ms) before retry</Label>
+                            <Input
+                                id="retryDelay"
+                                type="number"
+                                min={0}
+                                value={session.fuzzConfig.retryDelayMs ?? 0}
+                                onChange={(e) => {
+                                    const val = parseInt(e.target.value);
+                                    if (projectId && !isNaN(val)) {
+                                        dispatch(setRetryDelayMs({ delayMs: Math.max(0, val), projectId }));
+                                        dispatch(persistFuzzerSession(projectId, activeSessionIndex));
+                                    }
+                                }}
+                                className="h-8 font-mono text-xs w-36 text-left"
+                            />
+                        </div>
+
+                        <div className="flex items-center justify-between">
+                            <Label htmlFor="maxRetries" className="text-xs font-normal">Max retries</Label>
+                            <Input
+                                id="maxRetries"
+                                type="number"
+                                min={0}
+                                max={50}
+                                value={session.fuzzConfig.maxRetries ?? 0}
+                                onChange={(e) => {
+                                    const val = parseInt(e.target.value);
+                                    if (projectId && !isNaN(val)) {
+                                        dispatch(setMaxRetries({ maxRetries: Math.max(0, val), projectId }));
+                                        dispatch(persistFuzzerSession(projectId, activeSessionIndex));
+                                    }
+                                }}
+                                className="h-8 font-mono text-xs w-36 text-left"
+                            />
                         </div>
                     </div>
                 </div>

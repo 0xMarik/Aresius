@@ -3621,6 +3621,7 @@ mod tests {
             pipeline_rules: None,
             set_connection_keep_alive: Some(true),
             update_content_length: Some(true),
+            ..Default::default()
         };
 
         let item = LazyFuzzerEvaluableItem::new(
