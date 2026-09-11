@@ -13,4 +13,6 @@ INSERT OR IGNORE INTO global_settings (key, value) VALUES
     ('proxy_auto_fallback_port', 'true'),
     ('proxy_auto_fallback_loopback', 'true'),
     ('fuzzer_show_uncompleted_requests', 'false'),
-    ('show_splashscreen', 'true');
+    ('show_splashscreen', 'true'),
+    ('startup_project_mode', 'last_used'),
+    ('startup_project_specific_id', NULL);

@@ -1,6 +1,3 @@
--- ─────────────────────────────────────────────────────────────────────────────
--- MATCH & REPLACE COLLECTIONS TABLE
--- ─────────────────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS match_replace_collections (
     id          TEXT PRIMARY KEY NOT NULL,
     project_id  TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -10,9 +7,6 @@ CREATE TABLE IF NOT EXISTS match_replace_collections (
 
 CREATE INDEX IF NOT EXISTS idx_match_replace_collections_proj ON match_replace_collections (project_id);
 
--- ─────────────────────────────────────────────────────────────────────────────
--- MATCH & REPLACE RULES TABLE
--- ─────────────────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS match_replace_rules (
     id                 TEXT PRIMARY KEY NOT NULL,
     collection_id      TEXT NOT NULL REFERENCES match_replace_collections(id) ON DELETE CASCADE,

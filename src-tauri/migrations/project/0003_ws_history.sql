@@ -1,4 +1,3 @@
--- 20. WebSocket Streams & Messages
 CREATE TABLE IF NOT EXISTS ws_streams (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     project_id    TEXT    NOT NULL REFERENCES projects(id) ON DELETE CASCADE,

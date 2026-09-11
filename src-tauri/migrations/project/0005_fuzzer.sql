@@ -1,15 +1,19 @@
 -- 1. Fuzzer Sessions (Configuration per session)
 CREATE TABLE fuzzer_sessions (
-    id            TEXT    PRIMARY KEY NOT NULL, -- UUID v4 or string ID
-    project_id    TEXT    NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-    name          TEXT    NOT NULL DEFAULT 'New Session',
-    raw_request   TEXT    NOT NULL DEFAULT '',
-    attack_type   TEXT    NOT NULL DEFAULT 'rotator',
-    num_threads   INTEGER NOT NULL DEFAULT 4,
-    delay_ms      INTEGER NOT NULL DEFAULT 0,
-    target_url    TEXT    NOT NULL DEFAULT '',
-    sort_order    INTEGER NOT NULL DEFAULT 0,
-    created_at    INTEGER NOT NULL
+    id                        TEXT    PRIMARY KEY NOT NULL, -- UUID v4 or string ID
+    project_id                TEXT    NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    name                      TEXT    NOT NULL DEFAULT 'New Session',
+    raw_request               TEXT    NOT NULL DEFAULT '',
+    attack_type               TEXT    NOT NULL DEFAULT 'rotator',
+    num_threads               INTEGER NOT NULL DEFAULT 4,
+    delay_ms                  INTEGER NOT NULL DEFAULT 0,
+    target_url                TEXT    NOT NULL DEFAULT '',
+    sort_order                INTEGER NOT NULL DEFAULT 0,
+    created_at                INTEGER NOT NULL,
+    pipeline_scope            TEXT    NOT NULL DEFAULT 'all',
+    pipeline_rules            TEXT    NOT NULL DEFAULT '[]',
+    set_connection_keep_alive INTEGER NOT NULL DEFAULT 1,
+    update_content_length     INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX idx_fuzzer_sessions_project_id ON fuzzer_sessions (project_id);
 
@@ -25,7 +29,8 @@ CREATE TABLE fuzzer_parameters (
     original_text  TEXT    NOT NULL,
     is_active      INTEGER NOT NULL DEFAULT 1,
     range_id       TEXT    NOT NULL,
-    sort_order     INTEGER NOT NULL DEFAULT 0
+    sort_order     INTEGER NOT NULL DEFAULT 0,
+    pipeline_rules TEXT    NOT NULL DEFAULT '[]'
 );
 CREATE INDEX idx_fuzzer_parameters_session_id ON fuzzer_parameters (session_id);
 
@@ -104,6 +109,7 @@ CREATE INDEX idx_fuzzer_requests_sort_code ON fuzzer_requests (run_id, status_co
 CREATE INDEX idx_fuzzer_requests_sort_duration ON fuzzer_requests (run_id, response_time_ms);
 CREATE INDEX idx_fuzzer_requests_sort_length ON fuzzer_requests (run_id, response_length);
 CREATE INDEX idx_fuzzer_requests_chunk ON fuzzer_requests (chunk_id);
+CREATE INDEX idx_fuzzer_requests_sort_payload ON fuzzer_requests (run_id, payload);
 
 -- 7. Fuzzer UI State
 CREATE TABLE IF NOT EXISTS fuzzer_ui_state (

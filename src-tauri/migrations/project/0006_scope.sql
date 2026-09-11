@@ -1,7 +1,3 @@
--- ─────────────────────────────────────────────────────────────────────────────
--- 1. SCOPES TABLE
--- Stores named scope definitions for each project.
--- ─────────────────────────────────────────────────────────────────────────────
 CREATE TABLE scopes (
     id          TEXT PRIMARY KEY NOT NULL,          -- UUID v4
     project_id  TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -16,11 +12,6 @@ CREATE TABLE scopes (
 CREATE INDEX idx_scopes_project_id ON scopes (project_id);
 CREATE INDEX idx_scopes_project_active ON scopes (project_id, is_active);
 
-
--- ─────────────────────────────────────────────────────────────────────────────
--- 2. SCOPE RULES TABLE
--- Stores individual allow / deny rules within each scope.
--- ─────────────────────────────────────────────────────────────────────────────
 CREATE TABLE scope_rules (
     id           TEXT PRIMARY KEY NOT NULL,         -- UUID v4
     scope_id     TEXT NOT NULL REFERENCES scopes(id) ON DELETE CASCADE,
@@ -38,11 +29,6 @@ CREATE TABLE scope_rules (
 CREATE INDEX idx_scope_rules_scope_id ON scope_rules (scope_id);
 CREATE INDEX idx_scope_rules_scope_type ON scope_rules (scope_id, rule_type, enabled);
 
-
--- ─────────────────────────────────────────────────────────────────────────────
--- 3. INTERCEPTOR & PROXY SETTINGS TABLE
--- Persists proxy intercept settings per project.
--- ─────────────────────────────────────────────────────────────────────────────
 CREATE TABLE interceptor_settings (
     project_id           TEXT PRIMARY KEY NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     requests_enabled     INTEGER NOT NULL DEFAULT 0 CHECK (requests_enabled IN (0, 1)),

@@ -1,4 +1,3 @@
--- 19. Project Files (Wordlists & Imported Files)
 CREATE TABLE IF NOT EXISTS project_files (
     id          TEXT PRIMARY KEY NOT NULL,      -- UUID v4
     project_id  TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
