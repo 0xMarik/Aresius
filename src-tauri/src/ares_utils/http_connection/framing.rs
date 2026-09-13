@@ -12,11 +12,32 @@ use anyhow::{anyhow, Result};
 ///
 /// Returns the byte offset where the separator begins, or `None` if it
 /// hasn't arrived yet.
-pub(super) fn locate_header_terminator(buffer: &[u8], scan_from: &mut usize) -> Option<usize> {
+/// Incrementally looks for the header/body separator (`"\r\n\r\n"` or bare `"\n\n"`)
+/// in `buffer`. Only scans the region from `scan_from` onward rather than
+/// re-scanning the whole buffer on every call, then advances `scan_from`.
+///
+/// Returns `(terminator_start, terminator_len)` or `None` if not yet arrived.
+pub(super) fn locate_header_terminator(
+    buffer: &[u8],
+    scan_from: &mut usize,
+) -> Option<(usize, usize)> {
     let scan_start = scan_from.saturating_sub(3);
-    match find_subslice(&buffer[scan_start..], b"\r\n\r\n") {
-        Some(rel_pos) => Some(scan_start + rel_pos),
-        None => {
+    let slice = &buffer[scan_start..];
+
+    let crlf = find_subslice(slice, b"\r\n\r\n").map(|p| (scan_start + p, 4));
+    let lf = find_subslice(slice, b"\n\n").map(|p| (scan_start + p, 2));
+
+    match (crlf, lf) {
+        (Some(c), Some(l)) => {
+            if c.0 <= l.0 {
+                Some(c)
+            } else {
+                Some(l)
+            }
+        }
+        (Some(c), None) => Some(c),
+        (None, Some(l)) => Some(l),
+        (None, None) => {
             *scan_from = buffer.len();
             None
         }
@@ -233,3 +254,34 @@ pub(super) fn parse_request_framing(header_block: &str) -> Result<RequestFraming
         body_framing,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_locate_header_terminator_crlf() {
+        let buf = b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\nbody content";
+        let mut scan_from = 0;
+        let res = locate_header_terminator(buf, &mut scan_from);
+        assert_eq!(res, Some((33, 4)));
+        assert_eq!(&buf[33..37], b"\r\n\r\n");
+    }
+
+    #[test]
+    fn test_locate_header_terminator_lf() {
+        let buf = b"GET / HTTP/1.1\nHost: example.com\n\nbody content";
+        let mut scan_from = 0;
+        let res = locate_header_terminator(buf, &mut scan_from);
+        assert_eq!(res, Some((32, 2)));
+        assert_eq!(&buf[32..34], b"\n\n");
+    }
+
+    #[test]
+    fn test_locate_header_terminator_none() {
+        let buf = b"GET / HTTP/1.1\r\nHost: example.com\r\n";
+        let mut scan_from = 0;
+        assert_eq!(locate_header_terminator(buf, &mut scan_from), None);
+    }
+}
+

@@ -151,30 +151,43 @@ impl MatchReplaceEngine {
         })
     }
 
-    /// Apply all matching request rules to raw request bytes
+    /// Apply all matching request rules to raw request bytes without corrupting binary bodies
     pub async fn apply_request_transformations(
         &self,
         raw_request_bytes: &[u8],
         is_in_scope: bool,
     ) -> (Vec<u8>, bool) {
-        let raw_str = String::from_utf8_lossy(raw_request_bytes);
-        let normalized = raw_str.replace("\r\n", "\n");
-        let parts: Vec<&str> = normalized.splitn(2, "\n\n").collect();
+        let sep = raw_request_bytes
+            .windows(4)
+            .position(|w| w == b"\r\n\r\n")
+            .map(|p| (p, 4))
+            .or_else(|| {
+                raw_request_bytes
+                    .windows(2)
+                    .position(|w| w == b"\n\n")
+                    .map(|p| (p, 2))
+            });
 
-        let header_section = parts[0];
-        let body_section = if parts.len() > 1 { parts[1] } else { "" };
+        let (header_bytes, body_bytes) = match sep {
+            Some((pos, len)) => (&raw_request_bytes[..pos], &raw_request_bytes[pos + len..]),
+            None => (raw_request_bytes, &[][..]),
+        };
 
-        let lines: Vec<String> = header_section.lines().map(|s| s.to_string()).collect();
+        let header_str = String::from_utf8_lossy(header_bytes);
+        let lines: Vec<String> = header_str
+            .lines()
+            .map(|s| s.trim_end_matches('\r').to_string())
+            .collect();
         if lines.is_empty() {
             return (raw_request_bytes.to_vec(), false);
         }
 
         let mut first_line = lines[0].clone();
         let mut header_lines = lines[1..].to_vec();
-        let mut current_body = body_section.to_string();
 
         let guard = self.state.read().await;
         let mut modified = false;
+        let mut modified_body: Option<Vec<u8>> = None;
 
         for rule in guard.rules.iter().filter(|r| r.applies(is_in_scope)) {
             match rule.rule_type {
@@ -197,9 +210,13 @@ impl MatchReplaceEngine {
                     }
                 }
                 MatchReplaceType::RequestBody => {
-                    let updated = rule.replace_in_string(&current_body);
-                    if updated != current_body {
-                        current_body = updated;
+                    let current_text = modified_body
+                        .as_ref()
+                        .map(|b| String::from_utf8_lossy(b).to_string())
+                        .unwrap_or_else(|| String::from_utf8_lossy(body_bytes).to_string());
+                    let updated = rule.replace_in_string(&current_text);
+                    if updated != current_text {
+                        modified_body = Some(updated.into_bytes());
                         modified = true;
                     }
                 }
@@ -214,18 +231,23 @@ impl MatchReplaceEngine {
         // Clean empty header lines if any rule removed a header
         header_lines.retain(|l| !l.trim().is_empty());
 
+        let final_body_len = if let Some(ref mb) = modified_body {
+            mb.len()
+        } else {
+            body_bytes.len()
+        };
+
         // Resync Content-Length if body is present or modified
-        let body_bytes = current_body.as_bytes();
         let mut has_content_length = false;
         for line in header_lines.iter_mut() {
             if line.to_ascii_lowercase().starts_with("content-length:") {
-                *line = format!("Content-Length: {}", body_bytes.len());
+                *line = format!("Content-Length: {}", final_body_len);
                 has_content_length = true;
             }
         }
 
-        if !has_content_length && (!current_body.is_empty() || parts.len() > 1) {
-            header_lines.push(format!("Content-Length: {}", body_bytes.len()));
+        if !has_content_length && (final_body_len > 0 || sep.is_some()) {
+            header_lines.push(format!("Content-Length: {}", final_body_len));
         }
 
         let mut reconstructed = format!("{}\r\n", first_line);
@@ -233,9 +255,15 @@ impl MatchReplaceEngine {
             reconstructed.push_str(&format!("{}\r\n", h));
         }
         reconstructed.push_str("\r\n");
-        reconstructed.push_str(&current_body);
 
-        (reconstructed.into_bytes(), true)
+        let mut result_bytes = reconstructed.into_bytes();
+        if let Some(mb) = modified_body {
+            result_bytes.extend_from_slice(&mb);
+        } else {
+            result_bytes.extend_from_slice(body_bytes);
+        }
+
+        (result_bytes, true)
     }
 
     /// Apply matching response header rules
@@ -419,6 +447,39 @@ mod tests {
         assert!(did_mod);
         assert!(!mod_headers.contains("Content-Security-Policy"));
         assert!(mod_headers.contains("Content-Type: text/html"));
+    }
+
+    #[tokio::test]
+    async fn test_request_header_rule_preserves_binary_body() {
+        let engine = MatchReplaceEngine::new();
+        let rule = MatchReplaceRule {
+            id: "r1".to_string(),
+            name: "Add Header".to_string(),
+            enabled: true,
+            rule_type: "request_header".to_string(),
+            match_pattern: "Host: example.com".to_string(),
+            replace: "Host: example.org".to_string(),
+            comment: "".to_string(),
+            is_regex: Some(false),
+            is_case_sensitive: Some(false),
+            only_in_scope: Some(false),
+        };
+
+        engine.update_rules(&[rule]).await;
+
+        let binary_body = vec![0xFF, 0xFE, 0x00, 0xBA, 0xDE, 0xAD, 0xBE, 0xEF];
+        let mut raw_request = b"POST /upload HTTP/1.1\r\nHost: example.com\r\nContent-Length: 8\r\n\r\n".to_vec();
+        raw_request.extend_from_slice(&binary_body);
+
+        let (modified, did_mod) = engine.apply_request_transformations(&raw_request, true).await;
+        assert!(did_mod);
+
+        // Check that headers were modified
+        assert!(String::from_utf8_lossy(&modified).contains("Host: example.org"));
+
+        // Check that binary body at the end remains byte-exact
+        let body_offset = modified.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
+        assert_eq!(&modified[body_offset..], &binary_body[..]);
     }
 }
 

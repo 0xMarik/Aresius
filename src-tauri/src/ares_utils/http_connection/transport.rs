@@ -298,6 +298,70 @@ pub(super) async fn connect_stream(
     Err(last_err.unwrap_or_else(|| anyhow!("Connection to {}:{} failed after {} attempts", host, port, MAX_CONNECT_RETRIES)))
 }
 
+/// A stream wrapper that yields bytes from an in-memory prefix buffer first,
+/// then delegates all remaining read/write calls to the underlying socket.
+pub struct PrefixedStream<S> {
+    prefix: Vec<u8>,
+    pos: usize,
+    inner: S,
+}
+
+impl<S> PrefixedStream<S> {
+    pub fn new(prefix: Vec<u8>, inner: S) -> Self {
+        Self {
+            prefix,
+            pos: 0,
+            inner,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn into_inner(self) -> S {
+        self.inner
+    }
+}
+
+impl<S: tokio::io::AsyncRead + Unpin> tokio::io::AsyncRead for PrefixedStream<S> {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        if self.pos < self.prefix.len() {
+            let available = &self.prefix[self.pos..];
+            let to_copy = available.len().min(buf.remaining());
+            buf.put_slice(&available[..to_copy]);
+            self.pos += to_copy;
+            return std::task::Poll::Ready(Ok(()));
+        }
+        std::pin::Pin::new(&mut self.inner).poll_read(cx, buf)
+    }
+}
+
+impl<S: tokio::io::AsyncWrite + Unpin> tokio::io::AsyncWrite for PrefixedStream<S> {
+    fn poll_write(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        std::pin::Pin::new(&mut self.inner).poll_write(cx, buf)
+    }
+
+    fn poll_flush(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -323,6 +387,32 @@ mod tests {
         assert!(!from_cache);
         assert_eq!(addrs.len(), 1);
         assert_eq!(addrs[0], "127.0.0.1:8080".parse::<SocketAddr>().unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_prefixed_stream_read_and_write() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let prefix = b"hello ".to_vec();
+        let inner = std::io::Cursor::new(b"world".to_vec());
+        let mut stream = PrefixedStream::new(prefix, inner);
+
+        let mut output = Vec::new();
+        stream.read_to_end(&mut output).await.unwrap();
+        assert_eq!(output, b"hello world");
+
+        let empty_prefix = Vec::new();
+        let inner2 = std::io::Cursor::new(b"direct stream".to_vec());
+        let mut stream2 = PrefixedStream::new(empty_prefix, inner2);
+        let mut output2 = Vec::new();
+        stream2.read_to_end(&mut output2).await.unwrap();
+        assert_eq!(output2, b"direct stream");
+
+        // Test writing through PrefixedStream
+        let mut write_buf = std::io::Cursor::new(Vec::new());
+        let mut stream3 = PrefixedStream::new(Vec::new(), &mut write_buf);
+        stream3.write_all(b"write test").await.unwrap();
+        assert_eq!(write_buf.into_inner(), b"write test");
     }
 }
 

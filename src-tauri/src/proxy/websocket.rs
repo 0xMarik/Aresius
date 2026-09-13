@@ -116,39 +116,6 @@ pub async fn handle_websocket_tunnel<C, S>(
                         Message::Frame(_) => continue,
                     };
 
-                    // Persist message to database & emit event
-                    let db_state: tauri::State<DbState> = app_c2s.state();
-                    if let Ok(pool) = db_state.pool().await {
-                        if let Ok(msg_id) = save_ws_message(
-                            &pool,
-                            stream_id,
-                            &proj_c2s,
-                            "ClientToServer",
-                            &msg_type,
-                            &payload_str,
-                            len,
-                            sent_at,
-                        )
-                        .await
-                        {
-                            app_c2s
-                                .emit(
-                                    "ws_message_received",
-                                    WsMessagePayload {
-                                        id: msg_id,
-                                        stream_id,
-                                        project_id: proj_c2s.clone(),
-                                        direction: "ClientToServer".to_string(),
-                                        message_type: msg_type.clone(),
-                                        payload: payload_str.clone(),
-                                        payload_length: len,
-                                        sent_at,
-                                    },
-                                )
-                                .ok();
-                        }
-                    }
-
                     if let Some(f_msg) = forward_msg {
                         let is_close = matches!(f_msg, Message::Close(_));
                         if server_write.send(f_msg).await.is_err() {
@@ -158,6 +125,45 @@ pub async fn handle_websocket_tunnel<C, S>(
                             break;
                         }
                     }
+
+                    // Persist message to database & emit event in background
+                    let app_bg = app_c2s.clone();
+                    let proj_bg = proj_c2s.clone();
+                    let msg_type_bg = msg_type;
+                    let payload_bg = payload_str;
+                    tokio::spawn(async move {
+                        let db_state: tauri::State<DbState> = app_bg.state();
+                        if let Ok(pool) = db_state.pool().await {
+                            if let Ok(msg_id) = save_ws_message(
+                                &pool,
+                                stream_id,
+                                &proj_bg,
+                                "ClientToServer",
+                                &msg_type_bg,
+                                &payload_bg,
+                                len,
+                                sent_at,
+                            )
+                            .await
+                            {
+                                app_bg
+                                    .emit(
+                                        "ws_message_received",
+                                        WsMessagePayload {
+                                            id: msg_id,
+                                            stream_id,
+                                            project_id: proj_bg,
+                                            direction: "ClientToServer".to_string(),
+                                            message_type: msg_type_bg,
+                                            payload: payload_bg,
+                                            payload_length: len,
+                                            sent_at,
+                                        },
+                                    )
+                                    .ok();
+                            }
+                        }
+                    });
                 }
                 Err(e) => {
                     tracing::debug!("WebSocket client read error on stream {}: {}", stream_id, e);
@@ -213,38 +219,6 @@ pub async fn handle_websocket_tunnel<C, S>(
                         Message::Frame(_) => continue,
                     };
 
-                    let db_state: tauri::State<DbState> = app_s2c.state();
-                    if let Ok(pool) = db_state.pool().await {
-                        if let Ok(msg_id) = save_ws_message(
-                            &pool,
-                            stream_id,
-                            &proj_s2c,
-                            "ServerToClient",
-                            &msg_type,
-                            &payload_str,
-                            len,
-                            sent_at,
-                        )
-                        .await
-                        {
-                            app_s2c
-                                .emit(
-                                    "ws_message_received",
-                                    WsMessagePayload {
-                                        id: msg_id,
-                                        stream_id,
-                                        project_id: proj_s2c.clone(),
-                                        direction: "ServerToClient".to_string(),
-                                        message_type: msg_type.clone(),
-                                        payload: payload_str.clone(),
-                                        payload_length: len,
-                                        sent_at,
-                                    },
-                                )
-                                .ok();
-                        }
-                    }
-
                     if let Some(f_msg) = forward_msg {
                         let is_close = matches!(f_msg, Message::Close(_));
                         if client_write.send(f_msg).await.is_err() {
@@ -254,6 +228,45 @@ pub async fn handle_websocket_tunnel<C, S>(
                             break;
                         }
                     }
+
+                    // Persist message to database & emit event in background
+                    let app_bg = app_s2c.clone();
+                    let proj_bg = proj_s2c.clone();
+                    let msg_type_bg = msg_type;
+                    let payload_bg = payload_str;
+                    tokio::spawn(async move {
+                        let db_state: tauri::State<DbState> = app_bg.state();
+                        if let Ok(pool) = db_state.pool().await {
+                            if let Ok(msg_id) = save_ws_message(
+                                &pool,
+                                stream_id,
+                                &proj_bg,
+                                "ServerToClient",
+                                &msg_type_bg,
+                                &payload_bg,
+                                len,
+                                sent_at,
+                            )
+                            .await
+                            {
+                                app_bg
+                                    .emit(
+                                        "ws_message_received",
+                                        WsMessagePayload {
+                                            id: msg_id,
+                                            stream_id,
+                                            project_id: proj_bg,
+                                            direction: "ServerToClient".to_string(),
+                                            message_type: msg_type_bg,
+                                            payload: payload_bg,
+                                            payload_length: len,
+                                            sent_at,
+                                        },
+                                    )
+                                    .ok();
+                            }
+                        }
+                    });
                 }
                 Err(e) => {
                     tracing::debug!("WebSocket server read error on stream {}: {}", stream_id, e);

@@ -23,7 +23,7 @@ use framing::{body_is_complete, locate_header_terminator, parse_response_framing
 use std::time::{Duration, Instant};
 use tokio::time::timeout;
 use transport::connect_stream;
-pub use transport::Connection;
+pub use transport::{Connection, PrefixedStream};
 
 #[derive(Clone, Debug)]
 pub struct ConnectionOptions {
@@ -96,6 +96,7 @@ pub struct HttpConnection {
     pub port: u16,
     pub disconnected: bool,
     pub use_tls: bool,
+    pub unread_buffer: Vec<u8>,
     options: ConnectionOptions,
 }
 
@@ -121,6 +122,7 @@ impl HttpConnection {
             port,
             disconnected: false,
             use_tls,
+            unread_buffer: Vec::new(),
             options,
         })
     }
@@ -128,11 +130,21 @@ impl HttpConnection {
     pub async fn reconnect(&mut self) -> Result<()> {
         self.connection =
             connect_stream(&self.host, self.port, self.use_tls, &self.options).await?;
+        self.unread_buffer.clear();
         Ok(())
     }
 
     pub fn into_connection(self) -> Connection {
         self.connection
+    }
+
+    #[allow(dead_code)]
+    pub fn into_parts(self) -> (Connection, Vec<u8>) {
+        (self.connection, self.unread_buffer)
+    }
+
+    pub fn into_prefixed_connection(self) -> PrefixedStream<Connection> {
+        PrefixedStream::new(self.unread_buffer, self.connection)
     }
 
     pub async fn send_request(&mut self, http_request: &[u8]) -> Result<HttpResponse> {
@@ -205,13 +217,9 @@ impl HttpConnection {
         // with a 1xx, 204, or 304 status, is *always* terminated by the
         // blank line after headers -- Content-Length and Transfer-Encoding
         // are ignored for framing purposes because no body is ever sent.
-        // Without this, a HEAD response carrying a Content-Length copied
-        // from the equivalent GET (very common) would make us sit here
-        // waiting for body bytes that are never coming, until the idle/
-        // total timeout eventually fires.
         let is_head_request = http_request.starts_with(b"HEAD ");
 
-        let mut buffer: Vec<u8> = Vec::with_capacity(65536);
+        let mut buffer: Vec<u8> = std::mem::take(&mut self.unread_buffer);
         let mut chunk = vec![0u8; 65536];
 
         let mut header_scan_from = 0usize;
@@ -220,6 +228,34 @@ impl HttpConnection {
         let mut chunk_cursor = 0usize; // parsed-so-far offset within the body
 
         loop {
+            // First check if unread_buffer already contained full headers
+            if framing.is_none() {
+                if let Some((pos, len)) = locate_header_terminator(&buffer, &mut header_scan_from) {
+                    let header_block = String::from_utf8_lossy(&buffer[..pos]);
+                    let parsed = parse_response_framing(&header_block, is_head_request)?;
+                    if parsed.connection_close {
+                        self.disconnected = true;
+                    }
+                    header_end_pos = pos + len;
+                    framing = Some(parsed.body_framing);
+                }
+            }
+
+            if let Some(body_framing) = framing {
+                if let Some(total_len) = body_is_complete(
+                    &buffer,
+                    header_end_pos,
+                    body_framing,
+                    &mut chunk_cursor,
+                )? {
+                    if total_len < buffer.len() {
+                        self.unread_buffer = buffer[total_len..].to_vec();
+                    }
+                    buffer.truncate(total_len);
+                    break;
+                }
+            }
+
             // Enforce the size cap before doing any more reading.
             if buffer.len() > self.options.max_response_size {
                 return Err(anyhow!(
@@ -230,45 +266,43 @@ impl HttpConnection {
 
             match self.read_next_chunk(&mut chunk).await? {
                 ReadOutcome::Closed => {
-                    // Server closed the connection. Whether or not it sent
-                    // Connection: close, the socket is now dead -- mark it
-                    // so the next call reconnects instead of writing to a
-                    // closed stream.
+                    // Server closed the connection.
                     self.disconnected = true;
+
+                    if framing.is_none() && buffer.is_empty() {
+                        return Err(anyhow!(
+                            "Connection closed by server before response headers were received"
+                        ));
+                    }
+                    if framing.is_none() {
+                        return Err(anyhow!(
+                            "Connection closed prematurely while reading response headers"
+                        ));
+                    }
+                    if let Some(BodyFraming::ContentLength(expected)) = framing {
+                        let actual = buffer.len().saturating_sub(header_end_pos);
+                        if actual < expected {
+                            return Err(anyhow!(
+                                "Connection closed prematurely: expected {} body bytes, got {}",
+                                expected,
+                                actual
+                            ));
+                        }
+                    }
+                    if let Some(BodyFraming::Chunked) = framing {
+                        return Err(anyhow!(
+                            "Connection closed prematurely before chunked transfer was terminated"
+                        ));
+                    }
+                    // For BodyFraming::UntilClose, connection close is the expected terminator!
                     break;
                 }
                 ReadOutcome::Data(n) => {
                     buffer.extend_from_slice(&chunk[..n]);
-
-                    if framing.is_none() {
-                        if let Some(pos) = locate_header_terminator(&buffer, &mut header_scan_from)
-                        {
-                            let header_block = String::from_utf8_lossy(&buffer[..pos]);
-                            let parsed = parse_response_framing(&header_block, is_head_request)?;
-                            if parsed.connection_close {
-                                self.disconnected = true;
-                            }
-                            header_end_pos = pos + 4;
-                            framing = Some(parsed.body_framing);
-                        }
-                    }
-
-                    if let Some(body_framing) = framing {
-                        if let Some(total_len) = body_is_complete(
-                            &buffer,
-                            header_end_pos,
-                            body_framing,
-                            &mut chunk_cursor,
-                        )? {
-                            buffer.truncate(total_len);
-                            break;
-                        }
-                    }
                 }
                 ReadOutcome::Idle => {
-                    if framing.is_some() && !buffer.is_empty() {
-                        // No Content-Length/chunked info and the peer went
-                        // idle -- treat what we have as the full response.
+                    if matches!(framing, Some(BodyFraming::UntilClose)) && !buffer.is_empty() {
+                        // For UntilClose only, an idle stall is treated as complete response
                         break;
                     }
                     return Err(anyhow!(
@@ -281,26 +315,18 @@ impl HttpConnection {
 
         let header_end = match framing {
             Some(_) => header_end_pos,
-            // Connection closed before headers finished -- treat everything
-            // received as headers so callers can still see what came back.
             None => buffer.len(),
         };
 
         let headers = String::from_utf8_lossy(&buffer[..header_end]).to_string();
         let raw_body = &buffer[header_end..];
 
-        // body_is_complete (via scan_chunked_body) only located *where* the
-        // chunked message ends; still need to strip the chunk-size
-        // lines/CRLFs/trailers and reassemble the actual payload.
         let body = if matches!(framing, Some(BodyFraming::Chunked)) {
             dechunk_or_fallback(raw_body)
         } else {
             raw_body.to_vec()
         };
 
-        // If the response body was chunked or framed until connection close,
-        // rewrite headers to drop Transfer-Encoding and enforce Content-Length matching body.len().
-        // Content-Encoding is left intact if auto_decode is false.
         let headers = if matches!(framing, Some(BodyFraming::Chunked | BodyFraming::UntilClose)) {
             body_decoder::rewrite_headers(&headers, body.len(), false)
         } else {
@@ -348,21 +374,47 @@ pub async fn read_request_message<S>(
     stream: &mut S,
     options: &ConnectionOptions,
     keep_alive_idle_timeout: Duration,
+    carry_over: &mut Vec<u8>,
 ) -> Result<Vec<u8>>
 where
     S: tokio::io::AsyncRead + Unpin,
 {
     use tokio::io::AsyncReadExt;
 
-    let mut buffer: Vec<u8> = Vec::with_capacity(65536);
+    let mut buffer: Vec<u8> = std::mem::take(carry_over);
     let mut chunk = vec![0u8; 65536];
     let mut header_scan_from = 0usize;
     let mut header_end_pos = 0usize;
     let mut framing: Option<BodyFraming> = None;
     let mut chunk_cursor = 0usize;
-    let mut message_started_at: Option<Instant> = None;
+    let mut message_started_at: Option<Instant> = if !buffer.is_empty() {
+        Some(Instant::now())
+    } else {
+        None
+    };
 
     loop {
+        if framing.is_none() {
+            if let Some((pos, len)) = locate_header_terminator(&buffer, &mut header_scan_from) {
+                let header_block = String::from_utf8_lossy(&buffer[..pos]);
+                let parsed = parse_request_framing(&header_block)?;
+                header_end_pos = pos + len;
+                framing = Some(parsed.body_framing);
+            }
+        }
+
+        if let Some(body_framing) = framing {
+            if let Some(total_len) =
+                body_is_complete(&buffer, header_end_pos, body_framing, &mut chunk_cursor)?
+            {
+                if total_len < buffer.len() {
+                    *carry_over = buffer[total_len..].to_vec();
+                }
+                buffer.truncate(total_len);
+                break;
+            }
+        }
+
         if buffer.len() > options.max_response_size {
             return Err(anyhow!(
                 "request exceeded max size of {} bytes",
@@ -399,29 +451,6 @@ where
                     message_started_at = Some(Instant::now());
                 }
                 buffer.extend_from_slice(&chunk[..n]);
-
-                if framing.is_none() {
-                    if let Some(pos) = locate_header_terminator(&buffer, &mut header_scan_from) {
-                        let header_block = String::from_utf8_lossy(&buffer[..pos]);
-                        let parsed = parse_request_framing(&header_block)?;
-                        header_end_pos = pos + 4;
-                        framing = Some(parsed.body_framing);
-                        // parsed.connection_close is available here if the
-                        // proxy ever wants to honor a client-sent
-                        // `Connection: close` on the inbound leg; unused
-                        // for now since tunnel lifetime is driven by the
-                        // accept loop, not this reader.
-                    }
-                }
-
-                if let Some(body_framing) = framing {
-                    if let Some(total_len) =
-                        body_is_complete(&buffer, header_end_pos, body_framing, &mut chunk_cursor)?
-                    {
-                        buffer.truncate(total_len);
-                        break;
-                    }
-                }
             }
             ReadOutcome::Idle => {
                 if buffer.is_empty() {
@@ -433,11 +462,12 @@ where
                     "request read timed out after {:?} of inactivity",
                     options.read_idle_timeout
                 ));
-                // note: request framing never produces BodyFraming::UntilClose,
-                // so unlike read_response there's no "idle + framing.is_some()
-                // => treat as complete" branch needed here.
             }
         }
+    }
+
+    if buffer.is_empty() {
+        return Ok(Vec::new());
     }
 
     let header_end = match framing {
@@ -452,7 +482,62 @@ where
         raw_body.to_vec()
     };
 
-    let mut full = buffer[..header_end].to_vec();
-    full.extend_from_slice(&body);
+    // If the request was chunked, rewrite headers to replace Transfer-Encoding: chunked
+    // with Content-Length: body.len() so upstream origin gets valid HTTP/1.1 framing
+    let full = if matches!(framing, Some(BodyFraming::Chunked)) {
+        let headers_str = String::from_utf8_lossy(&buffer[..header_end]);
+        let rewritten = body_decoder::rewrite_headers(&headers_str, body.len(), false);
+        let mut f = rewritten.into_bytes();
+        f.extend_from_slice(&body);
+        f
+    } else {
+        let mut f = buffer[..header_end].to_vec();
+        f.extend_from_slice(&body);
+        f
+    };
+
     Ok(full)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    #[tokio::test]
+    async fn test_read_request_message_with_carry_over_and_excess() {
+        let options = ConnectionOptions::default();
+        let mut carry_over = b"GET /first HTTP/1.1\r\nHost: example.com\r\nContent-Length: 5\r\n\r\nhelloPOST /sec".to_vec();
+        let mut conn = Cursor::new(b"ond HTTP/1.1\r\nHost: example.com\r\nContent-Length: 4\r\n\r\nwork".to_vec());
+
+        let req1 = read_request_message(&mut conn, &options, options.read_idle_timeout, &mut carry_over).await.unwrap();
+        let req1_str = String::from_utf8(req1).unwrap();
+        assert!(req1_str.starts_with("GET /first HTTP/1.1"));
+        assert!(req1_str.ends_with("hello"));
+
+        // carry_over should now contain the start of the second request
+        assert_eq!(&carry_over, b"POST /sec");
+
+        let req2 = read_request_message(&mut conn, &options, options.read_idle_timeout, &mut carry_over).await.unwrap();
+        let req2_str = String::from_utf8(req2).unwrap();
+        assert!(req2_str.starts_with("POST /second HTTP/1.1"));
+        assert!(req2_str.ends_with("work"));
+        assert!(carry_over.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_read_request_message_chunked_rewrites_headers() {
+        let options = ConnectionOptions::default();
+        let mut carry_over = Vec::new();
+        let raw_chunked = b"POST /api HTTP/1.1\r\nHost: example.com\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n";
+        let mut conn = Cursor::new(raw_chunked.to_vec());
+
+        let req = read_request_message(&mut conn, &options, options.read_idle_timeout, &mut carry_over).await.unwrap();
+        let req_str = String::from_utf8(req).unwrap();
+        assert!(req_str.starts_with("POST /api HTTP/1.1"));
+        assert!(req_str.contains("Content-Length: 11"));
+        assert!(!req_str.to_lowercase().contains("transfer-encoding"));
+        assert!(req_str.ends_with("hello world"));
+    }
+}
+

@@ -119,6 +119,7 @@ struct HttpHistoryPayload {
 pub struct CertCache {
     pub ca: Mutex<Option<(String, Arc<KeyPair>)>>,
     pub acceptors: Mutex<HashMap<String, tokio_rustls::TlsAcceptor>>,
+    in_flight: Mutex<HashMap<String, tokio::sync::broadcast::Sender<()>>>,
 }
 
 impl CertCache {
@@ -126,6 +127,7 @@ impl CertCache {
         Self {
             ca: Mutex::new(None),
             acceptors: Mutex::new(HashMap::new()),
+            in_flight: Mutex::new(HashMap::new()),
         }
     }
 
@@ -134,6 +136,8 @@ impl CertCache {
         *ca_lock = Some((cert_pem, Arc::new(key_pair)));
         let mut acceptors_lock = self.acceptors.lock().await;
         acceptors_lock.clear();
+        let mut in_flight = self.in_flight.lock().await;
+        in_flight.clear();
     }
 
     pub async fn get_ca(&self, app_handle: &AppHandle) -> std::io::Result<(String, Arc<KeyPair>)> {
@@ -403,6 +407,34 @@ fn now_ms() -> u128 {
         .as_millis()
 }
 
+fn is_binary_content(headers: &str, body: &[u8]) -> bool {
+    let lower_headers = headers.to_ascii_lowercase();
+    for line in lower_headers.lines() {
+        if let Some(ct) = line.strip_prefix("content-type:") {
+            let ct = ct.trim();
+            if ct.starts_with("image/")
+                || ct.starts_with("video/")
+                || ct.starts_with("audio/")
+                || ct.starts_with("font/")
+                || ct.contains("application/octet-stream")
+                || ct.contains("application/pdf")
+                || ct.contains("application/zip")
+                || ct.contains("application/x-tar")
+                || ct.contains("application/gzip")
+                || ct.contains("application/x-gzip")
+                || ct.contains("application/zstd")
+            {
+                return true;
+            }
+        }
+    }
+    // Heuristic: If body is larger than 128KB and contains null bytes, treat as binary
+    if body.len() > 131072 && body[..body.len().min(4096)].contains(&0) {
+        return true;
+    }
+    false
+}
+
 /// Decodes a raw `HttpConnection` response purely for the history/UI
 /// payload. The bytes actually written back to the client always stay the
 /// untouched originals (see call sites) -- decoding here must never affect
@@ -410,11 +442,19 @@ fn now_ms() -> u128 {
 /// receive plaintext under headers that still claim otherwise.
 fn decode_for_display(headers: &str, body: &[u8], options: &ConnectionOptions) -> String {
     let decoded = body_decoder::decode_response(headers, body.to_vec(), &options.decode_limits);
-    format!(
-        "{}{}",
-        decoded.headers,
-        String::from_utf8_lossy(&decoded.body)
-    )
+    if is_binary_content(&decoded.headers, &decoded.body) && decoded.body.len() > 65536 {
+        format!(
+            "{}\r\n[Binary data: {} bytes]",
+            decoded.headers.trim_end(),
+            decoded.body.len()
+        )
+    } else {
+        format!(
+            "{}{}",
+            decoded.headers,
+            String::from_utf8_lossy(&decoded.body)
+        )
+    }
 }
 
 /// Rewrites a user-edited HTTP message (request or response) so its framing
@@ -529,12 +569,14 @@ async fn handle_connect(
     let upstream_url = format!("https://{}", target);
     let mut upstream: Option<HttpConnection> = None;
     let intercept_state: tauri::State<InterceptState> = app_handle.state();
+    let mut client_carry_over = Vec::new();
 
     loop {
         let raw_request = match read_request_message(
             &mut client_tls,
             &connection_options,
             KEEP_ALIVE_IDLE_TIMEOUT,
+            &mut client_carry_over,
         )
         .await
         {
@@ -711,6 +753,8 @@ async fn handle_connect(
             Ok(r) => r,
             Err(e) => {
                 tracing::warn!("Upstream request failed for {}: {}", target, e);
+                let error_response = build_error_response(&target, &e);
+                client_tls.write_all(&error_response).await.ok();
                 break;
             }
         };
@@ -1101,13 +1145,13 @@ async fn handle_connect(
                 .ok();
 
             if let Some(conn) = upstream.take() {
-                let upstream_conn = conn.into_connection();
+                let server_stream = conn.into_prefixed_connection();
                 tokio::spawn(crate::proxy::websocket::handle_websocket_tunnel(
                     app_handle.clone(),
                     ws_stream_id,
                     project_id,
                     client_tls,
-                    upstream_conn,
+                    server_stream,
                 ));
                 return Ok(());
             }
@@ -1128,26 +1172,61 @@ async fn get_or_create_tls_acceptor(
 ) -> std::io::Result<tokio_rustls::TlsAcceptor> {
     let cert_cache: tauri::State<CertCache> = app_handle.state();
 
-    let cached = {
-        let cache = cert_cache.acceptors.lock().await;
-        cache.get(domain).cloned()
-    };
-    if let Some(acceptor) = cached {
-        return Ok(acceptor);
+    loop {
+        let rx_to_await = {
+            let cache = cert_cache.acceptors.lock().await;
+            if let Some(acceptor) = cache.get(domain).cloned() {
+                return Ok(acceptor);
+            }
+
+            let mut in_flight = cert_cache.in_flight.lock().await;
+            if let Some(tx) = in_flight.get(domain) {
+                Some(tx.subscribe())
+            } else {
+                let (tx, _) = tokio::sync::broadcast::channel(1);
+                in_flight.insert(domain.to_string(), tx);
+                // We are the leader task that will generate the cert
+                None
+            }
+        };
+
+        if let Some(mut rx) = rx_to_await {
+            let _ = rx.recv().await;
+            // Retry cache lookup
+        } else {
+            break;
+        }
     }
 
-    let (ca_cert_pem, ca_key_pair) = cert_cache.get_ca(app_handle).await?;
+    let (ca_cert_pem, ca_key_pair) = match cert_cache.get_ca(app_handle).await {
+        Ok(res) => res,
+        Err(err) => {
+            let mut in_flight = cert_cache.in_flight.lock().await;
+            if let Some(tx) = in_flight.remove(domain) {
+                let _ = tx.send(());
+            }
+            return Err(err);
+        }
+    };
     let domain_owned = domain.to_string();
 
-    let acceptor = tokio::task::spawn_blocking(move || -> std::io::Result<tokio_rustls::TlsAcceptor> {
+    let gen_res = tokio::task::spawn_blocking(move || -> std::io::Result<tokio_rustls::TlsAcceptor> {
         let (cert_pem, key_pem) = generate_server_cert(&ca_cert_pem, &ca_key_pair, &domain_owned)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
         create_tls_acceptor(&cert_pem, &key_pem)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
     })
     .await
-    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))??;
+    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e));
 
+    {
+        let mut in_flight = cert_cache.in_flight.lock().await;
+        if let Some(tx) = in_flight.remove(domain) {
+            let _ = tx.send(());
+        }
+    }
+
+    let acceptor = gen_res??;
     let mut cache = cert_cache.acceptors.lock().await;
     cache.insert(domain.to_string(), acceptor.clone());
 
@@ -1162,33 +1241,40 @@ async fn handle_http_request(
     first_request_bytes: Vec<u8>,
     connection_options: ConnectionOptions,
 ) -> std::io::Result<()> {
-    let target = parse_target(&String::from_utf8_lossy(&first_request_bytes))?;
-    let upstream_url = format!("http://{}", target);
+    let mut client_carry_over = first_request_bytes;
+    let mut current_target = String::new();
     let mut upstream: Option<HttpConnection> = None;
-    // NOTE (pre-existing limitation, carried over unchanged): the very
-    // first request is whatever `handle_client`'s initial 8KB read
-    // captured, not re-framed through `read_request_message`. If that
-    // first request's body is larger than one read or arrives split
-    // across reads, it can be incomplete. Every subsequent request on
-    // this connection is fully framed via `read_request_message` below.
-    let mut pending_bytes = Some(first_request_bytes);
     let intercept_state: tauri::State<InterceptState> = app_handle.state();
 
     loop {
-        let raw_request = match pending_bytes.take() {
-            Some(b) => b,
-            None => match read_request_message(
-                &mut client_stream,
-                &connection_options,
-                KEEP_ALIVE_IDLE_TIMEOUT,
-            )
-            .await
-            {
-                Ok(data) if data.is_empty() => break,
-                Ok(data) => data,
-                Err(_) => break,
-            },
+        let raw_request = match read_request_message(
+            &mut client_stream,
+            &connection_options,
+            KEEP_ALIVE_IDLE_TIMEOUT,
+            &mut client_carry_over,
+        )
+        .await
+        {
+            Ok(data) if data.is_empty() => break,
+            Ok(data) => data,
+            Err(_) => break,
         };
+
+        let req_str = String::from_utf8_lossy(&raw_request);
+        let target = match parse_target(&req_str) {
+            Ok(t) => t,
+            Err(e) => {
+                tracing::warn!("Failed to determine target from HTTP request: {}", e);
+                break;
+            }
+        };
+
+        if current_target != target {
+            upstream = None; // Redial if target host changed on keep-alive connection
+            current_target = target.clone();
+        }
+
+        let upstream_url = format!("http://{}", current_target);
 
         // Display/UI copy ONLY -- see identical note in `handle_connect`.
         let decrypted_request = String::from_utf8_lossy(&raw_request).to_string();
@@ -1327,10 +1413,7 @@ async fn handle_http_request(
                         upstream = Some(new_conn);
                         res
                     }
-                    Err(e) => {
-                        tracing::warn!("Failed to connect upstream {}: {}", target, e);
-                        break;
-                    }
+                    Err(e) => Err(e),
                 }
             }
         };
@@ -1339,6 +1422,8 @@ async fn handle_http_request(
             Ok(r) => r,
             Err(e) => {
                 tracing::warn!("Upstream request failed for {}: {}", target, e);
+                let error_response = build_error_response(&target, &e);
+                client_stream.write_all(&error_response).await.ok();
                 break;
             }
         };
@@ -1730,13 +1815,13 @@ async fn handle_http_request(
                 .ok();
 
             if let Some(conn) = upstream.take() {
-                let upstream_conn = conn.into_connection();
+                let server_stream = conn.into_prefixed_connection();
                 tokio::spawn(crate::proxy::websocket::handle_websocket_tunnel(
                     app_handle.clone(),
                     ws_stream_id,
                     project_id,
                     client_stream,
-                    upstream_conn,
+                    server_stream,
                 ));
                 return Ok(());
             }
@@ -1747,7 +1832,7 @@ async fn handle_http_request(
 
 fn parse_target(request: &str) -> std::io::Result<String> {
     for line in request.lines() {
-        if line.to_lowercase().starts_with("host:") {
+        if line.to_ascii_lowercase().starts_with("host:") {
             let host = line[5..].trim();
             if host.contains(':') {
                 return Ok(host.to_string());
@@ -1757,8 +1842,21 @@ fn parse_target(request: &str) -> std::io::Result<String> {
         }
     }
 
+    // Also check the request line for absolute URIs: e.g. "GET http://example.com:8080/path HTTP/1.1"
+    if let Some(first_line) = request.lines().next() {
+        let parts: Vec<&str> = first_line.split_whitespace().collect();
+        if parts.len() >= 2 && (parts[1].starts_with("http://") || parts[1].starts_with("ws://")) {
+            if let Ok(parsed) = url::Url::parse(parts[1]) {
+                if let Some(host) = parsed.host_str() {
+                    let port = parsed.port().unwrap_or(80);
+                    return Ok(format!("{}:{}", host, port));
+                }
+            }
+        }
+    }
+
     Err(std::io::Error::new(
         std::io::ErrorKind::InvalidInput,
-        "No Host header found",
+        "No Host header or absolute URI found",
     ))
 }
